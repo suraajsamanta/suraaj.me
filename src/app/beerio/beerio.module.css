@@ -35,13 +35,23 @@
 .control small { margin-top:7px; font-size:10px; letter-spacing:.15em; }
 .control.brake,.control.go { height:clamp(110px,21dvh,170px); font-size:23px; letter-spacing:.05em; }
 .control.brake { color:#ffe0d9; }
+.itemControl { display:flex; align-items:center; justify-content:center; gap:10px; min-height:52px; width:100%; padding:10px 12px; border:2px solid #c3a8ff; border-radius:14px; color:#f3eaff; background:#59427e; box-shadow:0 4px 0 #0e0c1c; font-size:12px; letter-spacing:.1em; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+.itemControl>span { font-size:25px; line-height:1; }
+.itemControl:active { transform:translateY(3px); box-shadow:0 1px 0 #0e0c1c; filter:brightness(1.2); }
 .control.pressed { transform:translateY(3px); box-shadow:0 2px 0 #0e0c1c; }
-.control:focus-visible,.phoneLeave:focus-visible,.assistToggle:focus-visible { outline:3px solid white; outline-offset:3px; }
+.control:focus-visible,.itemControl:focus-visible,.phoneLeave:focus-visible,.assistToggle:focus-visible,.trackPicker select:focus-visible { outline:3px solid white; outline-offset:3px; }
 .assistSetting { margin-top:22px; }
 .assistToggle { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:48px; border:1px solid #ffffff30; border-radius:8px; padding:10px 14px; color:#d5cedf; background:#191528; font-size:11px; font-weight:800; letter-spacing:.1em; cursor:pointer; }
 .assistToggle strong { min-width:46px; padding:6px 8px; border-radius:5px; background:#5a536a; color:#fff; text-align:center; }
 .assistToggle[aria-checked="true"] strong { background:#ffce58; color:#191528; }
 .assistSetting .fine { margin:9px 0 0; }
+.trackPicker { margin-top:22px; }
+.trackPicker label>span { display:block; color:#b9b1c3; font-size:10px; font-weight:900; letter-spacing:.16em; }
+.trackPicker select { width:100%; min-height:48px; margin-top:9px; padding:10px 12px; border:1px solid #746287; border-radius:8px; color:#f8f4e8; background:#191528; font:700 15px Arial,Helvetica,sans-serif; cursor:pointer; }
+.trackPicker p { margin:9px 0 0; max-width:none; color:#aaa1b3; font-size:12px; line-height:1.5; }
+.practiceSetup { position:relative; z-index:1; max-width:400px; margin-top:32px; padding:18px; border:1px solid #ffffff20; border-radius:12px; background:#211c33; }
+.practiceSetup .trackPicker { margin-top:0; }
+.practiceSetup .textButton { margin-top:18px; min-height:28px; color:#ffce58; text-align:left; }
 
 @media(orientation:landscape) and (max-height:600px) {
   .phoneShell .phone { padding-top:max(8px, env(safe-area-inset-top)); padding-bottom:max(12px, env(safe-area-inset-bottom)); }
@@ -51,9 +61,10 @@
   .phoneLeave { min-height:40px; }
   .controller { margin-top:12px; }
   .controlHint { max-width:none; margin:6px 0 8px; font-size:12px; }
-  .controls { grid-template-columns:1fr 1fr; gap:24px; padding-top:4px; }
+  .controls { grid-template-columns:1fr minmax(76px,.48fr) 1fr; gap:14px; padding-top:4px; }
   .steering,.pedals { gap:12px; }
   .control,.control.brake,.control.go { height:clamp(104px,41dvh,190px); min-height:84px; }
+  .itemControl { flex-direction:column; align-self:end; min-height:84px; height:clamp(104px,41dvh,190px); padding:8px 4px; font-size:10px; letter-spacing:.05em; }
   .phoneWaiting { padding:14px 5px; }
   .waitingFlag { display:none; }
   .phoneWaiting .eyebrow { margin-bottom:10px; }

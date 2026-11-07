@@ -8,9 +8,10 @@ export const PLAYER_GRACE_MS = 90_000;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const safeInput = (value) => value && typeof value === 'object' &&
   typeof value.steer === 'number' && Number.isFinite(value.steer) &&
-  Math.abs(value.steer) <= 1 && typeof value.accelerate === 'boolean' && typeof value.brake === 'boolean';
+  Math.abs(value.steer) <= 1 && typeof value.accelerate === 'boolean' && typeof value.brake === 'boolean' &&
+  (value.action === undefined || (Number.isSafeInteger(value.action) && value.action >= 0));
 const freshInput = () => ({ ...ZERO_INPUT });
-const hasInput = (input) => input.steer !== 0 || input.accelerate || input.brake;
+const hasInput = (input) => input.steer !== 0 || input.accelerate || input.brake || input.action !== undefined;
 const makeToken = () => randomBytes(24).toString('hex');
 const cleanName = (name) => (typeof name === 'string' ? name : 'Racer')
   .replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 18) || 'Racer';
@@ -49,6 +50,7 @@ export class RoomService {
       players: Array.from(room.players.values(), (player) => ({
         id: player.id, name: player.name, color: player.color,
         connected: Boolean(player.peer), input: { ...player.input },
+        ...(player.actionSequence > 0 ? { actionSequence: player.actionSequence } : {}),
       })),
     };
   }
@@ -65,6 +67,7 @@ export class RoomService {
   resetInput(room, player) {
     const changed = hasInput(player.input);
     player.input = freshInput();
+    player.actionFloor = player.actionSequence;
     if (changed) this.send(room.host, { type: 'input', playerId: player.id, input: player.input });
   }
 
@@ -101,8 +104,13 @@ export class RoomService {
         const player = room.players.get(peer.playerId);
         if (!player || player.peer !== peer) return;
         player.lastInputAt = now;
+        const sequence = message.input.action;
+        if (sequence === undefined || sequence === 0) player.actionFloor = player.actionSequence;
+        else player.actionSequence = Math.max(player.actionSequence, sequence);
+        if (!room.host) player.actionFloor = player.actionSequence;
         player.input = room.host ? {
           steer: message.input.steer, accelerate: message.input.accelerate, brake: message.input.brake,
+          ...(sequence > player.actionFloor ? { action: player.actionSequence } : {}),
         } : freshInput();
         this.send(room.host, { type: 'input', playerId: player.id, input: player.input });
         break;
@@ -182,7 +190,7 @@ export class RoomService {
     const player = {
       id: randomBytes(8).toString('hex'), token: makeToken(), name: cleanName(message.name),
       color: COLORS.find((color) => !usedColors.has(color)), peer,
-      input: freshInput(), lastInputAt: this.now(), goneAt: null,
+      input: freshInput(), actionSequence: 0, actionFloor: 0, lastInputAt: this.now(), goneAt: null,
     };
     room.players.set(player.id, player);
     room.touchedAt = this.now();

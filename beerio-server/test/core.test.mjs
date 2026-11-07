@@ -156,3 +156,43 @@ test('names are bounded and remove controls; lower-case codes normalize', () => 
   assert.equal(name.length, 18);
   assert.ok(!name.includes('\n'));
 });
+
+test('item sequences survive heartbeats but cannot replay across resets, stale controls or reconnects', () => {
+  const f = fixture();
+  const player = f.join();
+  const token = player.messages[0].token;
+  const input = action => ({ steer: 0, accelerate: false, brake: false, action });
+  f.service.receive(player, { type: 'input', input: input(5) });
+  assert.equal(f.host.messages.at(-1).input.action, 5);
+  f.service.receive(player, { type: 'input', input: input(5) });
+  assert.equal(f.host.messages.at(-1).input.action, 5, 'heartbeat retains latest press until a host frame');
+  f.service.receive(player, { type: 'input', input: input(3) });
+  assert.equal(f.host.messages.at(-1).input.action, 5, 'out-of-order packet cannot lower the high-water mark');
+  f.service.receive(player, { type: 'input', input: { ...ZERO_INPUT } });
+  f.service.receive(player, { type: 'input', input: input(5) });
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'reset suppresses even a delayed duplicate');
+  f.service.receive(player, { type: 'input', input: input(6) });
+  assert.equal(f.host.messages.at(-1).input.action, 6);
+  f.tick(INPUT_TIMEOUT_MS + 1);
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT);
+  f.service.receive(player, { type: 'input', input: input(6) });
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'stale actions cannot replay');
+  f.service.disconnect(player);
+  const resumed = f.peer();
+  f.service.receive(resumed, { type: 'resume', code: f.code, token });
+  assert.deepEqual(resumed.messages[0].room.players[0].input, ZERO_INPUT);
+  assert.equal(resumed.messages[0].room.players[0].actionSequence, 6);
+  f.service.receive(resumed, { type: 'input', input: input(7) });
+  assert.equal(f.host.messages.at(-1).input.action, 7, 'first legitimate post-resume press works');
+});
+
+test('invalid item sequences are rejected while legacy driving-only input stays compatible', () => {
+  const f = fixture();
+  const player = f.join();
+  for (const action of [NaN, -1, 0.5, Infinity, Number.MAX_SAFE_INTEGER + 1, '1', null]) {
+    f.service.receive(player, { type: 'input', input: { ...ZERO_INPUT, action } });
+    assert.equal(player.messages.at(-1).code, 'invalid_input');
+  }
+  f.service.receive(player, { type: 'input', input: { ...ZERO_INPUT } });
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT);
+});

@@ -1,16 +1,20 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { RaceRenderer } from './renderer';
 import { useRaceAudio } from './useRaceAudio';
+import { actionSequence, POWER_UPS, type PowerUp } from './powerups';
+import { mergeControllerAction } from './actionMerge';
 import { createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
-import { TRACK_POINTS, trackPose } from './track';
+import { sampleTrack, selectTrack, TRACKS, trackPose, type TrackId } from './track';
 import styles from './game.module.css';
 
 export type { DriverInput, GamePlayer, RaceResult } from './simulation';
 export type GameViewProps = {
   players: GamePlayer[];
   laps?: number;
+  /** Circuit is selected in the lobby; changing it starts a fresh race. */
+  trackId?: TrackId;
   /** Changing this value starts a fresh race. Input updates never reset it. */
   raceKey?: string | number;
   /** Arrow keys or WASD drive the first kart, in addition to phone controls. */
@@ -20,11 +24,10 @@ export type GameViewProps = {
   onFinish?: (results: RaceResult[]) => void;
 };
 
-type HudKart = { id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; x: number; z: number };
+type HudKart = { id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; x: number; z: number };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
 const EMPTY_HUD: Hud = { countdown: 3, elapsed: 0, complete: false, karts: [], results: [] };
-const MAP_PATH = TRACK_POINTS.filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' ') + ' Z';
-const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space']);
+const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'Space']);
 
 function snapshot(race: RaceState, players: GamePlayer[]): Hud {
   const ranked = rankKarts(race);
@@ -35,7 +38,7 @@ function snapshot(race: RaceState, players: GamePlayer[]): Hud {
       const { position } = trackPose(kart.distance, kart.lane);
       return { id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
         lap: currentLap(kart, race.laps), progress: lapProgress(kart), speed: Math.round(kart.speed * 3.6),
-        boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, x: position[0], z: position[2] };
+        boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, x: position[0], z: position[2] };
     }),
   };
 }
@@ -45,7 +48,7 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to six chase cameras. */
-export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true, autoSteer = true, onFinish }: GameViewProps) {
+export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, onFinish }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
@@ -54,6 +57,16 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
   const [hud, setHud] = useState<Hud>(EMPTY_HUD);
   const [error, setError] = useState('');
   const [restart, setRestart] = useState(0);
+  const selectedTrack = TRACKS.find((track) => track.id === trackId) ?? TRACKS[0];
+  const circuitMap = useMemo(() => {
+    const points = sampleTrack(selectedTrack);
+    const xs = points.map((point) => point.x), zs = points.map((point) => point.z);
+    const minX = Math.min(...xs) - 24, minZ = Math.min(...zs) - 24;
+    return {
+      path: points.filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' ') + ' Z',
+      viewBox: `${minX} ${minZ} ${Math.max(...xs) - minX + 24} ${Math.max(...zs) - minZ + 24}`,
+    };
+  }, [selectedTrack]);
   const roster = players.slice(0, 6);
   const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
@@ -71,8 +84,12 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     if (!canvas) return;
     const entrants = playersRef.current.slice(0, 6);
     if (entrants.length === 0) return;
+    selectTrack(trackId);
     const race = createRace(entrants, totalLaps);
     const keys = new Set<string>();
+    // One monotonic sequence combines keyboard presses with phone actions for player one.
+    let lastControllerAction = actionSequence(entrants[0]?.input.action);
+    let localAction = lastControllerAction;
     let renderer: RaceRenderer | null = null;
     let frame = 0, last = 0, accumulator = 0, lastHud = 0;
     let stopped = false, didFinish = false, failed = false;
@@ -83,8 +100,13 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     const keyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (!keyboardRef.current || (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)))) return;
-      // Space must still activate focused race settings and sound controls.
-      if (event.code === 'Space' && target instanceof HTMLElement && target.closest('button, a[href], [role="button"]')) return;
+      // Keyboard item and brake controls must not interfere with focused controls.
+      if ((event.code === 'Space' || event.code === 'KeyE') && target instanceof HTMLElement && target.closest('button, a[href], [role="button"], [role="switch"]')) return;
+      if (event.code === 'KeyE') {
+        event.preventDefault();
+        if (!event.repeat) localAction = Math.min(Number.MAX_SAFE_INTEGER, localAction + 1);
+        return;
+      }
       if (KEYS.has(event.code)) { event.preventDefault(); keys.add(event.code); }
     };
     const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
@@ -111,9 +133,12 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
       last = now;
       if (!document.hidden) {
         const currentPlayers = playersRef.current.slice(0, 6).map((player, index) => {
-          if (index !== 0 || !keyboardRef.current || keys.size === 0) return player;
+          if (index !== 0) return player;
+          ({ lastControllerAction, localAction } = mergeControllerAction(lastControllerAction, localAction, player.input.action));
+          if (!keyboardRef.current || keys.size === 0) return { ...player, input: { ...player.input, action: localAction } };
           const left = keys.has('ArrowLeft') || keys.has('KeyA'), right = keys.has('ArrowRight') || keys.has('KeyD');
           return { ...player, input: {
+            action: localAction,
             steer: left || right ? Number(right) - Number(left) : player.input.steer,
             accelerate: keys.has('ArrowUp') || keys.has('KeyW') || player.input.accelerate,
             brake: keys.has('ArrowDown') || keys.has('KeyS') || keys.has('Space') || player.input.brake,
@@ -151,11 +176,11 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
       document.removeEventListener('visibilitychange', visibility);
       canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored);
     };
-  }, [rosterKey, totalLaps, raceKey, restart, audioRef, updateAudio]);
+  }, [rosterKey, totalLaps, trackId, raceKey, restart, audioRef, updateAudio]);
 
   const gridStyle = { '--game-columns': columns, '--game-rows': rows } as CSSProperties;
   return (
-    <div className={styles.game} style={gridStyle} aria-label={`Sunset Circuit, ${roster.length} racers, ${totalLaps} laps`}>
+    <div className={styles.game} style={gridStyle} aria-label={`${selectedTrack.name}, ${roster.length} racers, ${totalLaps} laps`}>
       <canvas className={styles.canvas} ref={canvasRef} aria-label="3D split-screen race with a behind-the-kart camera for each player" />
       <div className={styles.hudGrid}>
         {roster.map((player, index) => {
@@ -170,10 +195,13 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
               {hud.countdown > 0 && !error && <div className={styles.countdown}><strong>{Math.ceil(hud.countdown)}</strong><span>GET READY</span></div>}
               {hud.countdown === 0 && hud.elapsed < 0.85 && !error && <div className={`${styles.countdown} ${styles.go}`}><strong>GO!</strong></div>}
               {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
+              <div className={styles.itemHud} aria-label={kart?.item ? `Item: ${POWER_UPS[kart.item].name}` : 'No item held'}>
+                {kart?.item ? <><span className={styles.itemIcon} style={{ color: POWER_UPS[kart.item].color }}>{POWER_UPS[kart.item].icon}</span><span><strong>{POWER_UPS[kart.item].name}</strong><small>{index === 0 && localKeyboard ? 'Press E to use' : 'Press ITEM to use'}</small></span></> : <span className={styles.itemEmpty}>ITEM</span>}
+              </div>
               <div className={styles.bottomHud}>
                 <div className={styles.position}>{place}<span>{suffix(place)}</span></div>
                 <div className={styles.driverStatus}>
-                  {kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>OFF ROAD</span> : null}
+                  {kart?.shield ? <span className={styles.boost}>FOAM GUARD</span> : kart?.slow ? <span className={styles.offRoad}>SLOWED</span> : kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>OFF ROAD</span> : null}
                   <div className={styles.speed}><strong>{kart?.speed || 0}</strong><span>km/h</span></div>
                 </div>
               </div>
@@ -183,10 +211,10 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
         })}
         {roster.length > 1 && roster.length % columns !== 0 && (
           <div className={styles.raceControl}>
-            <span className={styles.eyebrow}>SUNSET CIRCUIT</span>
-            <svg className={styles.map} viewBox="-151 -112 292 210" role="img" aria-label="Live circuit map">
-              <path d={MAP_PATH} fill="none" stroke="#303744" strokeWidth="16" strokeLinejoin="round" />
-              <path d={MAP_PATH} fill="none" stroke="#7c8797" strokeWidth="1.5" />
+            <span className={styles.eyebrow}>{selectedTrack.name.toUpperCase()}</span>
+            <svg className={styles.map} viewBox={circuitMap.viewBox} role="img" aria-label="Live circuit map">
+              <path d={circuitMap.path} fill="none" stroke="#303744" strokeWidth="16" strokeLinejoin="round" />
+              <path d={circuitMap.path} fill="none" stroke="#7c8797" strokeWidth="1.5" />
               {hud.karts.map((kart) => <circle key={kart.id} cx={kart.x} cy={kart.z} r="6" fill={roster.find((player) => player.id === kart.id)?.color || '#ffbe68'} stroke="#fff" strokeWidth="1.8" />)}
             </svg>
             <div className={styles.controlClock}>{clock(hud.elapsed)}</div>

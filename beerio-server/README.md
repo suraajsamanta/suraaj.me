@@ -62,6 +62,7 @@ const room = useBeerioRoom({ autoResume: true });
 room.createRoom({ maxPlayers: 6 });
 room.joinRoom({ code: 'ABC234', name: 'Avery' });
 room.setInput({ steer: -0.3, accelerate: true, brake: false });
+room.useItem();            // one press; the relay and host reject replayed sequences
 room.resetInput();
 room.setLocked(true);       // host only
 room.publishState(state);  // host only, JSON-compatible state, capped to 20 Hz

@@ -15,12 +15,12 @@ export function unlockRaceAudio(): Promise<boolean> {
 export function getRaceAudioContext(): AudioContext | null { return sharedContext; }
 export const noteFrequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 
-export type AudioSnapshot = { countdown: number; elapsed: number; complete: boolean; karts: { id: string; boost: boolean; bump: boolean; lap: number; finished: boolean }[] };
-export type RaceSoundEvent = 'countdown' | 'go' | 'boost' | 'bump' | 'lap' | 'finish';
+export type AudioSnapshot = { countdown: number; elapsed: number; complete: boolean; karts: { id: string; boost: boolean; bump: boolean; lap: number; finished: boolean; collected: number; used: number; shield: number; flash: number }[] };
+export type RaceSoundEvent = 'countdown' | 'go' | 'boost' | 'bump' | 'lap' | 'finish' | 'pickup' | 'item' | 'shield';
 export function audioSnapshot(race: RaceState): AudioSnapshot {
   return { countdown: Math.ceil(race.countdown), elapsed: race.elapsed, complete: race.complete,
     karts: race.karts.map(kart => ({ id: kart.id, boost: kart.boost > 0, bump: kart.bump > 0,
-      lap: Math.max(0, Math.floor(kart.distance / TRACK_LENGTH)), finished: kart.finishTime !== null })) };
+      lap: Math.max(0, Math.floor(kart.distance / TRACK_LENGTH)), finished: kart.finishTime !== null, collected: kart.power?.collected ?? 0, used: kart.power?.used ?? 0, shield: kart.power?.shield ?? 0, flash: kart.power?.flash ?? 0 })) };
 }
 export function soundEvents(previous: AudioSnapshot | null, next: AudioSnapshot): RaceSoundEvent[] {
   const events = new Set<RaceSoundEvent>();
@@ -33,6 +33,9 @@ export function soundEvents(previous: AudioSnapshot | null, next: AudioSnapshot)
     if (kart.bump && !old.bump) events.add('bump');
     if (kart.lap > old.lap && !kart.finished) events.add('lap');
     if (kart.finished && !old.finished) events.add('finish');
+    if (kart.collected > old.collected) events.add('pickup');
+    if (kart.used > old.used) events.add('item');
+    if (old.shield > 0 && kart.shield <= 0 && kart.flash > 0) events.add('shield');
   }
   if (next.complete && !previous?.complete) events.add('finish');
   return [...events];
@@ -128,6 +131,9 @@ export class RaceAudio {
     if (event === 'boost') { this.tone(170, time, 0.28, 0.15, 'sawtooth', this.master, 1080); this.tone(880, time + 0.1, 0.26, 0.11, 'triangle', this.master, 1480); }
     if (event === 'bump') { this.tone(115, time, 0.16, 0.16, 'triangle', this.master, 35); this.tone(190, time, 0.08, 0.06, 'sawtooth', this.master, 50); }
     if (event === 'lap') [81, 85, 88].forEach((note, i) => this.tone(noteFrequency(note), time + i * 0.09, 0.22, 0.11));
+    if (event === 'pickup') [81, 88, 93].forEach((note, i) => this.tone(noteFrequency(note), time + i * 0.055, 0.18, 0.1, 'sine'));
+    if (event === 'item') { this.tone(420, time, 0.2, 0.11, 'triangle', this.master, 980); this.tone(1200, time + 0.08, 0.19, 0.07, 'sine', this.master, 600); }
+    if (event === 'shield') [88, 81, 74].forEach((note, i) => this.tone(noteFrequency(note), time + i * 0.045, 0.18, 0.085, 'sine'));
     if (event === 'finish' && time - this.lastFinish > 1.5) {
       this.lastFinish = time;
       [74, 78, 81, 86, 85, 81, 86].forEach((note, i) => this.tone(noteFrequency(note), time + i * 0.13, i === 6 ? 0.8 : 0.22, 0.14));

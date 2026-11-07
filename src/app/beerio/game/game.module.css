@@ -65,3 +65,10 @@
   .speed span { font-size: 7px; }
 }
 @media (prefers-reduced-motion: reduce) { .progress span { transition: none; } }
+
+.itemHud { position: absolute; top: clamp(46px, 5vw, 76px); left: clamp(8px, 1.35vw, 22px); display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 5px 9px; border: 1px solid #ffffff40; border-radius: 8px; background: #141c2bd9; box-shadow: 0 3px 12px #0004; }
+.itemHud strong, .itemHud small { display: block; line-height: 1.2; }
+.itemHud strong { font-size: clamp(9px, 0.8vw, 13px); }
+.itemHud small { margin-top: 2px; font-size: 9px; opacity: 0.75; }
+.itemIcon { font-size: 24px; font-weight: 900; line-height: 1; }
+.itemEmpty { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; color: #ffffff80; }

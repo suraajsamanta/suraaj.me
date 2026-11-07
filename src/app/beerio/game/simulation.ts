@@ -1,27 +1,28 @@
-import { BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, trackCurve, trackPose, TRACK_LENGTH, wrap } from './track';
+import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, stepPowers, type KartPowerState, type PowerWorld } from './powerups';
+import { ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, trackCurve, trackPose, TRACK_LENGTH, wrap } from './track';
 
-export type DriverInput = { steer: number; accelerate: boolean; brake: boolean };
+export type DriverInput = { steer: number; accelerate: boolean; brake: boolean; action?: number };
 export type GamePlayer = { id: string; name: string; color: string; input: DriverInput };
 export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean };
 export type KartState = {
   id: string; distance: number; lane: number; speed: number; lateral: number;
   /** World yaw relative to the local track tangent, also used by the renderer. */
   heading: number;
-  boost: number; bump: number; finishTime: number | null; padCooldown: number;
+  boost: number; bump: number; finishTime: number | null; padCooldown: number; obstacleCooldown: number; power: KartPowerState;
 };
-export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null };
+export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null; powers: PowerWorld };
 export const COUNTDOWN_SECONDS = 3;
 export const MAX_SPEED = 43;
 export const FINISH_GRACE_SECONDS = 25;
 
 export function createRace(players: GamePlayer[], laps = 3): RaceState {
   return {
-    elapsed: 0, countdown: COUNTDOWN_SECONDS, complete: false, laps, firstFinish: null,
+    elapsed: 0, countdown: COUNTDOWN_SECONDS, complete: false, laps, firstFinish: null, powers: createPowerWorld(),
     // Start behind the line, without awarding a lap on the initial crossing.
     karts: players.slice(0, 6).map((player, i) => ({
       id: player.id, distance: -6 - Math.floor(i / 2) * 4.5,
       lane: i % 2 === 0 ? -2.1 : 2.1, speed: 0, lateral: 0, heading: 0,
-      boost: 0, bump: 0, finishTime: null, padCooldown: 0,
+      boost: 0, bump: 0, finishTime: null, padCooldown: 0, obstacleCooldown: 0, power: createPowerState(player.input.action),
     })),
   };
 }
@@ -49,6 +50,8 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     return;
   }
   race.elapsed += dt;
+  stepPowers(race, players, dt);
+  const previousDistances = new Map(race.karts.map((kart) => [kart.id, kart.distance]));
   for (const kart of race.karts) {
     const input = players.find((player) => player.id === kart.id)?.input;
     const finished = kart.finishTime !== null;
@@ -59,9 +62,10 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     kart.boost = Math.max(0, kart.boost - dt);
     kart.bump = Math.max(0, kart.bump - dt);
     kart.padCooldown = Math.max(0, kart.padCooldown - dt);
+    kart.obstacleCooldown = Math.max(0, kart.obstacleCooldown - dt);
     const boost = kart.boost > 0;
-    const maximum = finished ? 14 : offRoad ? 19 : boost ? MAX_SPEED + 15 : MAX_SPEED;
-    const engine = finished ? 7 : accelerating ? boost ? 23 : 13 : -5;
+    const maximum = finished ? 14 : offRoad ? 19 : kart.power.slow > 0 ? 24 : boost ? MAX_SPEED + 15 : MAX_SPEED;
+    const engine = (finished ? 7 : accelerating ? boost ? 23 : 13 : -5) * (kart.power.slow > 0 ? 0.55 : 1);
     kart.speed = clamp(kart.speed + (braking ? -30 : engine) * dt, 0, MAX_SPEED + 17);
     if (kart.speed > maximum) kart.speed = Math.max(maximum, kart.speed - (offRoad ? 32 : 14) * dt);
     const previousDistance = kart.distance;
@@ -105,11 +109,44 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
         }
       });
     }
+    // Hazards live in track-relative coordinates so collisions match the visible props.
+    // Check the whole segment travelled this step to avoid tunnelling at high speed.
+    if (!finished && kart.obstacleCooldown <= 0 && kart.speed > 1) {
+      const travel = kart.distance - previousDistance;
+      for (const obstacle of ACTIVE_TRACK.obstacles) {
+        const offset = circularDistance(obstacle.fraction * TRACK_LENGTH, previousDistance);
+        const closest = clamp(offset, 0, travel);
+        const longitudinal = Math.abs(offset - closest);
+        const radius = obstacle.kind === 'barrel' ? 2 : 3;
+        const laneRadius = obstacle.kind === 'barrel' ? 1.5 : 2.2;
+        if (longitudinal < radius && Math.abs(kart.lane - obstacle.lane) < laneRadius) {
+          const direction = kart.lane >= obstacle.lane ? 1 : -1;
+          // A foam guard absorbs a hazard; brief hit immunity prevents stacked damage.
+          if (kart.power.hitCooldown > 0 || absorbPowerHit(kart)) {
+            kart.obstacleCooldown = 1;
+            break;
+          }
+          if (obstacle.kind === 'barrel') {
+            kart.speed *= 0.52;
+            kart.lateral += direction * 4;
+            kart.bump = 0.4;
+          } else {
+            kart.speed *= 0.8;
+            kart.lateral += direction * 6;
+            kart.heading = clamp(kart.heading + direction * 0.2, -1.2, 1.2);
+            kart.bump = 0.25;
+          }
+          kart.obstacleCooldown = 1;
+          break;
+        }
+      }
+    }
     if (!finished && kart.distance >= TRACK_LENGTH * race.laps) {
       kart.finishTime = race.elapsed;
       if (race.firstFinish === null) race.firstFinish = race.elapsed;
     }
   }
+  collectPowerups(race, previousDistances);
   // Symmetric resolution: update each pair once, so player order has no advantage.
   for (let i = 0; i < race.karts.length; i++) {
     for (let j = i + 1; j < race.karts.length; j++) {

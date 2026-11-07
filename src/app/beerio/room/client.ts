@@ -52,6 +52,7 @@ export class BeerioRoomClient {
   private lastInputAt = new Map<string, number>();
   private input: RoomInput = { ...ZERO_INPUT };
   private lastSentInput = 0;
+  private actionSequence = 0;
   private lastSentState = 0;
   private retries = 0;
   private intentionalClose = false;
@@ -186,6 +187,13 @@ export class BeerioRoomClient {
         if (!room || !Array.isArray(room.players) || typeof message.token !== "string" || (message.role !== "host" && message.role !== "player")) return;
         this.session = { code: room.code, token: message.token, role: message.role, relayUrl: this.snapshot.relayUrl };
         this.storeSession();
+        // A resumed phone starts from the relay's high-water mark, not zero.
+        // Pending presses are deliberately not replayed across a reconnect.
+        if (message.role === "player") {
+          const self = room.players.find(player => player.id === message.playerId);
+          this.actionSequence = Math.max(this.actionSequence, self?.actionSequence ?? 0, self?.input.action ?? 0);
+          this.input = { ...ZERO_INPUT };
+        }
         this.pendingHello = null;
         this.retries = 0;
         if (this.connectionTimer) clearTimeout(this.connectionTimer);
@@ -202,7 +210,7 @@ export class BeerioRoomClient {
           const now = Date.now();
           let changed = false;
           const players = this.snapshot.players.map((player) => {
-            if (now - (this.lastInputAt.get(player.id) ?? 0) > 600 && (player.input.steer !== 0 || player.input.accelerate || player.input.brake)) {
+            if (now - (this.lastInputAt.get(player.id) ?? 0) > 600 && (player.input.steer !== 0 || player.input.accelerate || player.input.brake || player.input.action !== undefined)) {
               changed = true;
               return { ...player, input: { ...ZERO_INPUT } };
             }
@@ -251,11 +259,25 @@ export class BeerioRoomClient {
   }
   setInput = (input: RoomInput) => {
     const previous = this.input;
-    this.input = this.suppressInput ? { ...ZERO_INPUT } : normalizeInput(input);
+    // Only useItem creates action events. Direction updates preserve the current
+    // event until an explicit safety reset, so heartbeats cannot erase a tap.
+    const normalized = normalizeInput(input);
+    delete normalized.action;
+    this.input = this.suppressInput ? { ...ZERO_INPUT } : { ...normalized, ...(previous.action ? { action: previous.action } : {}) };
     // Send an actual release immediately, but do not flood the relay with repeated neutral frames.
     const released = (previous.accelerate || previous.brake || previous.steer !== 0) &&
       !this.input.accelerate && !this.input.brake && this.input.steer === 0;
     if (released || Date.now() - this.lastSentInput >= 34) this.sendInput();
+  };
+  /** A discrete press, separate from held driving controls. */
+  useItem = (): boolean => {
+    if (this.suppressInput || this.snapshot.role !== "player" || this.snapshot.status !== "connected" || !this.snapshot.hostConnected || !this.snapshot.locked || this.socket?.readyState !== WebSocket.OPEN) return false;
+    const self = this.snapshot.players.find(player => player.id === this.snapshot.playerId);
+    this.actionSequence = Math.max(this.actionSequence, self?.actionSequence ?? 0);
+    if (this.actionSequence >= Number.MAX_SAFE_INTEGER) return false;
+    this.input = { ...this.input, action: ++this.actionSequence };
+    this.sendInput();
+    return true;
   };
   private sendInput() {
     if (this.snapshot.role !== "player" || this.snapshot.status !== "connected") return;
@@ -289,6 +311,7 @@ export class BeerioRoomClient {
     this.session = null;
     this.pendingHello = null;
     this.lastInputAt.clear();
+    this.actionSequence = 0;
     this.storeSession();
     this.update(initialSnapshot());
   };

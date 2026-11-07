@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { audioSnapshot, noteFrequency, RaceAudio, soundEvents } from './audio';
 import { RaceRenderer, parseColor } from './renderer';
 import { createRace, type GamePlayer } from './simulation';
-import { TRACK_LENGTH } from './track';
+import { selectTrack, TRACKS, TRACK_LENGTH } from './track';
 
 const player: GamePlayer = { id: 'racer', name: 'Racer', color: '#ffcb55', input: { steer: 0, accelerate: true, brake: false } };
 test('original sound cues trigger once on transitions, not every frame', () => {
@@ -23,6 +23,20 @@ test('original sound cues trigger once on transitions, not every frame', () => {
   assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['lap']);
   previous = audioSnapshot(race); race.karts[0].finishTime = 40; race.complete = true;
   assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['finish']);
+  assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
+});
+test('power-up cues are edge-triggered and shield expiry is silent', () => {
+  const race = createRace([player]);
+  let previous = audioSnapshot(race);
+  race.karts[0].power.collected++;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['pickup']);
+  previous = audioSnapshot(race); race.karts[0].power.used++; race.karts[0].power.shield = 8;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['item']);
+  previous = audioSnapshot(race); race.karts[0].power.shield = 0;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), []);
+  race.karts[0].power.shield = 8; previous = audioSnapshot(race);
+  race.karts[0].power.shield = 0; race.karts[0].power.flash = 0.55;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['shield']);
   assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
 });
 test('pitched synth notes are tuned and invalid kart colors safely fall back', () => {
@@ -100,9 +114,28 @@ test('six-view renderer builds finite geometry, draws every viewport and frees G
     const players = Array.from({ length: 6 }, (_, i) => ({ ...player, id: String(i) }));
     const race = createRace(players), renderer = new RaceRenderer(canvas, players, race);
     race.karts[0].boost = 1; race.karts[1].bump = 0.2; race.karts[2].lane = 8; race.karts[2].speed = 25;
+    race.karts[0].power.shield = 6; race.karts[1].power.flash = 0.5;
+    race.powers.hazards.push({ id: 1, ownerId: '0', distance: 20, lane: -2, life: 8 });
+    race.powers.projectiles.push({ id: 2, ownerId: '0', distance: 25, lane: 2, life: 3 });
     renderer.render(race, 1 / 60);
     assert.equal(stats.viewports, 6); assert.ok(stats.draws > 30); assert.ok(stats.vertices > 10000);
     assert.equal(stats.nonFinite, false); assert.ok(canvas.width <= 1800);
     renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('all selectable circuits build finite road, scenery and hazard geometry', () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    for (const track of TRACKS) {
+      selectTrack(track.id);
+      const { gl, stats, buffers, programs } = fakeWebGL();
+      const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 960, height: 600 }) } as unknown as HTMLCanvasElement;
+      const race = createRace([player]), renderer = new RaceRenderer(canvas, [player], race);
+      renderer.render(race, 1 / 60); assert.equal(stats.nonFinite, false, track.name);
+      assert.equal(stats.viewports, 1); renderer.dispose();
+      assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+    }
+  } finally { selectTrack('sunset'); Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
 });

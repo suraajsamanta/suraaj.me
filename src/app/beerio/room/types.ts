@@ -1,11 +1,14 @@
 /** Shared browser-side contract. The relay never runs the race simulation. */
-export type RoomInput = { steer: number; accelerate: boolean; brake: boolean };
+/** action is an optional, monotonically increasing item-press sequence. */
+export type RoomInput = { steer: number; accelerate: boolean; brake: boolean; action?: number };
 export type RoomPlayer = {
   id: string;
   name: string;
   color: string;
   connected: boolean;
   input: RoomInput;
+  /** Retained across safety resets and reconnects, without replaying an action. */
+  actionSequence?: number;
 };
 export type RoomStatus = "idle" | "connecting" | "connected" | "reconnecting" | "error" | "closed";
 export type RoomRole = "host" | "player";
@@ -30,5 +33,6 @@ export function normalizeInput(input: RoomInput): RoomInput {
     steer: Number.isFinite(input.steer) ? Math.max(-1, Math.min(1, input.steer)) : 0,
     accelerate: input.accelerate === true,
     brake: input.brake === true,
+    ...(Number.isSafeInteger(input.action) && input.action! > 0 ? { action: input.action } : {}),
   };
 }

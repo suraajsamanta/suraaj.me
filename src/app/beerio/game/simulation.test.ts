@@ -168,3 +168,91 @@ test('a completed race is immutable until a new race is created', () => {
   advance(race, players, 2);
   assert.equal(JSON.stringify(race), result);
 });
+
+test('each selectable circuit closes, has distinct geometry, and resets cleanly', async () => {
+  const track = await import('./track');
+  const lengths = new Set<number>();
+  try {
+    for (const definition of track.TRACKS) {
+      assert.equal(track.selectTrack(definition.id).id, definition.id);
+      assert.ok(track.TRACK_LENGTH > 600, `${definition.name} should be a full circuit`);
+      assert.deepEqual(track.trackPose(0).position, track.trackPose(track.TRACK_LENGTH).position);
+      assert.ok(track.TRACK_POINTS.every((point) => Number.isFinite(point.x) && Number.isFinite(point.z)));
+      assert.ok(definition.obstacles.every((obstacle) => obstacle.fraction > 0 && obstacle.fraction < 1 && Math.abs(obstacle.lane) < 7));
+      lengths.add(Math.round(track.TRACK_LENGTH));
+      const race = createRace([driver('reset')]);
+      assert.equal(race.karts[0].distance, -6);
+      assert.equal(race.karts[0].obstacleCooldown, 0);
+    }
+    assert.equal(lengths.size, track.TRACKS.length);
+    assert.equal(track.selectTrack('not-a-track').id, 'sunset');
+  } finally { track.selectTrack('sunset'); }
+});
+
+test('barrels and oil slow karts on contact and leave a clear route around them', async () => {
+  const track = await import('./track');
+  try {
+    for (const kind of ['barrel', 'oil'] as const) {
+      track.selectTrack('sunset');
+      const obstacle = track.ACTIVE_TRACK.obstacles.find((entry) => entry.kind === kind)!;
+      const players = [driver('a')];
+      const hit = createRace(players), miss = createRace(players);
+      for (const race of [hit, miss]) {
+        race.countdown = 0;
+        Object.assign(race.karts[0], { distance: obstacle.fraction * track.TRACK_LENGTH - 0.5, speed: 30 });
+      }
+      hit.karts[0].lane = obstacle.lane;
+      miss.karts[0].lane = obstacle.lane > 0 ? -6 : 6;
+      stepRace(hit, players, 1 / 60);
+      stepRace(miss, players, 1 / 60);
+      assert.ok(hit.karts[0].speed < miss.karts[0].speed, `${kind} should slow the kart`);
+      assert.ok(hit.karts[0].obstacleCooldown > 0);
+      assert.equal(miss.karts[0].obstacleCooldown, 0);
+    }
+  } finally { track.selectTrack('sunset'); }
+});
+
+test('powerups are collected and an action sequence fires exactly once', () => {
+  const players = [driver('power')], race = createRace(players); race.countdown = 0;
+  const box = race.powers.boxes[0];
+  Object.assign(race.karts[0], { distance: box.distance, lane: box.lane, speed: 20 });
+  stepRace(race, players, 1 / 60);
+  assert.ok(race.karts[0].power.item);
+  assert.ok(box.cooldown > 0);
+  race.karts[0].power.item = 'guard';
+  players[0].input.action = 1;
+  stepRace(race, players, 1 / 60);
+  assert.equal(race.karts[0].power.item, null);
+  assert.ok(race.karts[0].power.shield > 0);
+  assert.equal(race.karts[0].power.used, 1);
+  race.karts[0].power.item = 'guard';
+  stepRace(race, players, 1 / 60);
+  assert.equal(race.karts[0].power.item, 'guard');
+  assert.equal(race.karts[0].power.used, 1);
+});
+
+test('foam guard absorbs a static obstacle and hit immunity prevents repeated damage', async () => {
+  const track = await import('./track'); track.selectTrack('sunset');
+  const obstacle = track.ACTIVE_TRACK.obstacles.find((entry) => entry.kind === 'barrel')!;
+  const players = [driver('shield')], race = createRace(players); race.countdown = 0;
+  const kart = race.karts[0];
+  Object.assign(kart, { distance: obstacle.fraction * track.TRACK_LENGTH, lane: obstacle.lane, speed: 30 });
+  kart.power.shield = 5;
+  stepRace(race, players, 1 / 60);
+  assert.equal(kart.power.shield, 0);
+  assert.ok(kart.speed >= 30);
+  assert.ok(kart.power.hitCooldown > 0);
+  assert.ok(kart.obstacleCooldown > 0);
+});
+
+test('old item input is baselined at race creation', () => {
+  const players = [driver('old')]; players[0].input.action = 10;
+  const race = createRace(players); race.countdown = 0;
+  race.karts[0].power.item = 'fizz';
+  stepRace(race, players, 1 / 60);
+  assert.equal(race.karts[0].power.item, 'fizz');
+  players[0].input.action = 11;
+  stepRace(race, players, 1 / 60);
+  assert.equal(race.karts[0].power.item, null);
+  assert.ok(race.karts[0].boost > 0);
+});

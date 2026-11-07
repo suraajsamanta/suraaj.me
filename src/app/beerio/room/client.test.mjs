@@ -242,3 +242,45 @@ test('initial handshake shows a cold-start hint and times out after 90 seconds',
   assert.equal(f.client.getSnapshot().status, 'error');
   assert.match(f.client.getSnapshot().error, /within 90 seconds/);
 });
+
+test('item presses are discrete, preserve held driving, and stop at safety boundaries', async (t) => {
+  const f = fixture(t);
+  f.client.joinRoom({ code: 'ABC234', name: 'Phone' });
+  await flush();
+  welcome(f.socket());
+  assert.equal(f.client.useItem(), false, 'lobby taps cannot queue a future item');
+  f.socket().receive({ type: 'room', room: { ...f.client.getSnapshot(), locked: true } });
+  f.client.setInput(active);
+  assert.equal(f.client.useItem(), true);
+  assert.deepEqual(f.socket().sent.at(-1).input, { ...active, action: 1 });
+  f.client.setInput(ZERO);
+  assert.deepEqual(f.socket().sent.at(-1).input, { ...ZERO, action: 1 }, 'pedal release does not erase an action before the host frame');
+  f.client.resetInput();
+  assert.deepEqual(f.socket().sent.at(-1).input, ZERO, 'explicit safety reset drops pending actions');
+  f.client.setInputSuppressed(true);
+  assert.equal(f.client.useItem(), false);
+  f.client.setInputSuppressed(false);
+  f.client.useItem();
+  assert.equal(f.socket().sent.at(-1).input.action, 2);
+  f.client.destroy();
+  assert.equal(f.client.useItem(), false);
+  f.client.restoreSession('ABC234');
+  await flush();
+  welcome(f.socket(), 'player', { locked: true, players: [{ id: 'player1', name: 'Phone', color: '#4ce4f3', connected: true, input: { ...ZERO }, actionSequence: 19 }] });
+  assert.ok(!f.socket().sent.some(message => message.type === 'input' && message.input.action), 'resume does not replay a pre-reconnect tap');
+  f.client.useItem();
+  assert.equal(f.socket().sent.at(-1).input.action, 20, 'next press starts beyond relay high-water mark');
+});
+
+test('host receives item sequences, stale action-only packets are neutralized, and older actions remain distinguishable', async (t) => {
+  const f = fixture(t);
+  f.client.createRoom();
+  await flush();
+  welcome(f.socket(), 'host');
+  f.socket().receive({ type: 'input', playerId: 'player1', input: { ...ZERO, action: 3 } });
+  assert.equal(f.client.getSnapshot().players[0].input.action, 3);
+  await wait(750);
+  assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO);
+  f.socket().receive({ type: 'input', playerId: 'player1', input: { ...ZERO, action: -10 } });
+  assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO, 'malformed sequences are discarded');
+});

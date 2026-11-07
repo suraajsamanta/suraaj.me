@@ -99,3 +99,33 @@ test('health endpoint contains no room identities or credentials', async (t) => 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, service: 'beerio-relay', rooms: 0 });
 });
+
+test('real WebSocket item presses retain sequence through release and resume without replay', async (t) => {
+  const relay = await running(t);
+  const host = await client(relay.url);
+  const created = host.wait(message => message.type === 'welcome');
+  host.send({ type: 'create', maxPlayers: 4 });
+  const { room: { code } } = await created;
+  const phone = await client(relay.url);
+  const joined = phone.wait(message => message.type === 'welcome');
+  phone.send({ type: 'join', code, name: 'Item Racer' });
+  const identity = await joined;
+  const item = host.wait(message => message.type === 'input' && message.input.action === 1);
+  phone.send({ type: 'input', input: { steer: 0.3, accelerate: true, brake: false, action: 1 } });
+  assert.equal((await item).playerId, identity.playerId);
+  const released = host.wait(message => message.type === 'input' && !message.input.accelerate && message.input.action === undefined);
+  phone.send({ type: 'input', input: { steer: 0, accelerate: false, brake: false } });
+  await released;
+  phone.ws.close();
+  const replacement = await client(relay.url);
+  const resumed = replacement.wait(message => message.type === 'welcome');
+  replacement.send({ type: 'resume', code, token: identity.token });
+  const { room } = await resumed;
+  assert.equal(room.players[0].actionSequence, 1);
+  assert.equal(room.players[0].input.action, undefined);
+  const next = host.wait(message => message.type === 'input' && message.input.action === 2);
+  replacement.send({ type: 'input', input: { steer: 0, accelerate: false, brake: false, action: 2 } });
+  await next;
+  replacement.ws.close();
+  host.ws.close();
+});

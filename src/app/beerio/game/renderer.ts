@@ -1,10 +1,11 @@
-import { BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, TRACK_LENGTH, TRACK_POINTS, trackPose, type Vec3 } from './track';
+import { ACTIVE_TRACK, circularDistance, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, TRACK_LENGTH, TRACK_POINTS, trackPose, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
 
 type Color = [number, number, number];
 type Mesh = { buffer: WebGLBuffer; count: number };
 type Camera = { eye: Vec3; target: Vec3 };
-const SKY: Color = [0.66, 0.72, 0.83];
+const SKY: Color = [0.94, 0.76, 0.62];
+const CORAL: Color = [1, 0.38, 0.3], TEAL: Color = [0.09, 0.76, 0.72], CREAM: Color = [1, 0.94, 0.76];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
 export function parseColor(hex: string): Color {
@@ -37,16 +38,16 @@ function viewProjection(camera: Camera, aspect: number, boost: boolean): Float32
   const projection = new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) / (near - far), -1, 0, 0, (2 * far * near) / (near - far), 0]);
   return multiply(projection, view);
 }
-function model(position: Vec3, yaw = 0): Float32Array {
+function model(position: Vec3, yaw = 0, scale = 1): Float32Array {
   const c = Math.cos(yaw), s = Math.sin(yaw);
-  return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, position[0], position[1], position[2], 1]);
+  return new Float32Array([c * scale, 0, -s * scale, 0, 0, scale, 0, 0, s * scale, 0, c * scale, 0, position[0], position[1], position[2], 1]);
 }
 
 class Geometry {
   data: number[] = [];
   triangle(a: Vec3, b: Vec3, c: Vec3, color: Color, glow = false) {
     const normal = normalize(cross(subtract(b, a), subtract(c, a)));
-    const light = glow ? 1 : 0.66 + Math.max(0, dot(normal, [0.32, 0.87, -0.37])) * 0.34;
+    const light = glow ? 1 : 0.8 + Math.max(0, dot(normal, [0.32, 0.87, -0.37])) * 0.2;
     for (const point of [a, b, c]) this.data.push(...point, color[0] * light, color[1] * light, color[2] * light);
   }
   quad(a: Vec3, b: Vec3, c: Vec3, d: Vec3, color: Color, glow = false) {
@@ -81,6 +82,33 @@ class Geometry {
       this.quad(p(r, s), p(r + 1, s), p(r + 1, s + 1), p(r, s + 1), color, glow);
     }
   }
+  disc(center: Vec3, radiusX: number, radiusZ: number, color: Color, sides = 20) {
+    for (let i = 0; i < sides; i++) {
+      const a = i / sides * Math.PI * 2, b = (i + 1) / sides * Math.PI * 2;
+      this.triangle(center, [center[0] + Math.cos(b) * radiusX, center[1], center[2] + Math.sin(b) * radiusZ], [center[0] + Math.cos(a) * radiusX, center[1], center[2] + Math.sin(a) * radiusZ], color, true);
+    }
+  }
+  wheel(center: Vec3, radius: number, width: number, color: Color, sides = 12) {
+    for (let i = 0; i < sides; i++) {
+      const a = i / sides * Math.PI * 2, b = (i + 1) / sides * Math.PI * 2;
+      const p = (side: number, angle: number, r = radius): Vec3 => [center[0] + side * width / 2, center[1] + Math.cos(angle) * r, center[2] + Math.sin(angle) * r];
+      this.quad(p(-1, a), p(1, a), p(1, b), p(-1, b), color);
+      for (const side of [-1, 1]) {
+        this.triangle([center[0] + side * width / 2, center[1], center[2]], p(side, a), p(side, b), [0.11, 0.15, 0.22]);
+        this.triangle([center[0] + side * (width / 2 + 0.005), center[1], center[2]], [center[0] + side * (width / 2 + 0.005), center[1] + Math.cos(a) * radius * 0.54, center[2] + Math.sin(a) * radius * 0.54], [center[0] + side * (width / 2 + 0.005), center[1] + Math.cos(b) * radius * 0.54, center[2] + Math.sin(b) * radius * 0.54], i % 3 ? [0.8, 0.86, 0.89] : [0.3, 0.37, 0.48]);
+      }
+    }
+  }
+  beam(a: Vec3, b: Vec3, width: number, color: Color) {
+    const direction = subtract(b, a), right = normalize(cross(direction, [0, 1, 0]));
+    const side = Math.hypot(...right) > 0.1 ? right : [1, 0, 0] as Vec3;
+    const up = normalize(cross(side, direction));
+    const p = (point: Vec3, x: number, y: number): Vec3 => [point[0] + (side[0] * x + up[0] * y) * width, point[1] + (side[1] * x + up[1] * y) * width, point[2] + (side[2] * x + up[2] * y) * width];
+    this.quad(p(a, -1, -1), p(a, 1, -1), p(b, 1, -1), p(b, -1, -1), color);
+    this.quad(p(a, 1, -1), p(a, 1, 1), p(b, 1, 1), p(b, 1, -1), color);
+    this.quad(p(a, 1, 1), p(a, -1, 1), p(b, -1, 1), p(b, 1, 1), color);
+    this.quad(p(a, -1, 1), p(a, -1, -1), p(b, -1, -1), p(b, -1, 1), color);
+  }
   roadStrip(from: number, to: number, left: number, right: number, color: Color, y = 0.04, glow = false) {
     this.quad(trackPose(from, left, y).position, trackPose(to, left, y).position, trackPose(to, right, y).position, trackPose(from, right, y).position, color, glow);
   }
@@ -88,12 +116,13 @@ class Geometry {
 
 function worldGeometry(): Geometry {
   const g = new Geometry();
-  g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.72, 0.66, 0.51]);
-  const dark: Color = [0.22, 0.25, 0.34], cream: Color = [0.99, 0.91, 0.69], orange: Color = [1, 0.43, 0.27];
+  g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
+  const dark: Color = [0.2, 0.25, 0.32], cream = CREAM, orange = CORAL;
   for (let i = 0; i < TRACK_POINTS.length - 1; i++) {
     const a = TRACK_POINTS[i].distance, b = TRACK_POINTS[i + 1].distance;
-    g.roadStrip(a, b, -11.2, 11.2, [0.46, 0.55, 0.42], 0);
+    g.roadStrip(a, b, -11.2, 11.2, [0.51, 0.68, 0.42], 0);
     g.roadStrip(a, b, -ROAD_HALF_WIDTH, ROAD_HALF_WIDTH, dark, 0.035);
+    g.roadStrip(a, b, -6.9, -6.72, cream, 0.055); g.roadStrip(a, b, 6.72, 6.9, cream, 0.055);
     const curb = Math.floor(i / 3) % 2 === 0 ? cream : orange;
     g.roadStrip(a, b, -7.7, -7, curb, 0.07); g.roadStrip(a, b, 7, 7.7, curb, 0.07);
     if (i % 10 < 4) g.roadStrip(a, b, -0.07, 0.07, [0.48, 0.49, 0.55], 0.05);
@@ -102,7 +131,25 @@ function worldGeometry(): Geometry {
       for (const side of [-1, 1]) {
         const pose = trackPose((a + next) / 2, side * 10.6, 0.55);
         g.box(pose.position, [0.55, 1.05, next - a + 0.2], i % 12 === 0 ? orange : cream, pose.yaw);
+        g.box([pose.position[0], 1.12, pose.position[2]], [0.65, 0.15, next - a + 0.2], TEAL, pose.yaw);
       }
+    }
+  }
+  // Static course hazards use the simulation's exact lane and distance coordinates.
+  for (const obstacle of ACTIVE_TRACK.obstacles) {
+    const at = obstacle.fraction * TRACK_LENGTH, pose = trackPose(at, obstacle.lane);
+    const [x, , z] = pose.position;
+    if (obstacle.kind === 'barrel') {
+      g.disc([x + 0.2, 0.07, z + 0.25], 1, 0.85, [0.11, 0.16, 0.22]);
+      g.cylinder([x, 0.08, z], 0.72, 1.35, [0.92, 0.4, 0.17], 12, 0.72);
+      for (const height of [0.22, 1.05]) g.cylinder([x, height, z], 0.75, 0.18, [1, 0.91, 0.58], 12);
+      g.cylinder([x, 1.44, z], 0.69, 0.07, [0.55, 0.25, 0.12], 12);
+      g.cylinder([x, 1.52, z], 0.16, 0.08, [0.23, 0.22, 0.24], 8);
+    } else {
+      g.disc([x, 0.075, z], 2.05, 2.25, [0.075, 0.07, 0.14]);
+      g.disc([x - 0.4, 0.078, z], 1.25, 1.6, [0.2, 0.14, 0.31]);
+      g.disc([x + 0.4, 0.08, z + 0.2], 1, 1.25, [0.1, 0.29, 0.35]);
+      g.disc([x + 0.75, 0.083, z + 0.1], 0.5, 0.6, [0.24, 0.4, 0.44]);
     }
   }
   BOOST_FRACTIONS.forEach((fraction, i) => {
@@ -127,14 +174,15 @@ function worldGeometry(): Geometry {
   let seed = 487;
   const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
   // Purpose-built low-poly desert scenery, with no downloaded assets.
-  for (let i = 0; i < 70; i++) {
+  for (let i = 0; i < 60; i++) {
     const at = random() * TRACK_LENGTH, side = random() > 0.5 ? 1 : -1;
     const pose = trackPose(at, side * (16 + random() * 19));
     const [x, , z] = pose.position;
     const height = 3 + random() * 5;
+    g.disc([x + 0.8, 0.012, z + 0.8], 2.2, 1.5, [0.74, 0.56, 0.35], 10);
     if (i % 3 === 0) {
-      g.cylinder([x, 0, z], 1.7 + random(), height * 0.55, [0.68, 0.43, 0.36], 6, 1.2);
-      g.cylinder([x, height * 0.55, z], 1.25, height * 0.4, [0.8, 0.52, 0.39], 6, 0.9);
+      g.cylinder([x, 0, z], 1.7 + random(), height * 0.55, [0.85, 0.43, 0.3], 6, 1.2);
+      g.cylinder([x, height * 0.55, z], 1.25, height * 0.4, [0.98, 0.62, 0.38], 6, 0.9);
     } else {
       g.cylinder([x, 0, z], 0.45, height, [0.2, 0.43, 0.34], 6);
       g.box([x + 0.9, height * 0.52, z], [1.8, 0.5, 0.55], [0.23, 0.48, 0.35]);
@@ -146,7 +194,7 @@ function worldGeometry(): Geometry {
   for (let i = 0; i < 28; i++) {
     const angle = i / 28 * Math.PI * 2;
     const radius = 330 + random() * 100;
-    g.cylinder([Math.sin(angle) * radius, -1, Math.cos(angle) * radius], 35 + random() * 35, 40 + random() * 70, [0.55 + random() * 0.12, 0.44, 0.48], 6, 12 + random() * 16);
+    g.cylinder([Math.sin(angle) * radius, -1, Math.cos(angle) * radius], 35 + random() * 35, 40 + random() * 70, [0.78 + random() * 0.12, 0.48, 0.4], 6, 12 + random() * 16);
   }
   // Sculptural trackside flags make turns visible from the chase cameras.
   for (let i = 0; i < 18; i++) {
@@ -154,40 +202,136 @@ function worldGeometry(): Geometry {
     g.cylinder(pose.position, 0.12, 6, [0.35, 0.32, 0.3], 5);
     g.box([pose.position[0], 5.25, pose.position[2]], [0.15, 1.4, 2.4], i % 2 ? [0.28, 0.74, 0.71] : [0.95, 0.61, 0.27], pose.yaw);
   }
+  // Original festival scenery: palms, colorful crowds, bunting, and floating balloons.
+  for (let i = 0; i < 25; i++) {
+    const pose = trackPose((i + 0.5) / 25 * TRACK_LENGTH, (i % 2 ? -1 : 1) * (15 + random() * 11));
+    const [x, , z] = pose.position, height = 5.5 + random() * 3.5;
+    g.disc([x + 1.1, 0.02, z + 1.1], 3.2, 2, [0.68, 0.59, 0.33]);
+    g.cylinder([x, 0, z], 0.35, height, [0.63, 0.39, 0.23], 7, 0.23);
+    for (let leaf = 0; leaf < 7; leaf++) {
+      const a = leaf / 7 * Math.PI * 2 + i, dx = Math.cos(a), dz = Math.sin(a);
+      const root: Vec3 = [x, height, z], mid: Vec3 = [x + dx * 2.1, height + 0.7, z + dz * 2.1], tip: Vec3 = [x + dx * 4, height - 1, z + dz * 4];
+      const left: Vec3 = [mid[0] - dz * 0.8, mid[1] - 0.15, mid[2] + dx * 0.8], right: Vec3 = [mid[0] + dz * 0.8, mid[1] - 0.15, mid[2] - dx * 0.8];
+      g.triangle(root, left, mid, [0.15, 0.57, 0.32]); g.triangle(root, mid, right, [0.32, 0.73, 0.38]);
+      g.triangle(mid, left, tip, [0.15, 0.57, 0.32]); g.triangle(mid, tip, right, [0.32, 0.73, 0.38]);
+    }
+  }
+  const festivalColors: Color[] = [CORAL, TEAL, [1, 0.76, 0.24], [0.68, 0.43, 0.86], [0.4, 0.65, 1]];
+  for (const fraction of [0.025, 0.28, 0.54, 0.83]) {
+    const at = fraction * TRACK_LENGTH, pose = trackPose(at, -19);
+    for (let row = 0; row < 3; row++) {
+      g.box(trackPose(at, -15 - row * 2.2, 0.4 + row * 0.6).position, [2.1, 0.8 + row * 1.2, 21], [0.28, 0.35, 0.43], pose.yaw);
+      for (let person = 0; person < 12; person++) {
+        const body = trackPose(at - 9.5 + person * 1.7, -15 - row * 2.2, 1.15 + row * 1.2).position;
+        g.cylinder(body, 0.29, 0.65, festivalColors[(row * 3 + person) % 5], 6, 0.22);
+        g.sphere([body[0], body[1] + 0.92, body[2]], 0.26, [0.99, 0.8, 0.59], 6, 4);
+      }
+    }
+    for (const end of [-11, 11]) g.box(trackPose(at + end, -17, 4.5).position, [0.28, 9, 0.28], cream, pose.yaw);
+    g.box(trackPose(at, -17, 9).position, [7.3, 0.3, 23], TEAL, pose.yaw);
+    for (let stripe = -10; stripe < 11; stripe += 2) g.box(trackPose(at + stripe, -17, 9.18).position, [7.3, 0.06, 0.65], cream, pose.yaw);
+  }
+  for (const fraction of [0.11, 0.38, 0.66, 0.91]) {
+    const at = fraction * TRACK_LENGTH, left = trackPose(at, -11.5, 8).position, right = trackPose(at, 11.5, 8).position;
+    g.cylinder(trackPose(at, -11.5).position, 0.13, 8.5, cream, 6); g.cylinder(trackPose(at, 11.5).position, 0.13, 8.5, cream, 6);
+    g.beam(left, right, 0.035, [0.37, 0.35, 0.34]);
+    for (let flag = -10; flag < 11; flag += 1.5) {
+      g.triangle(trackPose(at, flag, 7.9).position, trackPose(at, flag + 1, 7.9).position, trackPose(at, flag + 0.5, 6.6).position, festivalColors[Math.abs(Math.round(flag * 2)) % 5], true);
+    }
+  }
+  for (let i = 0; i < 9; i++) {
+    const angle = i / 9 * Math.PI * 2, x = Math.sin(angle) * 195, z = Math.cos(angle) * 180, height = 24 + random() * 32;
+    const color = festivalColors[i % 5];
+    g.sphere([x, height, z], 4.5, color, 12, 8);
+    g.cylinder([x, height - 5.1, z], 1.2, 1.8, color, 10, 2.4);
+    g.box([x, height - 7, z], [1.7, 1.2, 1.7], [0.58, 0.35, 0.21]);
+    for (const side of [-1, 1]) g.beam([x + side * 0.7, height - 6.6, z], [x + side * 1.1, height - 4.7, z], 0.04, cream);
+  }
+  for (let i = 0; i < 11; i++) {
+    const angle = i / 11 * Math.PI * 2;
+    const x = Math.sin(angle) * 330, z = Math.cos(angle) * 330, y = 72 + random() * 30;
+    for (let puff = -2; puff <= 2; puff++) g.sphere([x + puff * 8, y + (2 - Math.abs(puff)) * 3, z], 7 + (2 - Math.abs(puff)) * 1.5, [1, 0.92, 0.82], 8, 5, true);
+  }
   return g;
 }
 
 function kartGeometry(color: Color): Geometry {
   const g = new Geometry();
-  const black: Color = [0.08, 0.1, 0.15], silver: Color = [0.66, 0.69, 0.73];
-  g.box([0, 0.48, 0], [1.55, 0.38, 2.6], color);
-  g.box([0, 0.76, 0.68], [1.36, 0.32, 1.05], color);
-  g.box([0, 0.67, -0.94], [1.6, 0.45, 0.6], color);
-  g.box([0, 0.41, 1.45], [1.75, 0.18, 0.23], silver);
-  g.box([0, 0.48, -1.45], [1.75, 0.16, 0.25], black);
-  // Raised spoiler and two mounting struts.
+  const black: Color = [0.055, 0.08, 0.13], silver: Color = [0.7, 0.8, 0.85];
+  g.box([0, 0.5, -0.05], [1.45, 0.35, 2.2], black);
+  g.box([0, 0.7, 0.38], [1.43, 0.45, 1.7], color);
+  // Tapered racing nose, a cream stripe, side pods, and safety bumpers.
+  g.quad([-0.71, 0.93, 0.48], [0.71, 0.93, 0.48], [0.55, 0.63, 1.43], [-0.55, 0.63, 1.43], color);
+  g.quad([-0.11, 0.94, 0.48], [0.11, 0.94, 0.48], [0.11, 0.64, 1.43], [-0.11, 0.64, 1.43], CREAM);
+  g.box([0, 0.47, 1.5], [1.85, 0.19, 0.22], silver);
+  g.box([0, 0.49, -1.47], [1.8, 0.2, 0.25], black);
   for (const side of [-1, 1]) {
-    g.box([side * 0.48, 1.07, -1.08], [0.14, 0.66, 0.14], black);
-    for (const z of [-0.88, 0.88]) {
-      g.box([side * 0.89, 0.4, z], [0.5, 0.67, 0.72], black);
-      g.box([side * 1.151, 0.4, z], [0.025, 0.28, 0.32], silver);
-    }
-    g.box([side * 0.47, 0.8, 1.21], [0.3, 0.1, 0.03], [1, 0.92, 0.58]);
-    g.box([side * 0.55, 0.76, -1.25], [0.28, 0.16, 0.03], [1, 0.2, 0.1]);
+    g.box([side * 0.78, 0.58, -0.05], [0.25, 0.25, 0.8], color);
+    g.box([side * 0.49, 1.05, -1.09], [0.13, 0.62, 0.15], black);
+    for (const z of [-0.91, 0.9]) g.wheel([side * 0.92, 0.43, z], 0.43, 0.47, black);
+    g.box([side * 0.47, 0.67, 1.43], [0.25, 0.13, 0.04], CREAM);
+    g.box([side * 0.55, 0.75, -1.22], [0.29, 0.15, 0.06], CORAL);
+    g.box([side * 0.54, 0.46, -1.55], [0.21, 0.2, 0.32], silver);
   }
-  g.box([0, 1.39, -1.1], [1.9, 0.13, 0.43], color);
-  g.box([0, 0.87, -0.22], [0.73, 0.6, 0.62], black);
-  g.box([0, 1.19, -0.1], [0.62, 0.6, 0.62], color);
-  g.sphere([0, 1.83, -0.04], 0.48, [0.99, 0.92, 0.75]);
-  g.box([0, 1.83, 0.38], [0.64, 0.24, 0.1], [0.1, 0.14, 0.22]);
-  g.box([0, 2.23, -0.04], [0.14, 0.09, 0.44], color);
-  g.box([0, 1.23, 0.5], [0.62, 0.12, 0.15], black);
+  g.box([0, 1.4, -1.12], [2, 0.15, 0.47], color);
+  for (const side of [-1, 1]) g.box([side * 0.95, 1.48, -1.12], [0.1, 0.24, 0.55], color);
+  g.box([0, 0.92, -0.27], [0.74, 0.72, 0.59], black);
+  g.sphere([0, 1.26, -0.05], 0.45, color, 10, 6);
+  g.sphere([0, 1.92, -0.06], 0.51, CREAM, 16, 10);
+  g.sphere([0, 1.99, -0.13], 0.49, color, 16, 8);
+  g.box([0, 1.91, 0.4], [0.73, 0.26, 0.12], black);
+  g.box([-0.16, 1.97, 0.47], [0.2, 0.045, 0.015], [0.47, 0.8, 0.88]);
+  g.box([0, 2.47, -0.08], [0.15, 0.04, 0.3], CREAM);
+  for (const side of [-1, 1]) {
+    g.beam([side * 0.34, 1.38, 0], [side * 0.39, 1.21, 0.59], 0.12, color);
+    g.sphere([side * 0.39, 1.21, 0.59], 0.15, CREAM, 6, 4);
+  }
+  g.box([0, 1.2, 0.58], [0.7, 0.12, 0.15], black);
   return g;
 }
 
+function shadowGeometry(): Geometry {
+  const g = new Geometry();
+  g.disc([0.18, 0, -0.15], 1.18, 1.72, [0.13, 0.18, 0.23]);
+  g.disc([0.11, 0.001, -0.09], 0.92, 1.4, [0.105, 0.145, 0.19]);
+  return g;
+}
+function particleGeometry(color: Color): Geometry {
+  const g = new Geometry(); g.sphere([0, 0, 0], 0.2, color, 5, 3, true); return g;
+}
+function itemGeometry(): Geometry {
+  const g = new Geometry(), color: Color = [0.35, 0.98, 0.92];
+  const corners: Vec3[] = [];
+  for (const x of [-0.68, 0.68]) for (const y of [-0.68, 0.68]) for (const z of [-0.68, 0.68]) corners.push([x, y, z]);
+  for (let a = 0; a < corners.length; a++) for (let b = a + 1; b < corners.length; b++) {
+    if (corners[a].filter((value, axis) => value !== corners[b][axis]).length === 1) g.beam(corners[a], corners[b], 0.055, color);
+  }
+  g.sphere([0, 0, 0], 0.43, [1, 0.82, 0.28], 10, 6, true);
+  for (const corner of corners) g.sphere(corner, 0.11, [1, 0.95, 0.75], 6, 4, true);
+  return g;
+}
+function slickGeometry(): Geometry {
+  const g = new Geometry();
+  g.disc([0, 0.075, 0], 1.75, 1.9, [0.56, 0.79, 0.15]);
+  g.disc([0, 0.078, 0], 1.5, 1.6, [0.77, 0.96, 0.31]);
+  g.disc([0.3, 0.081, 0.2], 0.9, 0.75, [1, 0.95, 0.62]);
+  for (let i = 0; i < 3; i++) g.sphere([Math.cos(i * 2.2) * 0.9, 0.15, Math.sin(i * 2.2) * 0.9], 0.19, [1, 0.91, 0.37], 7, 4, true);
+  return g;
+}
+function boltGeometry(): Geometry {
+  const g = new Geometry();
+  g.sphere([0, 0, 0], 0.55, [0.94, 0.45, 0.85], 12, 8, true);
+  g.sphere([-0.17, 0.22, 0.32], 0.16, [0.89, 1, 1], 8, 6, true);
+  g.sphere([0.12, -0.06, -0.28], 0.21, [0.62, 0.47, 1], 8, 6, true);
+  return g;
+}
+function shieldGeometry(): Geometry {
+  const g = new Geometry(); g.sphere([0, 1.1, 0], 1.7, [0.29, 1, 0.79], 16, 10, true); return g;
+}
 function boostGeometry(): Geometry {
   const g = new Geometry();
   g.triangle([-0.5, 0.35, -1.4], [0.5, 0.35, -1.4], [0, 0.35, -4.3], [0.24, 0.96, 0.96], true);
+  g.triangle([0, 0.2, -1.4], [0, 0.9, -1.4], [0, 0.4, -3.8], [0.3, 0.96, 1], true);
   g.triangle([-0.3, 0.55, -1.4], [0.3, 0.55, -1.4], [0, 0.55, -3.5], [0.9, 1, 0.65], true);
   return g;
 }
@@ -195,13 +339,28 @@ function boostGeometry(): Geometry {
 export class RaceRenderer {
   private gl: WebGLRenderingContext;
   private program: WebGLProgram;
+  private skyProgram: WebGLProgram;
+  private skyBuffer: WebGLBuffer;
+  private skyPosition: number;
+  private skyRight: WebGLUniformLocation;
+  private skyUp: WebGLUniformLocation;
+  private skyForward: WebGLUniformLocation;
+  private skyLens: WebGLUniformLocation;
   private position: number;
   private color: number;
   private viewUniform: WebGLUniformLocation;
   private modelUniform: WebGLUniformLocation;
   private eyeUniform: WebGLUniformLocation;
+  private opacityUniform: WebGLUniformLocation;
   private world: Mesh;
   private boost: Mesh;
+  private shadow: Mesh;
+  private dust: Mesh;
+  private spark: Mesh;
+  private item: Mesh;
+  private slick: Mesh;
+  private bolt: Mesh;
+  private shield: Mesh;
   private karts: Mesh[];
   private cameras: Camera[];
   private columns: number;
@@ -216,12 +375,12 @@ export class RaceRenderer {
     const vertex = this.shader(gl.VERTEX_SHADER, `
       attribute vec3 a_position; attribute vec3 a_color;
       uniform mat4 u_view; uniform mat4 u_model; uniform vec3 u_eye;
-      varying vec3 v_color; varying float v_distance;
-      void main() { vec4 world = u_model * vec4(a_position, 1.0); gl_Position = u_view * world; v_color = a_color; v_distance = distance(world.xyz, u_eye); }
+      varying vec3 v_color; varying float v_distance; varying float v_height;
+      void main() { vec4 world = u_model * vec4(a_position, 1.0); gl_Position = u_view * world; v_color = a_color; v_distance = distance(world.xyz, u_eye); v_height = world.y; }
     `);
     const fragment = this.shader(gl.FRAGMENT_SHADER, `
-      precision mediump float; varying vec3 v_color; varying float v_distance;
-      void main() { float fog = smoothstep(120.0, 650.0, v_distance); gl_FragColor = vec4(mix(v_color, vec3(0.66, 0.72, 0.83), fog), 1.0); }
+      precision mediump float; uniform float u_opacity; varying vec3 v_color; varying float v_distance; varying float v_height;
+      void main() { float fog = smoothstep(145.0, 610.0, v_distance); vec3 haze = mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0)); gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
     `);
     const program = gl.createProgram();
     if (!program) throw new Error('Could not initialize the 3D race renderer.');
@@ -233,11 +392,39 @@ export class RaceRenderer {
     this.viewUniform = gl.getUniformLocation(program, 'u_view')!;
     this.modelUniform = gl.getUniformLocation(program, 'u_model')!;
     this.eyeUniform = gl.getUniformLocation(program, 'u_eye')!;
+    this.opacityUniform = gl.getUniformLocation(program, 'u_opacity')!;
+    const skyVertex = this.shader(gl.VERTEX_SHADER, `attribute vec2 a_position; varying vec2 v_uv; void main() { v_uv = a_position; gl_Position = vec4(a_position, 1.0, 1.0); }`);
+    const skyFragment = this.shader(gl.FRAGMENT_SHADER, `
+      precision mediump float; varying vec2 v_uv;
+      uniform vec3 u_right; uniform vec3 u_up; uniform vec3 u_forward; uniform vec2 u_lens;
+      void main() {
+        vec3 ray = normalize(u_forward + u_right * v_uv.x * u_lens.x + u_up * v_uv.y * u_lens.y);
+        float horizon = clamp(ray.y * 1.8, 0.0, 1.0);
+        vec3 sky = mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6));
+        float sun = dot(ray, normalize(vec3(-0.6, 0.32, 0.65)));
+        sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0);
+        sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));
+        gl_FragColor = vec4(sky, 1.0);
+      }`);
+    const skyProgram = gl.createProgram(), skyBuffer = gl.createBuffer();
+    if (!skyProgram || !skyBuffer) throw new Error('Not enough graphics memory to draw the sky.');
+    gl.attachShader(skyProgram, skyVertex); gl.attachShader(skyProgram, skyFragment); gl.linkProgram(skyProgram);
+    gl.deleteShader(skyVertex); gl.deleteShader(skyFragment);
+    if (!gl.getProgramParameter(skyProgram, gl.LINK_STATUS)) { gl.deleteProgram(skyProgram); gl.deleteBuffer(skyBuffer); throw new Error('Your browser could not draw the race sky.'); }
+    this.skyProgram = skyProgram; this.skyBuffer = skyBuffer;
+    this.skyPosition = gl.getAttribLocation(skyProgram, 'a_position');
+    this.skyRight = gl.getUniformLocation(skyProgram, 'u_right')!; this.skyUp = gl.getUniformLocation(skyProgram, 'u_up')!;
+    this.skyForward = gl.getUniformLocation(skyProgram, 'u_forward')!; this.skyLens = gl.getUniformLocation(skyProgram, 'u_lens')!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, skyBuffer); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     this.world = this.upload(worldGeometry()); this.boost = this.upload(boostGeometry());
+    this.shadow = this.upload(shadowGeometry()); this.dust = this.upload(particleGeometry([0.92, 0.76, 0.52]));
+    this.spark = this.upload(particleGeometry([1, 0.86, 0.28]));
+    this.item = this.upload(itemGeometry()); this.slick = this.upload(slickGeometry());
+    this.bolt = this.upload(boltGeometry()); this.shield = this.upload(shieldGeometry());
     this.karts = players.map((player) => this.upload(kartGeometry(parseColor(player.color))));
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : 3;
     this.rows = Math.ceil(players.length / this.columns);
-    this.cameras = race.karts.map((kart) => ({ eye: trackPose(kart.distance - 10, kart.lane * 0.6, 5.4).position, target: trackPose(kart.distance + 14, kart.lane * 0.35, 0.8).position }));
+    this.cameras = race.karts.map((kart) => ({ eye: trackPose(kart.distance - 10, kart.lane * 0.6, 4.5).position, target: trackPose(kart.distance + 10, kart.lane * 0.35, 0.9).position }));
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.SCISSOR_TEST);
     gl.useProgram(program); gl.enableVertexAttribArray(this.position); gl.enableVertexAttribArray(this.color);
   }
@@ -255,12 +442,27 @@ export class RaceRenderer {
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(geometry.data), gl.STATIC_DRAW);
     return { buffer, count: geometry.data.length / 6 };
   }
-  private draw(mesh: Mesh, transform: Float32Array = IDENTITY) {
+  private draw(mesh: Mesh, transform: Float32Array = IDENTITY, opacity = 1) {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, mesh.buffer);
     gl.vertexAttribPointer(this.position, 3, gl.FLOAT, false, 24, 0);
     gl.vertexAttribPointer(this.color, 3, gl.FLOAT, false, 24, 12);
+    if (opacity < 1) { gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false); }
+    gl.uniform1f(this.opacityUniform, opacity);
     gl.uniformMatrix4fv(this.modelUniform, false, transform); gl.drawArrays(gl.TRIANGLES, 0, mesh.count);
+    if (opacity < 1) { gl.disable(gl.BLEND); gl.depthMask(true); }
+  }
+  private drawSky(camera: Camera, aspect: number, boost: boolean) {
+    const gl = this.gl;
+    const z = normalize(subtract(camera.eye, camera.target)), right = normalize(cross([0, 1, 0], z)), up = cross(z, right);
+    const lens = Math.tan((boost ? 67 : 62) * Math.PI / 360);
+    gl.useProgram(this.skyProgram); gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
+    gl.disableVertexAttribArray(this.color); gl.enableVertexAttribArray(this.skyPosition);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.skyBuffer); gl.vertexAttribPointer(this.skyPosition, 2, gl.FLOAT, false, 8, 0);
+    gl.uniform3fv(this.skyRight, right); gl.uniform3fv(this.skyUp, up); gl.uniform3fv(this.skyForward, [-z[0], -z[1], -z[2]]);
+    gl.uniform2f(this.skyLens, aspect * lens, lens); gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.useProgram(this.program);
+    gl.enableVertexAttribArray(this.position); gl.enableVertexAttribArray(this.color);
   }
   render(race: RaceState, dt: number) {
     const gl = this.gl;
@@ -274,8 +476,8 @@ export class RaceRenderer {
     for (let i = 0; i < race.karts.length; i++) {
       const kart = race.karts[i], camera = this.cameras[i];
       const position = trackPose(kart.distance, kart.lane).position;
-      const behind = trackPose(kart.distance - 9 - kart.speed * 0.06, kart.lane * 0.72, 5.6).position;
-      const target = trackPose(kart.distance + 13 + kart.speed * 0.1, kart.lane * 0.4, 0.85).position;
+      const behind = trackPose(kart.distance - 9 - kart.speed * 0.06, kart.lane * 0.72, 4.5).position;
+      const target = trackPose(kart.distance + 10 + kart.speed * 0.1, kart.lane * 0.4, 0.9).position;
       const smoothing = Math.min(1, dt * 8);
       for (let axis = 0; axis < 3; axis++) { camera.eye[axis] += (behind[axis] - camera.eye[axis]) * smoothing; camera.target[axis] += (target[axis] - camera.target[axis]) * smoothing; }
       // Keep the chased kart in view through the tightest bends.
@@ -286,21 +488,64 @@ export class RaceRenderer {
       const top = Math.round(row * height / this.rows) + 1, bottom = Math.round((row + 1) * height / this.rows) - 1;
       const w = Math.max(1, right - x), h = Math.max(1, bottom - top), y = height - bottom;
       gl.viewport(x, y, w, h); gl.scissor(x, y, w, h); gl.clearColor(...SKY, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      this.drawSky(camera, w / h, kart.boost > 0);
       gl.uniformMatrix4fv(this.viewUniform, false, viewProjection(camera, w / h, kart.boost > 0));
       gl.uniform3fv(this.eyeUniform, camera.eye);
       this.draw(this.world);
+      for (const box of race.powers.boxes) {
+        if (box.cooldown > 0) continue;
+        const point = trackPose(box.distance, box.lane, 1.65 + Math.sin(race.elapsed * 3 + box.id) * 0.2).position;
+        this.draw(this.item, model(point, race.elapsed * 1.6 + box.id));
+      }
+      for (const hazard of race.powers.hazards) {
+        const pose = trackPose(hazard.distance, hazard.lane);
+        this.draw(this.slick, model(pose.position, pose.yaw, Math.min(1, hazard.life / 0.8)));
+      }
+      for (const projectile of race.powers.projectiles) {
+        const point = trackPose(projectile.distance, projectile.lane, 0.85 + Math.abs(Math.sin(race.elapsed * 7 + projectile.id)) * 0.45).position;
+        this.draw(this.bolt, model(point, race.elapsed * 4));
+        for (let tail = 1; tail <= 2; tail++) this.draw(this.bolt, model(trackPose(projectile.distance - tail * 1.2, projectile.lane, 0.75).position, race.elapsed * 4, 0.45 / tail));
+      }
       for (let j = 0; j < race.karts.length; j++) {
-        const other = race.karts[j], pose = trackPose(other.distance, other.lane, 0.04);
-        const yaw = pose.yaw + Math.atan2(other.lateral, Math.max(8, other.speed)) * 0.65;
+        const other = race.karts[j];
+        // Keep the space between the chase camera and its own racer clear: nearby
+        // trailing karts should never hide the kart whose screen this is.
+        const separation = circularDistance(other.distance, kart.distance);
+        if (j !== i && separation < -2.4 && separation > -18) continue;
+        const pose = trackPose(other.distance, other.lane, 0.04);
+        const yaw = pose.yaw + other.heading;
         const transform = model(pose.position, yaw);
+        this.draw(this.shadow, model([pose.position[0], 0.095, pose.position[2]], yaw));
         this.draw(this.karts[j], transform);
-        if (other.boost > 0) this.draw(this.boost, transform);
+        if (other.boost > 0) this.draw(this.boost, model(pose.position, yaw, 1 + Math.sin(race.elapsed * 43 + j) * 0.07));
+        if (other.speed > 13 && (Math.abs(other.lane) > 6.5 || Math.abs(other.lateral) > 7)) {
+          for (let particle = 0; particle < 5; particle++) {
+            const life = ((race.elapsed * 2.8 + particle / 5) % 1);
+            const point = trackPose(other.distance - 1.4 - life * (3 + other.speed * 0.06), other.lane + (particle % 2 ? 0.8 : -0.8), 0.2 + life * 0.5).position;
+            this.draw(this.dust, model(point, particle, (0.4 + life * 1.8) * (1 - life)));
+          }
+        }
+        if (other.bump > 0 || other.power.flash > 0) {
+          for (let particle = 0; particle < 5; particle++) {
+            const angle = particle * 2.4 + race.elapsed * 5, radius = 1.2 + Math.max(0, 0.7 - Math.max(other.bump, other.power.flash)) * 2;
+            this.draw(this.spark, model([pose.position[0] + Math.cos(angle) * radius, 0.55 + Math.abs(Math.sin(angle)) * 0.7, pose.position[2] + Math.sin(angle) * radius], angle, 0.65));
+          }
+        }
+      }
+      // Transparent shells are the final world pass, after all opaque karts.
+      for (const other of race.karts) {
+        if (other.power.shield <= 0) continue;
+        const separation = circularDistance(other.distance, kart.distance);
+        if (other !== kart && separation < -2.4 && separation > -18) continue;
+        const pose = trackPose(other.distance, other.lane, 0.04);
+        this.draw(this.shield, model(pose.position, pose.yaw), 0.16 + Math.sin(race.elapsed * 3) * 0.025);
       }
     }
   }
   dispose() {
     const gl = this.gl;
-    for (const mesh of [this.world, this.boost, ...this.karts]) gl.deleteBuffer(mesh.buffer);
+    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, ...this.karts]) gl.deleteBuffer(mesh.buffer);
+    gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }
 }
