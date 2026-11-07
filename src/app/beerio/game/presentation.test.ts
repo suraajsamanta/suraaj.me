@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { audioSnapshot, noteFrequency, RaceAudio, soundEvents } from './audio';
-import { RaceRenderer, parseColor, racerGeometry, dancerGeometry } from './renderer';
+import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
 import { createRace, type GamePlayer } from './simulation';
-import { selectTrack, TRACKS, TRACK_LENGTH } from './track';
+import { ACTIVE_SHORTCUT, selectTrack, shortcutPose, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACKS, TRACK_LENGTH, TRACK_POINTS, trackPose } from './track';
 
 const player: GamePlayer = { id: 'racer', name: 'Racer', color: '#ffcb55', input: { steer: 0, accelerate: true, brake: false } };
 test('original sound cues trigger once on transitions, not every frame', () => {
@@ -41,6 +41,16 @@ test('power-up cues are edge-triggered and shield expiry is silent', () => {
   previous = audioSnapshot(race); race.karts[0].power.dance = 3.5; race.karts[0].power.used++;
   assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['item', 'dance']);
   assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
+});
+test('comet warning is sounded once when the warning starts', () => {
+  const race = createRace([player]);
+  race.countdown = 0;
+  const previous = audioSnapshot(race);
+  race.karts[0].power.leaderWarning = 1.25;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['warning']);
+  assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
+  race.karts[0].power.leaderWarning = 0;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), []);
 });
 test('pitched synth notes are tuned and invalid kart colors safely fall back', () => {
   assert.equal(noteFrequency(69), 440); assert.equal(noteFrequency(81), 880);
@@ -92,7 +102,7 @@ test('restarting races reuses one audio graph rather than accumulating motors', 
 function fakeWebGL() {
   let identity = 0;
   const buffers = new Set<object>(), programs = new Set<object>();
-  const stats = { vertices: 0, viewports: 0, draws: 0, uploads: 0, nonFinite: false };
+  const stats = { vertices: 0, viewports: 0, viewportRects: [] as number[][], draws: 0, uploads: 0, nonFinite: false, data: [] as Float32Array[], models: [] as Float32Array[], views: [] as Float32Array[] };
   const numeric = (values: ArrayLike<number>) => { for (let i = 0; i < values.length; i++) if (!Number.isFinite(values[i])) stats.nonFinite = true; };
   const gl = new Proxy({
     createBuffer() { const buffer = { id: identity++ }; buffers.add(buffer); return buffer; },
@@ -100,11 +110,11 @@ function fakeWebGL() {
     createProgram() { const program = { id: identity++ }; programs.add(program); return program; },
     deleteProgram(program: object) { programs.delete(program); },
     createShader() { return {}; }, getShaderParameter() { return true; }, getProgramParameter() { return true; },
-    getAttribLocation(_program: object, name: string) { return name === 'a_color' ? 1 : 0; }, getUniformLocation() { return {}; },
-    bufferData(_target: number, data: Float32Array) { stats.uploads++; stats.vertices += data.length / 6; numeric(data); },
-    uniformMatrix4fv(_location: object, _transpose: boolean, data: Float32Array) { numeric(data); },
+    getAttribLocation(_program: object, name: string) { return name === 'a_color' ? 1 : 0; }, getUniformLocation(_program: object, name: string) { return { name }; },
+    bufferData(_target: number, data: Float32Array) { stats.uploads++; stats.vertices += data.length / 6; stats.data.push(data.slice()); numeric(data); },
+    uniformMatrix4fv(location: { name: string }, _transpose: boolean, data: Float32Array) { numeric(data); if (location.name === 'u_model') stats.models.push(data.slice()); if (location.name === 'u_view') stats.views.push(data.slice()); },
     uniform3fv(_location: object, data: number[]) { numeric(data); },
-    viewport() { stats.viewports++; }, drawArrays() { stats.draws++; },
+    viewport(x: number, y: number, width: number, height: number) { stats.viewports++; stats.viewportRects.push([x, y, width, height]); }, drawArrays() { stats.draws++; },
   }, { get(target, key) { if (key in target) return target[key as keyof typeof target]; return /^[A-Z_]+$/.test(String(key)) ? 0 : () => {}; } });
   return { gl, buffers, programs, stats };
 }
@@ -123,6 +133,22 @@ test('six-view renderer builds finite geometry, draws every viewport and frees G
     renderer.render(race, 1 / 60);
     assert.equal(stats.viewports, 6); assert.ok(stats.draws > 30); assert.ok(stats.vertices > 10000);
     assert.equal(stats.nonFinite, false); assert.ok(canvas.width <= 1800);
+    renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('ten-view renderer lays out cameras in the same four-column grid as the HUD', () => {
+  const { gl, buffers, programs, stats } = fakeWebGL();
+  const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1440, height: 900 }) } as unknown as HTMLCanvasElement;
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 2 }, configurable: true, writable: true });
+  try {
+    const players = Array.from({ length: 10 }, (_, i) => ({ ...player, id: String(i) }));
+    const race = createRace(players), renderer = new RaceRenderer(canvas, players, race);
+    renderer.render(race, 1 / 60);
+    assert.equal(stats.viewports, 10); assert.equal(canvas.width, 1440);
+    assert.deepEqual(stats.viewportRects, Array.from({ length: 10 }, (_, i) => [1 + (i % 4) * 360, 601 - Math.floor(i / 4) * 300, 358, 298]));
+    assert.equal(stats.nonFinite, false);
     renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
 });
@@ -150,6 +176,93 @@ test('overtaken racers and their shields remain rendered throughout the chase-ca
     }
     renderer.dispose();
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('each shortcut road, chase camera, kart and item use the physical branch', () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    for (const track of TRACKS) {
+      selectTrack(track.id);
+      const { gl, stats } = fakeWebGL();
+      const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1280, height: 720 }) } as unknown as HTMLCanvasElement;
+      const race = createRace([player]); race.countdown = 0; race.powers.boxes = [];
+      const start = ACTIVE_SHORTCUT.start * TRACK_LENGTH, span = (ACTIVE_SHORTCUT.end - ACTIVE_SHORTCUT.start) * TRACK_LENGTH;
+      const kart = race.karts[0]; kart.distance = start + span * .5; kart.onShortcut = true;
+      race.powers.hazards.push({ id: 91, ownerId: 'other', distance: start + span * .4, lane: 2, life: 8, onShortcut: true });
+      race.powers.projectiles.push({ id: 92, ownerId: 'other', distance: start + span * .6, lane: -2, life: 3, onShortcut: true });
+      const renderer = new RaceRenderer(canvas, [player], race);
+      renderer.render(race, 1 / 60);
+      const renderedAt = (at: number, lane: number) => {
+        const p = shortcutPose(at, lane).position;
+        return stats.models.some(m => Math.abs(m[12] - p[0]) < 0.001 && Math.abs(m[14] - p[2]) < 0.001);
+      };
+      assert.ok(renderedAt(kart.distance, kart.lane), `${track.id} branch kart`);
+      assert.ok(renderedAt(start + span * .4, 2), `${track.id} branch hazard`);
+      assert.ok(renderedAt(start + span * .6, -2), `${track.id} branch projectile`);
+      // The uploaded static world has the distinctive shortcut surface color.
+      assert.ok(stats.data.some(data => { for (let i = 3; i < data.length; i += 6) if (Math.abs(data[i] - .28) < 1e-5 && Math.abs(data[i + 1] - .34) < 1e-5 && Math.abs(data[i + 2] - .37) < 1e-5) return true; return false; }), `${track.id} branch road`);
+      const branchView = Array.from(stats.views.at(-1)!); renderer.dispose();
+      const mainGL = fakeWebGL(), mainCanvas = { ...canvas, getContext: () => mainGL.gl } as unknown as HTMLCanvasElement;
+      kart.onShortcut = false;
+      const mainRenderer = new RaceRenderer(mainCanvas, [player], race); mainRenderer.render(race, 1 / 60);
+      assert.notDeepEqual(Array.from(mainGL.stats.views.at(-1)!), branchView, `${track.id} branch chase camera`);
+      mainRenderer.dispose();
+    }
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); selectTrack('sunset'); }
+});
+
+test('shortcut camera transitions follow main track across junctions and lap boundaries', () => {
+  for (const track of TRACKS) {
+    selectTrack(track.id);
+    for (const lap of [0, 1, 4]) {
+      const base = lap * TRACK_LENGTH, start = base + ACTIVE_SHORTCUT.start * TRACK_LENGTH, end = base + ACTIVE_SHORTCUT.end * TRACK_LENGTH;
+      assert.deepEqual(racePose(start - 1, 1, 4, true), trackPose(start - 1, 1, 4));
+      assert.deepEqual(racePose(end + 1, 1, 4, true), trackPose(end + 1, 1, 4));
+      assert.deepEqual(racePose((start + end) / 2, 1, 4, true), shortcutPose((start + end) / 2, 1, 4));
+    }
+  }
+  selectTrack('sunset');
+});
+
+test('branch camera and trail offsets preserve physical metres through both junctions', () => {
+  for (const track of TRACKS) {
+    selectTrack(track.id);
+    const start = ACTIVE_SHORTCUT.start * TRACK_LENGTH, end = ACTIVE_SHORTCUT.end * TRACK_LENGTH;
+    const ratio = (end - start) / SHORTCUT_LENGTH;
+    for (const lap of [0, 1, 4]) {
+      const base = lap * TRACK_LENGTH;
+      assert.ok(Math.abs(routeOffset(base + (start + end) / 2, -5, true) - (base + (start + end) / 2 - 5 * ratio)) < 1e-7);
+      assert.ok(Math.abs(routeOffset(base + start + 2 * ratio, -10, true) - (base + start - 8)) < 1e-7);
+      assert.ok(Math.abs(routeOffset(base + end - 2 * ratio, 10, true) - (base + end + 8)) < 1e-7);
+      assert.equal(routeOffset(base + start, -10, false), base + start - 10);
+    }
+  }
+  selectTrack('sunset');
+});
+
+test('actual main wall boxes cannot intrude into a shortcut kart corridor', () => {
+  for (const track of TRACKS) {
+    selectTrack(track.id);
+    let intersections = 0;
+    for (let i = 0; i < TRACK_POINTS.length - 1; i += 4) {
+      const from = TRACK_POINTS[i].distance, to = TRACK_POINTS[Math.min(TRACK_POINTS.length - 1, i + 4)].distance;
+      const mid = (from + to) / 2;
+      for (const side of [-1, 1]) {
+        // Independent distance to the actual rotated rectangular rail footprint.
+        const pose = trackPose(mid, side * 10.6);
+        const closest = Math.min(...SHORTCUT_POINTS.map(p => {
+          const dx = p.x - pose.position[0], dz = p.z - pose.position[2];
+          const along = Math.abs(dx * pose.forward[0] + dz * pose.forward[2]);
+          const across = Math.abs(dx * pose.right[0] + dz * pose.right[2]);
+          return Math.hypot(Math.max(0, along - (to - from + .2) / 2), Math.max(0, across - .325));
+        }));
+        if (closest < 10.7) { intersections++; assert.equal(barrierIntersectsShortcut(from, to, side), true, `${track.id} wall at ${mid}`); }
+      }
+    }
+    assert.ok(intersections > 0, `${track.id} should have a branch opening`);
+  }
+  selectTrack('sunset');
 });
 
 test('all selectable circuits build finite road, scenery and hazard geometry', () => {

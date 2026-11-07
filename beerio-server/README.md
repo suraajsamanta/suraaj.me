@@ -57,7 +57,7 @@ Run `node --test src/app/beerio/room/recovery-integration.test.mjs` from the rep
 ## Safety and operational bounds
 
 - Only the host's private 192-bit resume token authorizes publishing state or locking the lobby. A public room code only authorizes joining an unlocked lobby. Host never occupies a racer slot.
-- Four to six racer slots, six by default. Names are at most 18 characters; each racer gets a stable unique color and ID.
+- Four to ten racer slots, ten by default. Names can contain up to 64 Unicode code points; longer names are rejected rather than truncated; each racer gets a stable unique color and ID.
 - Inputs are finite steer `[-1, 1]` plus boolean `accelerate` and `brake`. The relay resets them after 500 ms without fresh input and immediately upon disconnect. The host browser adds a 600 ms local stale-input reset. Controllers also reset on blur/backgrounding. Game code must use only current room inputs and pause or finish safely when disconnected.
 - The first create/join waits up to 90 seconds for a cold relay, with bounded retries for early connection failures and a waking-up hint after ten seconds. Explicit Leave cancels the wait. Existing-session reconnects keep shorter timeouts.
 - Player slots survive disconnection for 90 seconds. Host room survives disconnection for 30 seconds. Reconnection requires the private session token, not just the room code. Explicit host Leave ends it immediately. Tokens are stored only in the browser's session storage; do not log or copy them into join links.
@@ -72,18 +72,19 @@ The game uses `useBeerioRoom` from `src/app/beerio/room/useBeerioRoom.ts`. Keep 
 
 ```tsx
 const room = useBeerioRoom({ autoResume: true });
-room.createRoom({ maxPlayers: 6 });
+room.createRoom({ maxPlayers: 10 });
 room.joinRoom({ code: 'ABC234', name: 'Avery' });
 room.setInput({ steer: -0.3, accelerate: true, brake: false });
 room.useItem();            // one press; the relay and host reject replayed sequences
 room.resetInput();
-room.setLocked(true);       // host only
+room.setReady(true);        // player only, after choosing racer and ride
+room.setLocked(true);       // host only; requires connected racers to be ready
 room.publishState(state);  // host only, JSON-compatible state, capped to 20 Hz
 const unsubscribe = room.onState(state => { /* controller HUD */ });
 room.leaveRoom();
 ```
 
-`createRoom` and `joinRoom` accept optional `relayUrl` for a deliberate operator override. State fields are `status`, `role`, `code`, `playerId`, `players`, `maxPlayers`, `locked`, `hostConnected`, `error`, and `relayUrl`. `players` are `{ id, name, color, connected, input: { steer, accelerate, brake } }`.
+`createRoom` and `joinRoom` accept optional `relayUrl` for a deliberate operator override. State fields are `status`, `role`, `code`, `playerId`, `players`, `maxPlayers`, `locked`, `hostConnected`, `error`, and `relayUrl`. `players` include `{ id, name, color, character, vehicle, connected, ready, inRace, input }`. The relay atomically freezes `inRace` at the start, excluding disconnected or unconfirmed seats. In an unlocked lobby, changing appearance or reconnecting clears readiness; unlocking after a race and restoring an unlocked room require everyone to ready up again. A locked race can recover without a new ready-up.
 
 Status is `idle`, `connecting`, `connected`, `reconnecting`, `error`, or `closed`. `recovering` pauses a restored race while the IDs in `recoveryWaitingFor` return; host-only `resumeRace()` explicitly continues without them. `canRetryConnection` identifies errors where `retryConnection()` can preserve the race. `onState` returns an unsubscribe callback. `leaveRoom` discards the saved session; unmount/reload preserves it to allow resume. A saved host session restores the lobby and a saved player session restores the controller. A join link targeting a different room skips restoration. Do not start authoritative simulation from a player session, a disconnected host, or a room with `recovering: true`.
 

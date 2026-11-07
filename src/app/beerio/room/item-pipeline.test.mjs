@@ -90,6 +90,8 @@ async function fixture(t, count = 1) {
     await until(() => phone.getSnapshot().status === 'connected', 'phone welcome');
     phones.push(phone);
   }
+  phones.forEach(phone => phone.setReady(true));
+  await until(() => host.getSnapshot().players.every(player => player.ready), 'every driver ready');
   host.setLocked(true);
   await until(() => phones.every(phone => phone.getSnapshot().locked), 'race started on every phone');
   const race = createRace(host.getSnapshot().players);
@@ -296,6 +298,8 @@ test('finishing while holding GO, steer and ITEM leaves the same controller neut
   phone.setInput(DRIVE); // Late held-control callbacks cannot move a results-screen kart.
   await wait(120);
   assert.deepEqual(f.input(0), ZERO);
+  phone.setReady(true);
+  await until(() => f.host.getSnapshot().players.every(player => player.ready), 'rematch driver ready');
   f.host.setLocked(true);
   await until(() => phone.getSnapshot().locked && f.host.getSnapshot().locked, 'rematch boundary reaches controller');
   await wait(120);
@@ -315,4 +319,76 @@ test('finishing while holding GO, steer and ITEM leaves the same controller neut
   assert.deepEqual(f.input(0), { ...DRIVE, action: 3 });
   stepRace(rematch, f.host.getSnapshot().players, 1 / 60);
   assert.equal(kart.power.used, 1, 'new press works without rejoining');
+});
+
+test('Fizz Flask fresh pulses cross real WebSockets without heartbeat or reconnect replay', async t => {
+  const f = await fixture(t);
+  const [phone] = f.phones;
+  phone.setInput(DRIVE);
+  await until(() => f.input(0).accelerate, 'held driving reaches host');
+  f.pickup(0, 0, 'flask');
+  f.race.powers.boxes = [];
+  const kart = f.race.karts[0];
+  phone.useItem();
+  await until(() => f.input(0).action === 1, 'flask opening press reaches host');
+  f.step();
+  assert.equal(kart.power.item, 'flask');
+  assert.equal(kart.power.used, 1);
+  assert.equal(kart.power.flask, 7);
+  assert.ok(kart.boost > 0.9);
+  for (let frame = 0; frame < 30; frame++) f.step();
+  kart.boost = 0;
+  await wait(240);
+  f.step();
+  assert.equal(kart.boost, 0, 'repeated phone heartbeats do not pulse the open flask');
+  const remaining = kart.power.flask;
+  phone.useItem();
+  await until(() => f.input(0).action === 2, 'fresh reuse press reaches host');
+  assert.deepEqual(f.input(0), { ...DRIVE, action: 2 });
+  f.step();
+  assert.ok(kart.boost > 0.9);
+  assert.ok(kart.power.flask < remaining, 'network reuse never refills the fixed window');
+  assert.equal(kart.power.used, 1, 'one flask remains one used pickup');
+  for (let frame = 0; frame < 30; frame++) f.step();
+  f.sockets.at(-1).terminate();
+  await until(() => phone.getSnapshot().status === 'reconnecting', 'phone observes disconnect');
+  assert.equal(phone.useItem(), false, 'offline presses cannot queue a flask burst');
+  await until(() => phone.getSnapshot().status === 'connected', 'phone reconnects');
+  kart.boost = 0;
+  f.step();
+  assert.equal(kart.boost, 0, 'reconnect cannot replay the previous pulse');
+  assert.equal(kart.power.used, 1);
+  phone.setInput(DRIVE); phone.useItem();
+  await until(() => f.input(0).action === 3, 'post-reconnect fresh pulse reaches host');
+  f.step();
+  assert.ok(kart.boost > 0.9);
+  assert.equal(kart.power.used, 1);
+  assert.ok(kart.power.flask < remaining);
+});
+
+test('ten controllers receive all new item names with owner mapping and cannot forge host inventory', async t => {
+  const f = await fixture(t, 10);
+  const kinds = ['flask', 'prism', 'splat', 'jet', 'crown'];
+  const received = f.phones.map(() => []);
+  f.phones.forEach((phone, index) => phone.onState(state => received[index].push(state)));
+  const inventory = f.race.karts.map((kart, index) => {
+    kart.power.item = kinds[index % kinds.length];
+    return { id: kart.id, item: kart.power.item };
+  });
+  f.host.publishState({ type: 'inventory', inventory });
+  await until(() => received.every(messages => messages.length === 1), 'host inventory reaches all ten phones');
+  f.phones.forEach((phone, index) => {
+    const own = received[index][0].inventory.find(entry => entry.id === phone.getSnapshot().playerId);
+    assert.equal(own.item, kinds[index % kinds.length], 'each phone resolves its own item rather than another racer’s');
+  });
+  const forged = { type: 'inventory', inventory: inventory.map(entry => ({ ...entry, item: 'jet' })) };
+  f.sockets[1].send(JSON.stringify({ type: 'state', payload: forged }));
+  await until(() => f.phones[0].getSnapshot().error?.includes('Only the host'), 'relay rejects controller-authored inventory');
+  assert.ok(received.every(messages => messages.length === 1), 'forged inventory never reaches another controller');
+  f.phones[0].useItem();
+  await until(() => f.input(0).action === 1, 'owner item press reaches host');
+  f.step();
+  assert.equal(f.race.karts[0].power.flask, 7);
+  assert.equal(f.race.karts[0].power.used, 1);
+  assert.ok(f.race.karts.slice(1).every(kart => kart.power.used === 0), 'one controller never activates a different racer’s item');
 });

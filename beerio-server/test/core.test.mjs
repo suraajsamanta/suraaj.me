@@ -20,7 +20,14 @@ function fixture() {
     service.receive(player, { type: 'join', code, name });
     return player;
   };
-  return { service, peer, host, code, welcome, join, tick(ms) { time += ms; service.sweep(); } };
+  const start = () => {
+    const room = service.rooms.get(code);
+    if (!room.locked) for (const player of room.players.values()) {
+      if (player.peer && !room.pendingWelcomes.has(player.peer)) service.receive(player.peer, { type: 'ready', ready: true });
+    }
+    service.receive(host, { type: 'lock', locked: true });
+  };
+  return { service, peer, host, code, welcome, join, start, tick(ms) { time += ms; service.sweep(); } };
 }
 
 test('six unique racer slots; no host slot and no tokens in public roster', () => {
@@ -41,7 +48,7 @@ test('only host can publish and lock, and lock rejects new joins', () => {
   assert.equal(player.messages.at(-1).code, 'host_only');
   f.service.receive(player, { type: 'lock', locked: true });
   assert.equal(f.service.rooms.get(f.code).locked, false);
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   assert.equal(f.join().messages.at(-1).code, 'room_locked');
   f.service.receive(f.host, { type: 'state', payload: { phase: 'racing' } });
   assert.deepEqual(player.messages.at(-1), { type: 'state', payload: { phase: 'racing' } });
@@ -51,7 +58,7 @@ test('valid input forwards to host only; stale and disconnected controls reset',
   const f = fixture();
   const player = f.join();
   const other = f.join();
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   const count = other.messages.length;
   f.service.receive(player, { type: 'input', input: { steer: 0.5, accelerate: true, brake: false } });
   assert.deepEqual(f.host.messages.at(-1).input, { steer: 0.5, accelerate: true, brake: false });
@@ -80,8 +87,8 @@ test('player can resume same slot with secret while locked; room code is not a c
   const player = f.join('Fast Pal');
   const token = player.messages[0].token;
   const id = player.playerId;
+  f.start();
   f.service.disconnect(player);
-  f.service.receive(f.host, { type: 'lock', locked: true });
   const bad = f.peer();
   f.service.receive(bad, { type: 'resume', code: f.code, token: f.code });
   assert.equal(bad.messages.at(-1).code, 'invalid_session');
@@ -96,7 +103,7 @@ test('player can resume same slot with secret while locked; room code is not a c
 test('host disconnect clears input, resume retains room, and departure eventually closes it', () => {
   const f = fixture();
   const player = f.join();
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   f.service.receive(player, { type: 'input', input: { steer: 1, accelerate: true, brake: false } });
   f.service.disconnect(f.host);
   assert.equal(player.messages.at(-1).room.hostConnected, false);
@@ -137,7 +144,7 @@ test('duplicate resume replaces old socket without disconnecting new socket', ()
 test('capacity bounds, input flooding, oversized state and unauthenticated socket timeout', () => {
   const f = fixture();
   const badHost = f.peer();
-  f.service.receive(badHost, { type: 'create', maxPlayers: 7 });
+  f.service.receive(badHost, { type: 'create', maxPlayers: 11 });
   assert.equal(badHost.messages.at(-1).code, 'invalid_capacity');
   const player = f.join();
   for (let i = 0; i < 90; i++) f.service.receive(player, { type: 'input', input: { ...ZERO_INPUT } });
@@ -155,7 +162,7 @@ test('names are bounded and remove controls; lower-case codes normalize', () => 
   const player = f.peer();
   f.service.receive(player, { type: 'join', code: f.code.toLowerCase(), name: '\u0000Hello\n' + 'x'.repeat(30) });
   const name = player.messages[0].room.players[0].name;
-  assert.equal(name.length, 18);
+  assert.equal(name, 'Hello' + 'x'.repeat(30));
   assert.ok(!name.includes('\n'));
 });
 
@@ -163,7 +170,7 @@ test('item sequences survive heartbeats but cannot replay across resets, stale c
   const f = fixture();
   const player = f.join();
   const token = player.messages[0].token;
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   const input = action => ({ steer: 0, accelerate: false, brake: false, action });
   f.service.receive(player, { type: 'input', input: input(5) });
   assert.equal(f.host.messages.at(-1).input.action, 5);
@@ -207,17 +214,17 @@ test('finish and rematch boundaries clear held input and reject lobby action rep
   const send = action => f.service.receive(player, { type: 'input', input: held(action) });
   send(1);
   assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'lobby input is neutral');
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT);
   send(2);
   assert.deepEqual(f.host.messages.at(-1).input, held(2));
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, held(2), 'duplicate lock does not cancel live input');
   f.service.receive(f.host, { type: 'lock', locked: false });
   assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT, 'finish releases held controls');
   send(3);
   assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'results-screen packets cannot queue controls');
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT, 'rematch starts neutral');
   send(3);
   assert.equal(f.host.messages.at(-1).input.action, undefined, 'results-screen item is below the action floor');

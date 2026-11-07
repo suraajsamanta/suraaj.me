@@ -124,3 +124,24 @@
 .garagePhone .phoneReady p { margin: 10px 0; font-size: 13px; }
 .garagePhone .appearancePicker { flex: 0 0 auto; margin-top: 16px; }
 .practiceSetup .primary { width: 100%; margin-top: 20px; }
+
+.itemControl { flex-wrap: wrap; }
+.itemControl small { flex-basis: 100%; min-width: 0; font-size: 10px; font-weight: 600; letter-spacing: normal; line-height: 1.15; overflow-wrap: anywhere; text-align: center; }
+@media (orientation: landscape) and (max-height: 600px) { .itemControl { gap: 4px; } .itemControl small { flex-basis: auto; font-size: 9px; } }
+
+/* Drift sits beside the driving buttons, like a shoulder button on a controller. */
+.control.go { grid-column: 2; grid-row: 1; }
+.control.brake { grid-column: 1; grid-row: 2; }
+.control.drift { grid-column: 1; grid-row: 1; height: 100%; min-height: 54px; border-radius: 50%; color: #e6fbff; background: #236a85; border-color: #73d8f1; font-size: clamp(11px, 3.1vw, 16px); letter-spacing: .04em; }
+
+.player > strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.player > .avatar { flex-shrink: 0; }
+.form label small { display: block; margin-top: 6px; color: #c9c2d0; letter-spacing: normal; }
+/* Item sits directly above the steering stick in both orientations. */
+.controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'item pedals' 'steer pedals'; align-items: end; }
+.itemControl { align-self: stretch; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'item pedals' 'steer pedals'; gap: 6px 14px; }
+  .itemControl { align-self: stretch; flex-direction: row; min-height: 44px; height: auto; padding: 5px 8px; }
+  .steering > *, .pedals { height: clamp(100px, 35dvh, 160px); }
+}

@@ -368,3 +368,59 @@ test('dance break holds the kart still through driving and collisions, then resu
   assert.ok(dancer.speed > 0);
   assert.ok(dancer.distance > stationary.distance);
 });
+
+
+test('drifting charges only while moving and turning, release grants a timed boost', () => {
+  for (const autoSteer of [true, false]) {
+    const players = [driver('drift', 0.6)], race = createRace(players); race.countdown = 0;
+    const kart = race.karts[0]; kart.distance = 20; kart.speed = 25;
+    players[0].input.drift = true;
+    advance(race, players, 1, autoSteer);
+    assert.ok(kart.driftCharge >= 0.6); assert.equal(kart.boost, 0);
+    players[0].input.drift = false; stepRace(race, players, 1 / 60, autoSteer);
+    assert.equal(kart.driftCharge, 0); assert.ok(kart.boost > 0);
+    players[0].input.drift = true; kart.speed = 0; players[0].input.accelerate = false;
+    advance(race, players, 0.5, autoSteer); assert.equal(kart.driftCharge, 0);
+  }
+});
+test('interrupted drifts and short taps never grant a boost', () => {
+  const players = [driver('drift', 1)], race = createRace(players); race.countdown = 0;
+  const kart = race.karts[0]; kart.distance = 20; kart.speed = 25;
+  players[0].input.drift = true; advance(race, players, 0.3);
+  players[0].input.drift = false; stepRace(race, players, 1 / 60); assert.equal(kart.boost, 0);
+  players[0].input.drift = true; advance(race, players, 1); assert.ok(kart.driftCharge >= 0.6);
+  delete players[0].input.drift; stepRace(race, players, 1 / 60);
+  assert.equal(kart.driftCharge, 0); assert.equal(kart.boost, 0);
+});
+
+
+test('ten racers join the same race while excess entrants are capped', () => {
+  const players = Array.from({ length: 11 }, (_, i) => driver(String(i)));
+  const race = createRace(players);
+  assert.equal(race.karts.length, 10);
+  assert.equal(new Set(race.karts.map(k => k.id)).size, 10);
+  assert.ok(race.karts.every(k => k.distance < 0));
+});
+
+
+test('jet auto-drives toward the center above normal speed, ignores steering and protects from kart collisions', () => {
+  const players = [driver('leader'), driver('jet', 1)], race = createRace(players); race.countdown = 0;
+  const [leader, jet] = race.karts;
+  Object.assign(leader, { distance: 200, lane: 5, speed: 0 });
+  Object.assign(jet, { distance: 20, lane: 5, speed: 55 });
+  players[1].input.accelerate = false; jet.power.jet = 5;
+  advance(race, players, 0.5, false);
+  assert.ok(jet.speed > 60, `jet speed ${jet.speed} exceeds old clamp`);
+  assert.ok(jet.lane < 5, 'jet returns toward center despite contrary input');
+  Object.assign(leader, { distance: jet.distance + 2.3, lane: jet.lane, speed: 0 });
+  const before = jet.speed; stepRace(race, players, 1 / 60, false);
+  assert.ok(jet.speed >= before - 1, 'protected kart collision does not slow the jet');
+});
+test('a disconnected jet ends without auto-driving', () => {
+  const players = [driver('leader'), driver('jet')], race = createRace(players); race.countdown = 0;
+  Object.assign(race.karts[0], { distance: 200 });
+  const jet = race.karts[1]; Object.assign(jet, { distance: 20, speed: 60 }); jet.power.jet = 5;
+  players[1].connected = false; players[1].input.accelerate = false;
+  stepRace(race, players, 1 / 60);
+  assert.equal(jet.power.jet, 0); assert.ok(jet.speed <= MAX_SPEED);
+});

@@ -96,6 +96,7 @@ async function fixture(t) {
   };
   const effects = [];
   const handlers = new Map();
+  const addHandler = (name, callback) => { const previous = handlers.get(name); handlers.set(name, () => { previous?.(); callback(); }); };
   const hostMessages = [];
   const service = new RoomService();
   const host = { send: message => hostMessages.push(structuredClone(message)), close() {} };
@@ -104,12 +105,12 @@ async function fixture(t) {
   const code = hostMessages.find(message => message.type === 'welcome').room.code;
   globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   globalThis.document = {
-    hidden: false, addEventListener: (name, callback) => handlers.set(`document:${name}`, callback), removeEventListener() {},
+    hidden: false, addEventListener: (name, callback) => addHandler(`document:${name}`, callback), removeEventListener() {},
   };
   globalThis.window = {
     location: { protocol: 'https:', hostname: 'beerio.example' },
     setInterval: () => 1, clearInterval() {},
-    addEventListener: (name, callback) => handlers.set(name, callback), removeEventListener() {},
+    addEventListener: (name, callback) => addHandler(name, callback), removeEventListener() {},
   };
   // An in-memory wire exercises production serialization and relay validation.
   // Actual network sockets and reconnect timing are tested in item-pipeline.test.mjs.
@@ -139,9 +140,12 @@ async function fixture(t) {
   });
   client.joinRoom({ code, name: 'Controller test', relayUrl: 'wss://beerio.example' });
   await new Promise(resolve => setImmediate(resolve));
-  service.receive(host, { type: 'lock', locked: true });
   const id = client.getSnapshot().playerId;
   assert.ok(id);
+  client.setReady(true);
+  service.receive(host, { type: 'lock', locked: true });
+  assert.equal(client.getSnapshot().locked, true);
+  assert.equal(client.getSnapshot().players.find(player => player.id === id)?.inRace, true);
   const player = { id, name: 'Controller test', color: '#ffffff', input: { steer: 0, accelerate: false, brake: false } };
   const race = createRace([player]);
   race.countdown = 0;
@@ -173,7 +177,7 @@ test('third-finger item press reaches the race while GO and steering stay held',
   item.onPointerDown?.(pointer(3));
   const input = f.step();
   assert.equal(f.taps(), 1, 'Non-primary pointerdown must work without a synthesized click');
-  assert.deepEqual(input, { steer: 1, accelerate: true, brake: false, action: 1 });
+  assert.deepEqual(input, { steer: 1, accelerate: true, brake: false, drift: false, action: 1 });
   assert.equal(f.kart.power.used, 1);
   assert.equal(f.kart.power.item, null);
 
@@ -219,4 +223,75 @@ test('item mouse, keyboard and assistive activation stay single-shot', async t =
   f.step();
   assert.equal(f.taps(), 2, 'Keyboard and assistive click-only activation must stay usable');
   assert.equal(f.kart.power.used, 2);
+});
+
+
+test('four independent touches drive, drift and use an item; cancellation disarms drift', async t => {
+  const f = await fixture(t);
+  const go = f.buttons.get('Accelerate'), stick = f.buttons.get('Steering joystick');
+  const drift = f.buttons.get('Drift'), item = f.buttons.get('Use item');
+  go.onPointerDown(pointer(1)); stick.onPointerDown(pointer(2)); drift.onPointerDown(pointer(3));
+  f.kart.speed = 20;
+  for (let i = 0; i < 80; i++) f.step();
+  assert.ok(f.kart.driftCharge >= 0.6);
+  f.kart.power.item = 'guard'; item.onPointerDown(pointer(4));
+  let input = f.step();
+  assert.equal(input.drift, true); assert.equal(input.accelerate, true); assert.equal(input.steer, 1);
+  assert.equal(f.kart.power.used, 1);
+  drift.onPointerCancel(pointer(3)); input = f.step();
+  assert.equal(input.drift, undefined); assert.equal(input.accelerate, true); assert.equal(input.steer, 1);
+  assert.equal(f.kart.driftCharge, 0); assert.equal(f.kart.boost, 0);
+});
+
+test('releasing a charged drift sends a boost while GO and steering stay held', async t => {
+  const f = await fixture(t);
+  const go = f.buttons.get('Accelerate'), stick = f.buttons.get('Steering joystick'), drift = f.buttons.get('Drift');
+  go.onPointerDown(pointer(1)); stick.onPointerDown(pointer(2)); drift.onPointerDown(pointer(3));
+  f.kart.speed = 20;
+  for (let i = 0; i < 80; i++) f.step();
+  assert.ok(f.kart.driftCharge >= 0.6);
+  f.kart.boost = 0;
+  drift.onPointerUp(pointer(3));
+  const input = f.step();
+  assert.equal(input.drift, false); assert.equal(input.accelerate, true); assert.equal(input.steer, 1);
+  assert.ok(f.kart.boost > 0, 'explicit drift release awards a usable boost');
+});
+
+test('cancel remains disarmed when later control updates coalesce before a host frame', async t => {
+  const f = await fixture(t);
+  const go = f.buttons.get('Accelerate'), stick = f.buttons.get('Steering joystick'), drift = f.buttons.get('Drift');
+  go.onPointerDown(pointer(1)); stick.onPointerDown(pointer(2)); drift.onPointerDown(pointer(3));
+  f.kart.speed = 20;
+  for (let i = 0; i < 80; i++) f.step();
+  assert.ok(f.kart.driftCharge >= 0.6); f.kart.boost = 0;
+  drift.onPointerCancel(pointer(3));
+  // A steering update after cancellation but before host simulation must not
+  // turn the cancellation into an intentional release.
+  await new Promise(resolve => setTimeout(resolve, 40));
+  stick.onPointerMove(pointer(2));
+  const input = f.step();
+  assert.equal(input.drift, undefined); assert.equal(f.kart.boost, 0); assert.equal(f.kart.driftCharge, 0);
+  drift.onPointerDown(pointer(4));
+  assert.equal(f.step().drift, true, 'a fresh press re-arms drift');
+});
+
+
+test('keyboard auto-repeat cannot rearm driving or drift after a safety reset', async t => {
+  const f = await fixture(t);
+  const go = f.buttons.get('Accelerate'), drift = f.buttons.get('Drift');
+  const key = (repeat = false) => ({ key: ' ', repeat, preventDefault() {} });
+  for (const event of ['blur', 'pagehide', 'orientationchange', 'document:visibilitychange']) {
+    go.onKeyDown(key()); drift.onKeyDown(key());
+    f.kart.drifting = true; f.kart.driftCharge = 1.5; f.kart.boost = 0;
+    f.handlers.get(event)();
+    await new Promise(resolve => setTimeout(resolve, 40));
+    go.onKeyDown(key(true)); drift.onKeyDown(key(true));
+    const input = f.step();
+    assert.equal(input.accelerate, false, `${event}: held key repeat must not restart acceleration`);
+    assert.equal(input.drift, undefined, `${event}: held key repeat must not rearm cancelled drift`);
+    assert.equal(f.kart.driftCharge, 0); assert.equal(f.kart.boost, 0);
+    go.onKeyUp(key()); drift.onKeyUp(key());
+    go.onKeyDown(key()); drift.onKeyDown(key());
+    assert.equal(f.step().drift, true, 'A deliberate fresh keydown re-arms the control');
+  }
 });

@@ -52,6 +52,9 @@ test('real WebSockets create room, join, relay input/state, reject player state,
   const joined = player.wait((m) => m.type === 'welcome');
   player.send({ type: 'join', code, name: 'Phone' });
   const welcome = await joined;
+  const ready = player.wait(m => m.type === 'room' && m.room.players.every(driver => driver.ready));
+  player.send({ type: 'ready', ready: true });
+  await ready;
   const started = player.wait((m) => m.type === 'room' && m.room.locked);
   host.send({ type: 'lock', locked: true });
   await started;
@@ -113,6 +116,9 @@ test('real WebSocket item presses retain sequence through release and resume wit
   const joined = phone.wait(message => message.type === 'welcome');
   phone.send({ type: 'join', code, name: 'Item Racer' });
   const identity = await joined;
+  const ready = phone.wait(m => m.type === 'room' && m.room.players.every(driver => driver.ready));
+  phone.send({ type: 'ready', ready: true });
+  await ready;
   const started = phone.wait(message => message.type === 'room' && message.room.locked);
   host.send({ type: 'lock', locked: true });
   await started;

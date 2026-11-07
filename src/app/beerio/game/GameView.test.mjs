@@ -145,7 +145,7 @@ async function fixture(t, initialProps = {}) {
   t.after(() => { unmount(); Object.assign(globalThis, prior); });
   await render();
   return {
-    frame, setProps, renderers, mixes, finishes, unmount,
+    frame, setProps, renderers, mixes, finishes, unmount, tree: () => tree, track: () => load(resolve(directory, 'track.ts')), blur: () => window.dispatch('blur'),
     race: () => renderers[0]?.race,
     key: (code, type = 'keydown', repeat = false) => window.dispatch(type, { code, target: new HTMLElement(), repeat, preventDefault() {} }),
     visibility: hidden => { document.hidden = hidden; document.dispatch('visibilitychange'); },
@@ -326,4 +326,223 @@ test('fresh controller item input after resume is not swallowed before the first
   await f.setProps({ players: [first, second].map(racer => ({ ...racer, input: { ...ZERO, action: 1 } })) });
   await f.frame(10000); await f.frame(10017);
   assert.deepEqual(race.karts.map(kart => kart.power.used), [1, 1]);
+});
+
+test('resume clears every racer’s pre-pause drift without consuming fresh item input', async t => {
+  const players = Array.from({ length: 10 }, (_, i) => ({ ...player(), id: `driver-${i}`, input: { ...ZERO, drift: true } }));
+  const f = await fixture(t, { localKeyboard: false, players });
+  await f.frame(100);
+  const race = f.race(); race.countdown = 0;
+  for (const kart of race.karts) {
+    kart.speed = 25; kart.drifting = true; kart.driftCharge = 2.5; kart.power.item = 'guard';
+  }
+  // Pause and resume without an intervening RAF, then deliver fresh actions
+  // before the first resumed frame, as can happen after a brief disconnect.
+  await f.setProps({ paused: true });
+  await f.setProps({ paused: false });
+  await f.setProps({ players: players.map(racer => ({ ...racer, input: { ...ZERO, drift: true, accelerate: true, steer: 1, action: 1 } })) });
+  await f.frame(10000);
+  for (const kart of race.karts) { assert.equal(kart.driftCharge, 0, kart.id); assert.equal(kart.drifting, false, kart.id); }
+  await f.frame(10017);
+  for (const kart of race.karts) {
+    assert.equal(kart.drifting, true, kart.id);
+    assert.ok(kart.driftCharge >= 0 && kart.driftCharge < 0.1, kart.id);
+    assert.equal(kart.boost, 0, `stale drift must not reward ${kart.id}`);
+    assert.equal(kart.power.used, 1, `fresh item press must work for ${kart.id}`);
+    assert.equal(kart.power.item, null, kart.id);
+  }
+});
+
+test('inventory callback publishes a detached initial snapshot for every racer', async t => {
+  const inventories = [];
+  const players = Array.from({ length: 6 }, (_, index) => ({ ...player(), id: `driver-${index}` }));
+  const f = await fixture(t, { players, onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  assert.deepEqual(inventories, [players.map(racer => ({ id: racer.id, item: null }))]);
+  inventories[0][0].item = 'dance';
+  assert.equal(f.race().karts[0].power.item, null, 'Consumers cannot mutate authoritative inventory');
+  f.race().karts[1].power.item = 'guard';
+  await f.frame(600);
+  assert.deepEqual(inventories[1], players.map((racer, index) => ({ id: racer.id, item: index === 1 ? 'guard' : null })));
+});
+
+test('inventory changes are coalesced to at most 2 Hz and consumed items publish empty', async t => {
+  const inventories = [];
+  const f = await fixture(t, { onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  const kart = f.race().karts[0];
+  kart.power.item = 'guard';
+  await f.frame(200);
+  kart.power.item = 'fizz';
+  await f.frame(599);
+  assert.equal(inventories.length, 1, 'Do not flood room state with frame-rate updates');
+  await f.frame(600);
+  assert.deepEqual(inventories[1], [{ id: 'driver', item: 'fizz' }], 'Publish the latest state, not a queued stale pickup');
+  kart.power.item = null;
+  await f.frame(1099);
+  assert.equal(inventories.length, 2);
+  await f.frame(1100);
+  assert.deepEqual(inventories[2], [{ id: 'driver', item: null }]);
+});
+
+test('unchanged inventory has a 2s reconnect heartbeat rather than a frame-rate broadcast', async t => {
+  const inventories = [];
+  const f = await fixture(t, { onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  for (const now of [600, 1100, 1600, 2099]) await f.frame(now);
+  assert.equal(inventories.length, 1);
+  await f.frame(2100);
+  assert.equal(inventories.length, 2);
+  assert.deepEqual(inventories[1], inventories[0]);
+});
+
+test('inventory callback replacement and controller updates do not restart the race', async t => {
+  const oldCalls = [], newCalls = [];
+  const f = await fixture(t, { onInventoryChange: inventory => oldCalls.push(inventory) });
+  await f.frame(100);
+  const race = f.race(); race.countdown = 0; race.elapsed = 17;
+  await f.setProps({ onInventoryChange: inventory => newCalls.push(inventory), players: [player({ accelerate: true })] });
+  race.karts[0].power.item = 'guard';
+  await f.frame(600);
+  assert.equal(f.renderers.length, 1);
+  assert.equal(f.race(), race);
+  assert.ok(race.elapsed >= 17);
+  assert.equal(oldCalls.length, 1);
+  assert.deepEqual(newCalls, [[{ id: 'driver', item: 'guard' }]]);
+});
+
+test('inventory waits during a host pause and refreshes after reconnect', async t => {
+  const inventories = [];
+  const f = await fixture(t, { paused: true, onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  assert.equal(inventories.length, 0);
+  await f.setProps({ paused: false });
+  await f.frame(600);
+  assert.equal(inventories.length, 1);
+  f.race().karts[0].power.item = 'guard';
+  await f.setProps({ paused: true });
+  await f.frame(5000);
+  assert.equal(inventories.length, 1);
+  await f.setProps({ paused: false });
+  await f.frame(10000);
+  assert.deepEqual(inventories[1], [{ id: 'driver', item: 'guard' }]);
+});
+
+test('finish callback takes precedence over a due inventory change and blocks all later inventory', async t => {
+  const events = [];
+  const f = await fixture(t, {
+    players: [player(), { ...player(), id: 'second' }],
+    onInventoryChange: inventory => events.push({ type: 'inventory', inventory }),
+    onFinish: results => events.push({ type: 'finish', results }),
+  });
+  await f.frame(100);
+  const race = f.race();
+  race.countdown = 0;
+  race.elapsed = 25.99;
+  race.firstFinish = 1;
+  race.karts[0].finishTime = 1;
+  race.karts[1].power.item = 'guard';
+  assert.equal(race.complete, false);
+  // Physics ends the grace period in this frame, while an inventory change is due.
+  await f.frame(600);
+  assert.equal(race.complete, true);
+  assert.deepEqual(events.map(event => event.type), ['inventory', 'finish']);
+  await f.frame(2600); await f.frame(10000);
+  assert.deepEqual(events.map(event => event.type), ['inventory', 'finish']);
+});
+
+
+function findNodes(node, predicate) {
+  if (!node) return [];
+  if (Array.isArray(node)) return node.flatMap(child => findNodes(child, predicate));
+  return [...(predicate(node) ? [node] : []), ...findNodes(node.props?.children, predicate)];
+}
+test('berry blot affects only the targeted viewport and expires with its timer', async t => {
+  const players = [player(), { ...player(), id: 'other', name: 'Other' }];
+  const f = await fixture(t, { players });
+  await f.frame(100); const race = f.race(); race.countdown = 0;
+  race.karts[1].power.splatter = 1;
+  await f.frame(200);
+  let sections = findNodes(f.tree(), node => node.type === 'section');
+  assert.equal(findNodes(sections[0], node => node.props?.['aria-label'] === 'Berry blot on this view').length, 0);
+  assert.equal(findNodes(sections[1], node => node.props?.['aria-label'] === 'Berry blot on this view').length, 1);
+  race.karts[1].power.splatter = 0; await f.frame(300);
+  sections = findNodes(f.tree(), node => node.type === 'section');
+  assert.equal(findNodes(sections[1], node => node.props?.['aria-label'] === 'Berry blot on this view').length, 0);
+});
+test('keyboard Shift charges drift, releasing boosts, and blur cancels without boost', async t => {
+  const f = await fixture(t); await f.frame(100); const race = f.race(), kart = race.karts[0];
+  race.countdown = 0; kart.speed = 25;
+  f.key('KeyW'); f.key('KeyD'); f.key('ShiftLeft');
+  for (let now = 117; now <= 900; now += 17) await f.frame(now);
+  assert.ok(kart.drifting && kart.driftCharge >= 0.6);
+  f.key('ShiftLeft', 'keyup'); await f.frame(917);
+  assert.ok(kart.boost > 0); assert.equal(kart.drifting, false);
+  kart.boost = 0; f.key('ShiftLeft');
+  for (let now = 934; now <= 1700; now += 17) await f.frame(now);
+  assert.ok(kart.driftCharge >= 0.6);
+  f.blur(); await f.frame(1717);
+  assert.equal(kart.drifting, false); assert.equal(kart.boost, 0);
+});
+
+test('ten racers have distinct 4-by-3 HUD views and retain full names', async t => {
+  const players = Array.from({ length: 10 }, (_, i) => ({
+    ...player(), id: `driver-${i}`, name: `Driver ${i + 1} with a long name 🏎️`,
+  }));
+  const f = await fixture(t, { players, localKeyboard: false });
+  const tree = f.tree();
+  assert.equal(tree.props.style['--game-columns'], 4);
+  assert.equal(tree.props.style['--game-rows'], 3);
+  const findSections = node => {
+    if (!node) return [];
+    if (Array.isArray(node)) return node.flatMap(findSections);
+    return [...(node.type === 'section' ? [node] : []), ...findSections(node.props?.children)];
+  };
+  const sections = findSections(tree);
+  assert.equal(sections.length, 10);
+  assert.deepEqual(sections.map(section => section.props['aria-label']), players.map(p => `${p.name}'s racing view`));
+  const labels = sections.map(section => findNodes(section, node => node.type === 'strong' && node.props?.title)[0]);
+  assert.deepEqual(labels.map(label => label.props['aria-label']), players.map(p => p.name));
+  assert.deepEqual(labels.map(label => label.props.children), players.map(p => p.name));
+  await f.frame(100);
+  assert.equal(f.race().karts.length, 10);
+  assert.equal(f.renderers[0].calls.at(-1).race.karts.length, 10);
+});
+
+
+test('small compact race views bound name height, while larger views can show full names', () => {
+  const css = readFileSync(resolve(directory, 'game.module.css'), 'utf8');
+  assert.match(css, /\.compact \.viewport\s*\{[^}]*container-type:\s*inline-size/);
+  assert.match(css, /\.compact \.name strong\s*\{[^}]*-webkit-line-clamp:\s*2;[^}]*overflow:\s*hidden/);
+  assert.match(css, /@container\s*\(min-width:\s*361px\)\s*\{\s*\.compact \.name strong\s*\{[^}]*-webkit-line-clamp:\s*unset;[^}]*overflow:\s*visible/);
+  assert.match(css, /\.resultName\s*\{[^}]*white-space:\s*normal;[^}]*overflow:\s*visible/);
+});
+
+
+test('one shared shortcut map is shown for every player count', async t => {
+  for (let count = 1; count <= 10; count++) await t.test(`${count} racers`, async t => {
+    const players = Array.from({ length: count }, (_, i) => ({ ...player(), id: `map-${i}` }));
+    const f = await fixture(t, { players, localKeyboard: false }); await f.frame(100);
+    const maps = findNodes(f.tree(), node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map');
+    assert.equal(maps.length, 1);
+    assert.equal(findNodes(maps[0], node => node.type === 'circle').length, count);
+    assert.equal(findNodes(maps[0], node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut').length, 1);
+  });
+});
+test('shortcut map uses each course branch and places a branch kart on the physical route', async t => {
+  for (const trackId of ['sunset', 'canyon', 'brewery']) await t.test(trackId, async t => {
+    const f = await fixture(t, { players: [player()], trackId }); await f.frame(100);
+    const track = f.track(), race = f.race(), kart = race.karts[0]; race.countdown = 0;
+    kart.distance = (track.ACTIVE_SHORTCUT.start + track.ACTIVE_SHORTCUT.end) / 2 * track.TRACK_LENGTH;
+    kart.onShortcut = true;
+    await f.frame(200);
+    const map = findNodes(f.tree(), node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map')[0];
+    const branch = findNodes(map, node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut')[0];
+    const expectedPath = track.sampleShortcut(track.ACTIVE_TRACK).filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' ');
+    assert.equal(branch.props.d, expectedPath);
+    const dot = findNodes(map, node => node.type === 'circle')[0], expected = track.shortcutPose(kart.distance, kart.lane).position;
+    assert.ok(Math.abs(dot.props.cx - expected[0]) < 1e-8); assert.ok(Math.abs(dot.props.cy - expected[2]) < 1e-8);
+    const main = track.trackPose(kart.distance, kart.lane).position;
+    assert.ok(Math.hypot(dot.props.cx - main[0], dot.props.cy - main[2]) > 1);
+  });
 });

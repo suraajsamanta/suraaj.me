@@ -407,3 +407,11 @@ test('recovery gate blocks held controls and item taps until all racers return o
   welcome(f.socket(), 'host', { locked: true, recovering: true, recoveryWaitingFor: ['missing'] });
   f.client.resumeRace(); assert.deepEqual(f.socket().sent.at(-1), { type: 'resume_race' });
 });
+
+test('join sends the full name, including supplementary Unicode characters', async (t) => {
+  const f = fixture(t);
+  const name = 'A very long racer name 🚀 with family and friends';
+  f.client.joinRoom({ code: 'ABC234', name });
+  await flush();
+  assert.equal(f.socket().sent[0].name, name);
+});

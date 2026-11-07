@@ -8,12 +8,14 @@ export type TrackObstacle = { fraction: number; lane: number; kind: 'barrel' | '
 export type TrackDefinition = {
   id: TrackId; name: string; description: string;
   controlPoints: [number, number][]; obstacles: TrackObstacle[];
+  shortcut: { start: number; end: number; side: -1 | 1 };
 };
 
 /** Hand-authored loops and hazard placements, shared by simulation and renderer. */
 export const TRACKS: TrackDefinition[] = [
   {
     id: 'sunset', name: 'Sunset Circuit', description: 'A fast desert loop with sweeping bends.',
+    shortcut: { start: 0.35, end: 0.53, side: -1 },
     controlPoints: [[-90, -65], [-10, -92], [85, -70], [119, -5], [78, 55], [20, 34], [-32, 79], [-110, 53], [-128, -13]],
     obstacles: [
       { fraction: 0.27, lane: -3.6, kind: 'barrel' }, { fraction: 0.27, lane: 3.6, kind: 'barrel' },
@@ -22,6 +24,7 @@ export const TRACKS: TrackDefinition[] = [
   },
   {
     id: 'canyon', name: 'Canyon Switchback', description: 'Tight turns and a tricky barrel slalom.',
+    shortcut: { start: 0.25, end: 0.43, side: -1 },
     controlPoints: [[-115, -85], [-35, -110], [45, -93], [100, -110], [145, -58], [112, -10], [45, -25], [16, 7], [88, 36], [115, 82], [51, 105], [-5, 70], [-61, 103], [-128, 69], [-151, -5]],
     obstacles: [
       { fraction: 0.16, lane: -3, kind: 'barrel' }, { fraction: 0.20, lane: 3, kind: 'barrel' },
@@ -31,6 +34,7 @@ export const TRACKS: TrackDefinition[] = [
   },
   {
     id: 'brewery', name: 'Brewery Run', description: 'Long straights, chicanes and slippery spills.',
+    shortcut: { start: 0.15, end: 0.33, side: -1 },
     controlPoints: [[-130, -70], [-45, -85], [40, -75], [124, -91], [159, -38], [130, 8], [75, 14], [30, -12], [-8, 15], [28, 46], [103, 47], [125, 89], [41, 109], [-35, 91], [-109, 103], [-155, 55], [-144, 3]],
     obstacles: [
       { fraction: 0.12, lane: 0, kind: 'oil' }, { fraction: 0.31, lane: -3.5, kind: 'barrel' },
@@ -60,6 +64,10 @@ function curve(t: number, points: [number, number][]): [number, number] {
 export let ACTIVE_TRACK: TrackDefinition = TRACKS[0];
 export let TRACK_POINTS: TrackPoint[] = [];
 export let TRACK_LENGTH = 0;
+export let ACTIVE_SHORTCUT = ACTIVE_TRACK.shortcut;
+/** Branch samples have physical (not lap-progress) distance. */
+export let SHORTCUT_POINTS: TrackPoint[] = [];
+export let SHORTCUT_LENGTH = 0;
 
 /** Sample without changing the active race, for previews and minimaps. */
 export function sampleTrack(track: TrackDefinition): TrackPoint[] {
@@ -79,21 +87,26 @@ export function selectTrack(id: TrackId | string): TrackDefinition {
   ACTIVE_TRACK = TRACKS.find((track) => track.id === id) ?? TRACKS[0];
   TRACK_POINTS = sampleTrack(ACTIVE_TRACK);
   TRACK_LENGTH = TRACK_POINTS[TRACK_POINTS.length - 1].distance;
+  ACTIVE_SHORTCUT = ACTIVE_TRACK.shortcut;
+  buildShortcut();
   return ACTIVE_TRACK;
 }
-selectTrack('sunset');
 export const wrap = (value: number, length = TRACK_LENGTH) => ((value % length) + length) % length;
 export const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
 
 export function trackPose(at: number, lane = 0, height = 0): TrackPose {
-  const d = wrap(at);
-  let low = 0, high = SAMPLES;
+  return poseOnTrack(TRACK_POINTS, TRACK_LENGTH, at, lane, height);
+}
+
+function poseOnTrack(points: TrackPoint[], length: number, at: number, lane = 0, height = 0): TrackPose {
+  const d = wrap(at, length);
+  let low = 0, high = points.length - 1;
   while (low + 1 < high) {
     const mid = (low + high) >> 1;
-    if (TRACK_POINTS[mid].distance <= d) low = mid;
+    if (points[mid].distance <= d) low = mid;
     else high = mid;
   }
-  const a = TRACK_POINTS[low], b = TRACK_POINTS[low + 1];
+  const a = points[low], b = points[low + 1];
   const segmentLength = b.distance - a.distance;
   const f = segmentLength > 0 ? (d - a.distance) / segmentLength : 0;
   const dx = (b.x - a.x) / segmentLength, dz = (b.z - a.z) / segmentLength;
@@ -112,3 +125,53 @@ export function circularDistance(a: number, b: number): number {
   const delta = wrap(a - b);
   return delta > TRACK_LENGTH / 2 ? delta - TRACK_LENGTH : delta;
 }
+
+/** Build a tangent-matched branch, sampled in physical metres. */
+function buildShortcut(): void {
+  SHORTCUT_POINTS = sampleShortcut(ACTIVE_TRACK);
+  SHORTCUT_LENGTH = SHORTCUT_POINTS[SHORTCUT_POINTS.length - 1].distance;
+}
+
+/** Pure branch samples for a course preview, without selecting it. */
+export function sampleShortcut(track: TrackDefinition): TrackPoint[] {
+  const points = sampleTrack(track), length = points[points.length - 1].distance;
+  const { start, end } = track.shortcut;
+  const a = poseOnTrack(points, length, start * length), b = poseOnTrack(points, length, end * length);
+  const chord = Math.hypot(b.position[0] - a.position[0], b.position[2] - a.position[2]);
+  const handle = Math.min(chord * 0.24, 22);
+  const p0 = a.position, p1 = [p0[0] + a.forward[0] * handle, 0, p0[2] + a.forward[2] * handle];
+  const p3 = b.position, p2 = [p3[0] - b.forward[0] * handle, 0, p3[2] - b.forward[2] * handle];
+  const result: TrackPoint[] = [];
+  let distance = 0;
+  for (let i = 0; i <= 128; i++) {
+    const t = i / 128, u = 1 - t;
+    const x = u ** 3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t ** 3 * p3[0];
+    const z = u ** 3 * p0[2] + 3 * u * u * t * p1[2] + 3 * u * t * t * p2[2] + t ** 3 * p3[2];
+    const previous = result[i - 1];
+    if (previous) distance += Math.hypot(x - previous.x, z - previous.z);
+    result.push({ x, z, distance });
+  }
+  return result;
+}
+
+/** Position on the branch for the equivalent distance along the main loop. */
+export function shortcutPose(at: number, lane = 0, height = 0): TrackPose {
+  const { start, end } = ACTIVE_SHORTCUT;
+  const fraction = (wrap(at) / TRACK_LENGTH - start) / (end - start);
+  // Looking ahead or behind through a junction continues onto the main road.
+  if (fraction < 0 || fraction > 1) return trackPose(at, lane, height);
+  const d = fraction * SHORTCUT_LENGTH;
+  let low = 0, high = SHORTCUT_POINTS.length - 1;
+  while (low + 1 < high) {
+    const mid = (low + high) >> 1;
+    if (SHORTCUT_POINTS[mid].distance <= d) low = mid; else high = mid;
+  }
+  const a = SHORTCUT_POINTS[low], b = SHORTCUT_POINTS[low + 1];
+  const length = b.distance - a.distance;
+  const f = length ? (d - a.distance) / length : 0;
+  const dx = (b.x - a.x) / length, dz = (b.z - a.z) / length;
+  return { position: [a.x + (b.x - a.x) * f + dz * lane, height, a.z + (b.z - a.z) * f - dx * lane],
+    forward: [dx, 0, dz], right: [dz, 0, -dx], yaw: Math.atan2(dx, dz) };
+}
+
+selectTrack('sunset');

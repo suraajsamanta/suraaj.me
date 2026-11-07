@@ -35,7 +35,7 @@ function validateUrl(value: string): string {
 }
 
 function initialSnapshot(): RoomSnapshot {
-  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 6, locked: false, recovering: false, recoveryWaitingFor: [], hostConnected: false, error: null, relayUrl: getRelayUrl(), canRetryConnection: false };
+  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 10, locked: false, recovering: false, recoveryWaitingFor: [], hostConnected: false, error: null, relayUrl: getRelayUrl(), canRetryConnection: false };
 }
 
 /** Browser room transport. Every reconnect resumes with a secret token, not the public room code. */
@@ -110,12 +110,12 @@ export class BeerioRoomClient {
   };
 
   createRoom = (options: CreateRoomOptions = {}) => {
-    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 6, recoveryVersion: 1 }, options.relayUrl, "host");
+    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 10, recoveryVersion: 1 }, options.relayUrl, "host");
   };
   joinRoom = (options: JoinRoomOptions) => {
     const code = options.code.replace(/\s/g, "").toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) { this.update({ status: "error", error: "Enter the six-character room code shown on the host screen." }); return; }
-    this.begin({ type: "join", code, name: options.name.trim().slice(0, 18) || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
+    this.begin({ type: "join", code, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
   };
   private begin(hello: Record<string, unknown>, relayUrl: string | undefined, role: RoomRole) {
     this.leaveRoom();
@@ -237,7 +237,7 @@ export class BeerioRoomClient {
           const now = Date.now();
           let changed = false;
           const players = this.snapshot.players.map((player) => {
-            if (now - (this.lastInputAt.get(player.id) ?? 0) > 600 && (player.input.steer !== 0 || player.input.accelerate || player.input.brake || player.input.action !== undefined)) {
+            if (now - (this.lastInputAt.get(player.id) ?? 0) > 600 && (player.input.steer !== 0 || player.input.accelerate || player.input.brake || player.input.drift || player.input.action !== undefined)) {
               changed = true;
               return { ...player, input: { ...ZERO_INPUT } };
             }
@@ -276,7 +276,7 @@ export class BeerioRoomClient {
         const checkpoint = message.checkpoint as RecoveryCheckpoint;
         if (this.session?.role !== "host" || !checkpoint || checkpoint.version !== 1 ||
           checkpoint.roomId !== this.session.roomId || !Number.isSafeInteger(checkpoint.revision) || checkpoint.revision < 1 ||
-          !Array.isArray(checkpoint.players) || checkpoint.players.length > 6) return;
+          !Array.isArray(checkpoint.players) || checkpoint.players.length > 10) return;
         // Memory retention protects a running host even if sessionStorage is
         // unavailable. This is not a promise that a reloaded browser can recover.
         this.session.checkpoint = checkpoint;
@@ -333,7 +333,7 @@ export class BeerioRoomClient {
     // Send an actual release immediately, but do not flood the relay with repeated neutral frames.
     const released = (previous.accelerate || previous.brake || previous.steer !== 0) &&
       !this.input.accelerate && !this.input.brake && this.input.steer === 0;
-    if (released || Date.now() - this.lastSentInput >= 34) this.sendInput();
+    if (released || previous.drift !== this.input.drift || Date.now() - this.lastSentInput >= 34) this.sendInput();
   };
   /** A discrete press, separate from held driving controls. */
   useItem = (): boolean => {
@@ -358,8 +358,14 @@ export class BeerioRoomClient {
   setAppearance = (appearance: Appearance) => {
     if (this.snapshot.role === "player" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "appearance", appearance });
   };
+  setReady = (ready: boolean) => {
+    if (this.snapshot.role === "player" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "ready", ready });
+  };
   setLocked = (locked: boolean) => {
-    if (this.snapshot.role === "host" && this.snapshot.status === "connected") this.send({ type: "lock", locked });
+    if (this.snapshot.role === "host" && this.snapshot.status === "connected") {
+      if (locked) this.update({ error: null });
+      this.send({ type: "lock", locked });
+    }
   };
   /** Host choice: continue a recovered race without waiting for missing phones. */
   resumeRace = () => {

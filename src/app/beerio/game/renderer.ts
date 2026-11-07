@@ -1,4 +1,4 @@
-import { ACTIVE_TRACK, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, TRACK_LENGTH, TRACK_POINTS, trackPose, type Vec3 } from './track';
+import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, shortcutPose, trackPose, wrap, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
 import { DANCE_SECONDS } from './powerups';
 
@@ -124,6 +124,39 @@ class Geometry {
   }
 }
 
+/** Continue a branch chase camera along the main course outside the branch. */
+export function racePose(at: number, lane = 0, height = 0, onShortcut = false) {
+  const d = wrap(at);
+  return onShortcut && d >= ACTIVE_SHORTCUT.start * TRACK_LENGTH && d <= ACTIVE_SHORTCUT.end * TRACK_LENGTH
+    ? shortcutPose(at, lane, height) : trackPose(at, lane, height);
+}
+/** Advance a camera or trail by physical metres, continuing on the main road at either junction. */
+export function routeOffset(at: number, metres: number, onShortcut: boolean): number {
+  if (!onShortcut) return at + metres;
+  const d = wrap(at), start = ACTIVE_SHORTCUT.start * TRACK_LENGTH, end = ACTIVE_SHORTCUT.end * TRACK_LENGTH;
+  if (d < start || d > end || SHORTCUT_LENGTH <= 0) return at + metres;
+  const ratio = (end - start) / SHORTCUT_LENGTH;
+  if (metres >= 0) {
+    const remaining = (end - d) / ratio;
+    return metres <= remaining ? at + metres * ratio : at + (end - d) + (metres - remaining);
+  }
+  const remaining = (d - start) / ratio;
+  return -metres <= remaining ? at + metres * ratio : at - (d - start) + (metres + remaining);
+}
+/** Exclude barriers whose footprint would cut through the shortcut road. */
+export function barrierIntersectsShortcut(from: number, to: number, side: number): boolean {
+  // Match the rendered midpoint-oriented boxes, including the wider top rail.
+  const pose = trackPose((from + to) / 2, side * 10.6);
+  const halfLength = (to - from + 0.2) / 2, halfWidth = 0.65 / 2;
+  return SHORTCUT_POINTS.some(point => {
+    const dx = point.x - pose.position[0], dz = point.z - pose.position[2];
+    const along = dx * pose.forward[0] + dz * pose.forward[2];
+    const across = dx * pose.right[0] + dz * pose.right[2];
+    const beyondEnd = Math.max(0, Math.abs(along) - halfLength);
+    const beyondSide = Math.max(0, Math.abs(across) - halfWidth);
+    return Math.hypot(beyondEnd, beyondSide) < BARRIER_OFFSET + 0.5;
+  });
+}
 function worldGeometry(): Geometry {
   const g = new Geometry();
   g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
@@ -139,12 +172,33 @@ function worldGeometry(): Geometry {
     if (i % 4 === 0) {
       const next = TRACK_POINTS[Math.min(TRACK_POINTS.length - 1, i + 4)].distance;
       for (const side of [-1, 1]) {
-        const pose = trackPose((a + next) / 2, side * 10.6, 0.55);
+        // Leave generous openings where the branch separates and rejoins.
+        const mid = (a + next) / 2;
+        if ((side === ACTIVE_SHORTCUT.side && Math.min(Math.abs(mid - ACTIVE_SHORTCUT.start * TRACK_LENGTH), Math.abs(mid - ACTIVE_SHORTCUT.end * TRACK_LENGTH)) < 35) || barrierIntersectsShortcut(a, next, side)) continue;
+        const pose = trackPose(mid, side * 10.6, 0.55);
         g.box(pose.position, [0.55, 1.05, next - a + 0.2], i % 12 === 0 ? orange : cream, pose.yaw);
         g.box([pose.position[0], 1.12, pose.position[2]], [0.65, 0.15, next - a + 0.2], TEAL, pose.yaw);
       }
     }
   }
+  // Physical shortcut road, following the same sampled curve as the physics.
+  const branchStart = ACTIVE_SHORTCUT.start * TRACK_LENGTH, branchSpan = (ACTIVE_SHORTCUT.end - ACTIVE_SHORTCUT.start) * TRACK_LENGTH;
+  const branchAt = (index: number) => branchStart + SHORTCUT_POINTS[index].distance / SHORTCUT_LENGTH * branchSpan;
+  for (let i = 0; i < SHORTCUT_POINTS.length - 1; i++) {
+    const a = branchAt(i), b = branchAt(i + 1);
+    const strip = (left: number, right: number, color: Color, height: number) => g.quad(shortcutPose(a, left, height).position, shortcutPose(b, left, height).position, shortcutPose(b, right, height).position, shortcutPose(a, right, height).position, color, true);
+    strip(-ROAD_HALF_WIDTH, ROAD_HALF_WIDTH, [0.28, 0.34, 0.37], 0.08);
+    strip(-6.8, -6.55, [1, 0.77, 0.35], 0.095); strip(6.55, 6.8, [1, 0.77, 0.35], 0.095);
+    if (i % 12 < 5) strip(-0.13, 0.13, [0.95, 0.79, 0.49], 0.1);
+  }
+  // Warm entry markers are deliberately distinct from the ordinary lap gate.
+  const signAt = branchStart - 10, sign = trackPose(signAt, ACTIVE_SHORTCUT.side * 8.7, 2.7);
+  g.box(sign.position, [2.8, 1.5, 0.35], [0.97, 0.63, 0.2], sign.yaw);
+  // A contrasting arrow points toward the right-hand shortcut lane.
+  const signLane = ACTIVE_SHORTCUT.side * 8.7, darkArrow: Color = [0.15, 0.19, 0.24];
+  g.box(trackPose(signAt - 0.2, signLane - ACTIVE_SHORTCUT.side * 0.25, 2.7).position, [1.15, 0.18, 0.08], darkArrow, sign.yaw);
+  g.triangle(trackPose(signAt - 0.2, signLane + ACTIVE_SHORTCUT.side * 1.0, 2.7).position, trackPose(signAt - 0.2, signLane + ACTIVE_SHORTCUT.side * 0.35, 3.1).position, trackPose(signAt - 0.2, signLane + ACTIVE_SHORTCUT.side * 0.35, 2.3).position, darkArrow, true);
+  g.box(trackPose(signAt, ACTIVE_SHORTCUT.side * 8.7, 1.1).position, [0.2, 2.2, 0.2], [0.9, 0.9, 0.8], sign.yaw);
   // Static course hazards use the simulation's exact lane and distance coordinates.
   for (const obstacle of ACTIVE_TRACK.obstacles) {
     const at = obstacle.fraction * TRACK_LENGTH, pose = trackPose(at, obstacle.lane);
@@ -181,6 +235,8 @@ function worldGeometry(): Geometry {
   g.box(trackPose(1.3, 0, 8.4).position, [19, 1.4, 1], [0.2, 0.2, 0.32], gate.yaw);
   for (let i = -4; i <= 4; i++) g.box(trackPose(1.3, i * 1.9, 8.4).position, [0.9, 0.7, 1.03], i % 2 ? cream : orange, gate.yaw);
 
+  // Keep decorative scenery out of the drivable branch corridor.
+  const nearShortcut = (point: Vec3, margin = 12) => SHORTCUT_POINTS.some(p => Math.hypot(p.x - point[0], p.z - point[2]) < margin);
   let seed = 487;
   const random = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
   // Purpose-built low-poly desert scenery, with no downloaded assets.
@@ -189,6 +245,7 @@ function worldGeometry(): Geometry {
     const pose = trackPose(at, side * (16 + random() * 19));
     const [x, , z] = pose.position;
     const height = 3 + random() * 5;
+    if (nearShortcut(pose.position)) continue;
     g.disc([x + 0.8, 0.012, z + 0.8], 2.2, 1.5, [0.74, 0.56, 0.35], 10);
     if (i % 3 === 0) {
       g.cylinder([x, 0, z], 1.7 + random(), height * 0.55, [0.85, 0.43, 0.3], 6, 1.2);
@@ -209,6 +266,7 @@ function worldGeometry(): Geometry {
   // Sculptural trackside flags make turns visible from the chase cameras.
   for (let i = 0; i < 18; i++) {
     const pose = trackPose(i / 18 * TRACK_LENGTH, 13.5);
+    if (nearShortcut(pose.position)) continue;
     g.cylinder(pose.position, 0.12, 6, [0.35, 0.32, 0.3], 5);
     g.box([pose.position[0], 5.25, pose.position[2]], [0.15, 1.4, 2.4], i % 2 ? [0.28, 0.74, 0.71] : [0.95, 0.61, 0.27], pose.yaw);
   }
@@ -216,6 +274,7 @@ function worldGeometry(): Geometry {
   for (let i = 0; i < 25; i++) {
     const pose = trackPose((i + 0.5) / 25 * TRACK_LENGTH, (i % 2 ? -1 : 1) * (15 + random() * 11));
     const [x, , z] = pose.position, height = 5.5 + random() * 3.5;
+    if (nearShortcut(pose.position)) continue;
     g.disc([x + 1.1, 0.02, z + 1.1], 3.2, 2, [0.68, 0.59, 0.33]);
     g.cylinder([x, 0, z], 0.35, height, [0.63, 0.39, 0.23], 7, 0.23);
     for (let leaf = 0; leaf < 7; leaf++) {
@@ -229,6 +288,7 @@ function worldGeometry(): Geometry {
   const festivalColors: Color[] = [CORAL, TEAL, [1, 0.76, 0.24], [0.68, 0.43, 0.86], [0.4, 0.65, 1]];
   for (const fraction of [0.025, 0.28, 0.54, 0.83]) {
     const at = fraction * TRACK_LENGTH, pose = trackPose(at, -19);
+    if (nearShortcut(pose.position, 27)) continue;
     for (let row = 0; row < 3; row++) {
       g.box(trackPose(at, -15 - row * 2.2, 0.4 + row * 0.6).position, [2.1, 0.8 + row * 1.2, 21], [0.28, 0.35, 0.43], pose.yaw);
       for (let person = 0; person < 12; person++) {
@@ -508,6 +568,27 @@ function boltGeometry(): Geometry {
   g.sphere([0.12, -0.06, -0.28], 0.21, [0.62, 0.47, 1], 8, 6, true);
   return g;
 }
+function crownGeometry(): Geometry {
+  const g = new Geometry();
+  const gold: Color = [1, 0.72, 0.18];
+  g.cylinder([0, -0.3, 0], 0.5, 0.35, gold, 8);
+  for (let i = 0; i < 5; i++) {
+    const a = i * Math.PI * 2 / 5;
+    const x = Math.cos(a) * 0.43, z = Math.sin(a) * 0.43;
+    g.beam([x, 0, z], [x * 1.3, 0.6, z * 1.3], 0.1, gold);
+    g.sphere([x * 1.3, 0.6, z * 1.3], 0.1, [1, 0.36, 0.52], 5, 3, true);
+  }
+  return g;
+}
+function prismGeometry(): Geometry {
+  const g = new Geometry();
+  const colors: Color[] = [[1, 0.35, 0.5], [1, 0.8, 0.2], [0.35, 1, 0.8], [0.5, 0.5, 1]];
+  for (let i = 0; i < colors.length; i++) {
+    const a = i * Math.PI / 2;
+    g.sphere([Math.cos(a) * 1.7, 0.9 + i * 0.35, Math.sin(a) * 1.7], 0.22, colors[i], 6, 4, true);
+  }
+  return g;
+}
 function shieldGeometry(): Geometry {
   const g = new Geometry(); g.sphere([0, 1.1, 0], 1.7, [0.29, 1, 0.79], 16, 10, true); return g;
 }
@@ -544,6 +625,8 @@ export class RaceRenderer {
   private slick: Mesh;
   private bolt: Mesh;
   private shield: Mesh;
+  private crown: Mesh;
+  private prism: Mesh;
   private karts: Mesh[];
   private emptyKarts: Mesh[];
   private dancers: Mesh[][];
@@ -606,12 +689,13 @@ export class RaceRenderer {
     this.spark = this.upload(particleGeometry([1, 0.86, 0.28]));
     this.item = this.upload(itemGeometry()); this.slick = this.upload(slickGeometry());
     this.bolt = this.upload(boltGeometry()); this.shield = this.upload(shieldGeometry());
+    this.crown = this.upload(crownGeometry()); this.prism = this.upload(prismGeometry());
     this.karts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle)));
     this.emptyKarts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle, false)));
     this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
-    this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : 3;
+    this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
     this.rows = Math.ceil(players.length / this.columns);
-    this.cameras = race.karts.map((kart) => ({ eye: trackPose(kart.distance - 10, kart.lane * 0.6, 4.5).position, target: trackPose(kart.distance + 10, kart.lane * 0.35, 0.9).position }));
+    this.cameras = race.karts.map((kart) => ({ eye: racePose(routeOffset(kart.distance, -10, kart.onShortcut), kart.lane * 0.6, 4.5, kart.onShortcut).position, target: racePose(routeOffset(kart.distance, 10, kart.onShortcut), kart.lane * 0.35, 0.9, kart.onShortcut).position }));
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.SCISSOR_TEST);
     gl.useProgram(program); gl.enableVertexAttribArray(this.position); gl.enableVertexAttribArray(this.color);
   }
@@ -654,7 +738,7 @@ export class RaceRenderer {
   render(race: RaceState, dt: number) {
     const gl = this.gl;
     const rect = this.canvas.getBoundingClientRect();
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, race.karts.length > 4 ? 1.25 : 1.75, Math.sqrt(3400000 / Math.max(1, rect.width * rect.height)));
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, race.karts.length > 6 ? 1 : race.karts.length > 4 ? 1.25 : 1.75, Math.sqrt(3400000 / Math.max(1, rect.width * rect.height)));
     const width = Math.max(1, Math.round(rect.width * pixelRatio)), height = Math.max(1, Math.round(rect.height * pixelRatio));
     if (width !== this.width || height !== this.height) {
       this.canvas.width = width; this.canvas.height = height; this.width = width; this.height = height;
@@ -662,9 +746,9 @@ export class RaceRenderer {
     gl.scissor(0, 0, width, height); gl.clearColor(0.07, 0.08, 0.12, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     for (let i = 0; i < race.karts.length; i++) {
       const kart = race.karts[i], camera = this.cameras[i];
-      const position = trackPose(kart.distance, kart.lane).position;
-      const behind = trackPose(kart.distance - 9 - kart.speed * 0.06, kart.lane * 0.72, 4.5).position;
-      const target = trackPose(kart.distance + 10 + kart.speed * 0.1, kart.lane * 0.4, 0.9).position;
+      const position = racePose(kart.distance, kart.lane, 0, kart.onShortcut).position;
+      const behind = racePose(routeOffset(kart.distance, -9 - kart.speed * 0.06, kart.onShortcut), kart.lane * 0.72, 4.5, kart.onShortcut).position;
+      const target = racePose(routeOffset(kart.distance, 10 + kart.speed * 0.1, kart.onShortcut), kart.lane * 0.4, 0.9, kart.onShortcut).position;
       const smoothing = Math.min(1, dt * 8);
       for (let axis = 0; axis < 3; axis++) { camera.eye[axis] += (behind[axis] - camera.eye[axis]) * smoothing; camera.target[axis] += (target[axis] - camera.target[axis]) * smoothing; }
       // Keep the chased kart in view through the tightest bends.
@@ -685,19 +769,22 @@ export class RaceRenderer {
         this.draw(this.item, model(point, race.elapsed * 1.6 + box.id));
       }
       for (const hazard of race.powers.hazards) {
-        const pose = trackPose(hazard.distance, hazard.lane);
+        const pose = (hazard.onShortcut ? shortcutPose : trackPose)(hazard.distance, hazard.lane);
         this.draw(this.slick, model(pose.position, pose.yaw, Math.min(1, hazard.life / 0.8)));
       }
       for (const projectile of race.powers.projectiles) {
-        const point = trackPose(projectile.distance, projectile.lane, 0.85 + Math.abs(Math.sin(race.elapsed * 7 + projectile.id)) * 0.45).position;
-        this.draw(this.bolt, model(point, race.elapsed * 4));
-        for (let tail = 1; tail <= 2; tail++) this.draw(this.bolt, model(trackPose(projectile.distance - tail * 1.2, projectile.lane, 0.75).position, race.elapsed * 4, 0.45 / tail));
+        const point = (projectile.onShortcut ? shortcutPose : trackPose)(projectile.distance, projectile.lane, 0.85 + Math.abs(Math.sin(race.elapsed * 7 + projectile.id)) * 0.45).position;
+        this.draw(projectile.kind === 'crown' ? this.crown : this.bolt, model(point, race.elapsed * 4));
+        for (let tail = 1; tail <= 2; tail++) {
+          const tailDistance = projectile.onShortcut ? Math.max(ACTIVE_SHORTCUT.start * TRACK_LENGTH, wrap(routeOffset(projectile.distance, -tail * 1.2, true))) : projectile.distance - tail * 1.2;
+          this.draw(this.bolt, model((projectile.onShortcut ? shortcutPose : trackPose)(tailDistance, projectile.lane, 0.75).position, race.elapsed * 4, 0.45 / tail));
+        }
       }
       for (let j = 0; j < race.karts.length; j++) {
         const other = race.karts[j];
         // Render every racer, including close followers between this kart and
         // its chase camera. The view frustum handles those behind the camera.
-        const pose = trackPose(other.distance, other.lane, 0.04);
+        const pose = racePose(other.distance, other.lane, 0.04, other.onShortcut);
         const yaw = pose.yaw + other.heading;
         const transform = model(pose.position, yaw);
         this.draw(this.shadow, model([pose.position[0], 0.095, pose.position[2]], yaw));
@@ -716,11 +803,20 @@ export class RaceRenderer {
             this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
           }
         }
+        if (other.power.prism > 0) this.draw(this.prism, model(pose.position, race.elapsed * 2));
+        if (other.power.jet > 0) this.draw(this.boost, model(pose.position, yaw, 1.5));
+        if (other.power.flask > 0) this.draw(this.spark, model([pose.position[0], pose.position[1] + 2.5, pose.position[2]], race.elapsed, 1.2));
+        if (other.drifting && other.driftCharge > 0.15) {
+          for (const side of [-1, 1]) {
+            const point = racePose(routeOffset(other.distance, -1, other.onShortcut), other.lane + side * 0.75, 0.22, other.onShortcut).position;
+            this.draw(this.spark, model(point, race.elapsed * 5, 0.4 + Math.min(0.7, other.driftCharge / 2)));
+          }
+        }
         if (other.boost > 0) this.draw(this.boost, model(pose.position, yaw, 1 + Math.sin(race.elapsed * 43 + j) * 0.07));
         if (other.speed > 13 && (Math.abs(other.lane) > 6.5 || Math.abs(other.lateral) > 7)) {
           for (let particle = 0; particle < 5; particle++) {
             const life = ((race.elapsed * 2.8 + particle / 5) % 1);
-            const point = trackPose(other.distance - 1.4 - life * (3 + other.speed * 0.06), other.lane + (particle % 2 ? 0.8 : -0.8), 0.2 + life * 0.5).position;
+            const point = racePose(routeOffset(other.distance, -1.4 - life * (3 + other.speed * 0.06), other.onShortcut), other.lane + (particle % 2 ? 0.8 : -0.8), 0.2 + life * 0.5, other.onShortcut).position;
             this.draw(this.dust, model(point, particle, (0.4 + life * 1.8) * (1 - life)));
           }
         }
@@ -734,14 +830,14 @@ export class RaceRenderer {
       // Transparent shells are the final world pass, after all opaque karts.
       for (const other of race.karts) {
         if (other.power.shield <= 0) continue;
-        const pose = trackPose(other.distance, other.lane, 0.04);
+        const pose = racePose(other.distance, other.lane, 0.04, other.onShortcut);
         this.draw(this.shield, model(pose.position, pose.yaw), 0.16 + Math.sin(race.elapsed * 3) * 0.025);
       }
     }
   }
   dispose() {
     const gl = this.gl;
-    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, ...this.karts, ...this.emptyKarts, ...this.dancers.flat()]) gl.deleteBuffer(mesh.buffer);
+    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, this.crown, this.prism, ...this.karts, ...this.emptyKarts, ...this.dancers.flat()]) gl.deleteBuffer(mesh.buffer);
     gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }

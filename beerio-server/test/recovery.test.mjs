@@ -17,7 +17,14 @@ function fixture() {
     const p = peer(); service.receive(p, { type: 'join', code: hostWelcome.room.code, name, appearance: { character: 'frog', vehicle: 'motorcycle', color: '#123456' } });
     return p;
   };
-  return { service, peer, host, hostWelcome, checkpoint, ack, join, tick(ms) { now += ms; service.sweep(); } };
+  const start = () => {
+    const room = service.rooms.get(hostWelcome.room.code);
+    for (const player of room.players.values()) {
+      if (player.peer && !room.pendingWelcomes.has(player.peer)) service.receive(player.peer, { type: 'ready', ready: true });
+    }
+    service.receive(host, { type: 'lock', locked: true });
+  };
+  return { service, peer, host, hostWelcome, checkpoint, ack, join, start, tick(ms) { now += ms; service.sweep(); } };
 }
 function restore(f, checkpoint = f.checkpoint()) {
   const next = fixture(); // Also leave a distinct legitimate room in the new process.
@@ -45,7 +52,7 @@ test('new controller welcome waits for host checkpoint acknowledgment; private c
 
 test('restart restores authenticated host and six exact racer identities, appearance and lock with neutral controls', () => {
   const f = fixture(); const racers = Array.from({ length: 6 }, (_, i) => { const p = f.join(`Racer ${i}`); f.ack(); return p; });
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   f.service.receive(racers[0], { type: 'input', input: { steer: 1, accelerate: true, brake: false, action: 7 } });
   const checkpoint = f.checkpoint();
   checkpoint.players[0].actionSequence = 7; // Browser retains the action floor from the input packet.
@@ -105,7 +112,7 @@ test('public-code collision cannot hijack established identity, and duplicate ho
 test('invalid checkpoints cannot inflate capacity, inject controls, corrupt identity, duplicate seats or forge appearance', () => {
   const f = fixture(); f.join(); f.ack();
   const variants = [
-    c => { c.maxPlayers = 7; }, c => { c.roomId = 'f'.repeat(64); },
+    c => { c.maxPlayers = 11; }, c => { c.roomId = 'f'.repeat(64); },
     c => { c.players[0].tokenHash = f.hostWelcome.token; },
     c => { c.players.push(c.players[0]); }, c => { c.players[0].name = '\nBad'; },
     c => { c.players[0].character = 'invalid'; }, c => { c.players[0].vehicle = 'truck'; },
@@ -136,7 +143,7 @@ test('unacknowledged join is bounded, legacy clients stay compatible, and explic
 test('recovery waits only for confirmed race participants and suppresses controls until everyone returns', () => {
   const f = fixture(); const active = f.join('Active'); f.ack(); const away = f.join('Away'); f.ack();
   f.service.disconnect(away);
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   assert.deepEqual(f.checkpoint().participants, [active.playerId]);
   const n = restore(f); const room = n.service.roomsByIdentity.get(f.hostWelcome.roomId);
   assert.equal(n.restoredWelcome.room.recovering, true);
@@ -149,7 +156,7 @@ test('recovery waits only for confirmed race participants and suppresses control
 
 test('host can explicitly resume without missing racers; phones cannot bypass the recovery wait', () => {
   const f = fixture(); const a = f.join('A'); f.ack(); f.join('B'); f.ack();
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   const n = restore(f); const id = a.messages.find(m => m.type === 'welcome'); const p = n.peer();
   n.service.receive(p, { type: 'resume', roomId: id.roomId, token: id.token });
   const room = n.service.roomsByIdentity.get(f.hostWelcome.roomId);
@@ -169,7 +176,7 @@ test('host can explicitly resume without missing racers; phones cannot bypass th
 
 test('explicit departures and ordinary expiry remove participant IDs; recovery wait never silently expires a racer', () => {
   const f = fixture(); const a = f.join('A'); f.ack(); const b = f.join('B'); f.ack();
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   f.service.receive(a, { type: 'leave' });
   assert.deepEqual(f.checkpoint().participants, [b.playerId]);
   const n = restore(f); const room = n.service.roomsByIdentity.get(f.hostWelcome.roomId);
@@ -187,7 +194,7 @@ test('explicit departures and ordinary expiry remove participant IDs; recovery w
 
 test('returning to lobby or explicitly closing a recovered room clears recovery state safely', () => {
   const f = fixture(); const p = f.join(); f.ack();
-  f.service.receive(f.host, { type: 'lock', locked: true });
+  f.start();
   const n = restore(f); const room = n.service.roomsByIdentity.get(f.hostWelcome.roomId);
   assert.equal(room.recovering, true);
   n.service.receive(n.restoredHost, { type: 'lock', locked: false });

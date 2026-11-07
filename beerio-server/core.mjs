@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 
-export const COLORS = ['#4ce4f3', '#ff7479', '#bd9aff', '#ffd264', '#66e6a2', '#ff9de2'];
+export const COLORS = ['#4ce4f3', '#ff7479', '#bd9aff', '#ffd264', '#66e6a2', '#ff9de2', '#fb9855', '#92c7ff', '#e9ee79', '#d2a27b'];
 export const ZERO_INPUT = Object.freeze({ steer: 0, accelerate: false, brake: false });
 export const INPUT_TIMEOUT_MS = 500;
 export const HOST_GRACE_MS = 30_000;
@@ -12,15 +12,17 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const safeInput = (value) => value && typeof value === 'object' &&
   typeof value.steer === 'number' && Number.isFinite(value.steer) &&
   Math.abs(value.steer) <= 1 && typeof value.accelerate === 'boolean' && typeof value.brake === 'boolean' &&
+  (value.drift === undefined || typeof value.drift === 'boolean') &&
   (value.action === undefined || (Number.isSafeInteger(value.action) && value.action >= 0));
 const freshInput = () => ({ ...ZERO_INPUT });
-const hasInput = (input) => input.steer !== 0 || input.accelerate || input.brake || input.action !== undefined;
+const hasInput = (input) => input.steer !== 0 || input.accelerate || input.brake || input.drift || input.action !== undefined;
 const makeToken = () => randomBytes(24).toString('hex');
 const hashToken = (token) => createHash('sha256').update(token).digest('hex');
 const isToken = (token) => typeof token === 'string' && /^[a-f0-9]{48}$/.test(token);
 const isHash = (hash) => typeof hash === 'string' && /^[a-f0-9]{64}$/.test(hash);
 const cleanName = (name) => (typeof name === 'string' ? name : 'Racer')
-  .replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, 18) || 'Racer';
+  .replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim() || 'Racer';
+const validName = (name) => Array.from(name).length <= 64;
 
 /** Transport-independent room service. A peer supplies send(object) and close(). */
 export class RoomService {
@@ -58,7 +60,7 @@ export class RoomService {
       hostConnected: Boolean(room.host),
       players: Array.from(room.players.values(), (player) => ({
         id: player.id, name: player.name, color: player.color, character: player.character, vehicle: player.vehicle,
-        connected: Boolean(player.peer) && !room.pendingWelcomes.has(player.peer), input: { ...player.input },
+        connected: Boolean(player.peer) && !room.pendingWelcomes.has(player.peer), ready: player.ready === true, inRace: room.locked && room.participants.has(player.id), input: { ...player.input },
         ...(player.actionSequence > 0 ? { actionSequence: player.actionSequence } : {}),
       })),
     };
@@ -148,10 +150,11 @@ export class RoomService {
         if (sequence === undefined || sequence === 0) player.actionFloor = player.actionSequence;
         else player.actionSequence = Math.max(player.actionSequence, sequence);
         // Lobby/results traffic must never queue movement or an item for a rematch.
-        const racing = Boolean(room.host) && room.locked && !room.recovering;
+        const racing = Boolean(room.host) && room.locked && !room.recovering && room.participants.has(player.id) && !room.pendingWelcomes.has(peer);
         if (!racing) player.actionFloor = player.actionSequence;
         player.input = racing ? {
           steer: message.input.steer, accelerate: message.input.accelerate, brake: message.input.brake,
+          ...(typeof message.input.drift === 'boolean' ? { drift: message.input.drift } : {}),
           ...(sequence > player.actionFloor ? { action: player.actionSequence } : {}),
         } : freshInput();
         // Update the host's retained checkpoint in the same packet as the action.
@@ -166,7 +169,18 @@ export class RoomService {
         if (peer.role !== 'player' || !player || player.peer !== peer) { this.error(peer, 'player_only', 'Only a player may change their appearance.'); return; }
         if (room.locked) { this.error(peer, 'room_locked', 'Appearance is locked during a race.'); return; }
         if (!validAppearance(message.appearance)) { this.error(peer, 'invalid_appearance', 'Choose a valid racer, vehicle, and color.'); return; }
+        const changed = player.character !== message.appearance.character || player.vehicle !== message.appearance.vehicle || player.color !== message.appearance.color.toLowerCase();
         Object.assign(player, { character: message.appearance.character, vehicle: message.appearance.vehicle, color: message.appearance.color.toLowerCase() });
+        if (changed) player.ready = false;
+        this.broadcastRoom(room);
+        break;
+      }
+      case 'ready': {
+        const player = room.players.get(peer.playerId);
+        if (peer.role !== 'player' || !player || player.peer !== peer || room.pendingWelcomes.has(peer)) { this.error(peer, 'player_only', 'Only a joined player may set their readiness.'); return; }
+        if (room.locked || room.recovering) { this.error(peer, 'room_locked', 'Readiness is locked during a race.'); return; }
+        if (typeof message.ready !== 'boolean') { this.error(peer, 'invalid_ready', 'Choose ready or not ready.'); return; }
+        player.ready = message.ready;
         this.broadcastRoom(room);
         break;
       }
@@ -187,6 +201,14 @@ export class RoomService {
           this.error(peer, 'host_only', 'Only the host may lock the room.'); return;
         }
         if (room.locked !== message.locked) {
+          if (message.locked) {
+            const entrants = [...room.players.values()].filter(player => player.peer && !room.pendingWelcomes.has(player.peer));
+            if (!entrants.length || entrants.some(player => !player.ready)) {
+              this.error(peer, 'not_ready', 'Every connected driver must be ready before starting.'); return;
+            }
+          } else {
+            for (const player of room.players.values()) player.ready = false;
+          }
           room.locked = message.locked;
           if (!room.locked) room.recovering = false;
           room.participants = new Set(room.locked ? Array.from(room.players.values()).filter(player => player.peer && !room.pendingWelcomes.has(player.peer)).map(player => player.id) : []);
@@ -227,9 +249,9 @@ export class RoomService {
     if (this.rooms.size >= this.maxRooms) {
       this.error(peer, 'server_full', 'The relay is full. Try again shortly.', true); return;
     }
-    const maxPlayers = message.maxPlayers ?? 6;
-    if (!Number.isInteger(maxPlayers) || maxPlayers < 4 || maxPlayers > 6) {
-      this.error(peer, 'invalid_capacity', 'Choose between four and six racer slots.', true); return;
+    const maxPlayers = message.maxPlayers ?? 10;
+    if (!Number.isInteger(maxPlayers) || maxPlayers < 4 || maxPlayers > 10) {
+      this.error(peer, 'invalid_capacity', 'Choose between four and ten racer slots.', true); return;
     }
     const code = this.makeCode();
     const hostToken = makeToken();
@@ -269,13 +291,15 @@ export class RoomService {
     if (room.locked) { this.error(peer, 'room_locked', 'This race has started. Ask the host to open a new race.', true); return; }
     if (room.players.size >= room.maxPlayers) { this.error(peer, 'room_full', 'All racer slots are taken.', true); return; }
     if (message.appearance !== undefined && !validAppearance(message.appearance)) { this.error(peer, 'invalid_appearance', 'Choose a valid racer, vehicle, and color.', true); return; }
+    const name = cleanName(message.name);
+    if (!validName(name)) { this.error(peer, 'invalid_name', 'Names can be at most 64 characters.', true); return; }
     const usedColors = new Set(Array.from(room.players.values(), (p) => p.color));
     const token = makeToken();
     const player = {
-      id: randomBytes(8).toString('hex'), tokenHash: hashToken(token), name: cleanName(message.name),
+      id: randomBytes(8).toString('hex'), tokenHash: hashToken(token), name,
       color: message.appearance?.color.toLowerCase() ?? COLORS.find((color) => !usedColors.has(color)),
       character: message.appearance?.character ?? 'fox', vehicle: message.appearance?.vehicle ?? 'kart', peer,
-      input: freshInput(), actionSequence: 0, actionFloor: 0, lastInputAt: this.now(), goneAt: null,
+      input: freshInput(), ready: false, actionSequence: 0, actionFloor: 0, lastInputAt: this.now(), goneAt: null,
     };
     room.players.set(player.id, player);
     room.touchedAt = this.now();
@@ -313,7 +337,10 @@ export class RoomService {
       room.touchedAt = this.now();
       peer.room = room.code;
       peer.role = 'host';
-      for (const player of room.players.values()) this.resetInput(room, player);
+      for (const player of room.players.values()) {
+        this.resetInput(room, player);
+        if (!room.locked) player.ready = false;
+      }
       this.welcome(peer, room, room.hostToken);
       return;
     }
@@ -326,6 +353,7 @@ export class RoomService {
       old.close();
     }
     player.peer = peer;
+    if (!room.locked) player.ready = false;
     player.goneAt = null;
     player.lastInputAt = this.now();
     this.resetInput(room, player);
@@ -348,10 +376,10 @@ export class RoomService {
     }
     const c = message.checkpoint;
     if (!c || typeof c !== 'object' || c.version !== 1 || c.roomId !== message.roomId ||
-      !Number.isInteger(c.maxPlayers) || c.maxPlayers < 4 || c.maxPlayers > 6 ||
+      !Number.isInteger(c.maxPlayers) || c.maxPlayers < 4 || c.maxPlayers > 10 ||
       typeof c.locked !== 'boolean' || !Array.isArray(c.players) || c.players.length > c.maxPlayers ||
       c.players.some(p => !p || typeof p.id !== 'string' || !/^[a-f0-9]{16}$/.test(p.id) ||
-        !isHash(p.tokenHash) || typeof p.name !== 'string' || p.name !== cleanName(p.name) || !validAppearance(p) ||
+        !isHash(p.tokenHash) || typeof p.name !== 'string' || p.name !== cleanName(p.name) || !validName(p.name) || !validAppearance(p) ||
         !Number.isSafeInteger(p.actionSequence) || p.actionSequence < 0) ||
       new Set(c.players.map(p => p.id)).size !== c.players.length ||
       new Set(c.players.map(p => p.tokenHash)).size !== c.players.length ||
@@ -374,7 +402,7 @@ export class RoomService {
       players: new Map(c.players.map(p => [p.id, {
         id: p.id, name: p.name, color: p.color.toLowerCase(), character: p.character, vehicle: p.vehicle,
         tokenHash: p.tokenHash, actionSequence: p.actionSequence, actionFloor: p.actionSequence,
-        peer: null, input: freshInput(), lastInputAt: this.now(), goneAt: this.now(),
+        peer: null, ready: false, input: freshInput(), lastInputAt: this.now(), goneAt: this.now(),
       }])),
     };
     this.rooms.set(room.code, room);
@@ -389,12 +417,16 @@ export class RoomService {
     if (room.host === peer) {
       room.host = null;
       room.hostGoneAt = this.now();
-      for (const player of room.players.values()) this.resetInput(room, player);
+      for (const player of room.players.values()) {
+        this.resetInput(room, player);
+        if (!room.locked) player.ready = false;
+      }
     } else {
       const player = room.players.get(peer.playerId);
       if (player?.peer === peer) {
         this.resetInput(room, player);
         player.peer = null;
+        if (!room.locked) player.ready = false;
         player.goneAt = this.now();
       }
       room.pendingWelcomes.delete(peer);

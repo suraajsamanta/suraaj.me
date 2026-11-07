@@ -27,6 +27,7 @@ test('reject invalid selections and deny edits during a race or by a host', () =
   const f = setup(); const bad = f.join({ ...first, vehicle: 'bogus' }); assert.equal(bad.messages.at(-1).code, 'invalid_appearance');
   const p = f.join(first); f.service.receive(p, { type: 'appearance', appearance: { ...second, color: 'red' } }); assert.equal(p.messages.at(-1).code, 'invalid_appearance');
   f.service.receive(f.host, { type: 'appearance', appearance: second }); assert.equal(f.host.messages.at(-1).code, 'player_only');
+  f.service.receive(p, { type: 'ready', ready: true });
   f.service.receive(f.host, { type: 'lock', locked: true }); f.service.receive(p, { type: 'appearance', appearance: second }); assert.equal(p.messages.at(-1).code, 'room_locked');
   const view = f.service.roomView(f.service.rooms.get(f.code)).players[0]; assert.equal(view.character, 'robot'); assert.equal(view.vehicle, 'motorcycle');
   f.service.receive(f.host, { type: 'lock', locked: false }); f.service.receive(p, { type: 'appearance', appearance: second }); assert.equal(f.host.messages.at(-1).room.players[0].character, 'frog');

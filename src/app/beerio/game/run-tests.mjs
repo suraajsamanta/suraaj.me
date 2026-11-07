@@ -21,6 +21,7 @@ try {
     'src/app/beerio/game/track.ts',
     'src/app/beerio/game/simulation.ts',
     'src/app/beerio/game/simulation.test.ts',
+    'src/app/beerio/game/shortcut.test.ts',
     'src/app/beerio/game/powerups.test.ts',
     '--outDir', output,
     '--module', 'commonjs',
@@ -29,7 +30,7 @@ try {
     '--esModuleInterop',
   ]);
   if (process.exitCode === 0) {
-    process.exitCode = run(['--test', join(output, 'simulation.test.js'), join(output, 'powerups.test.js')]);
+    process.exitCode = run(['--test', join(output, 'simulation.test.js'), join(output, 'powerups.test.js'), join(output, 'shortcut.test.js')]);
   }
 } finally {
   rmSync(output, { recursive: true, force: true });

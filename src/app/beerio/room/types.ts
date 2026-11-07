@@ -1,7 +1,7 @@
 import type { Appearance } from "../appearance";
 /** Shared browser-side contract. The relay never runs the race simulation. */
 /** action is an optional, monotonically increasing item-press sequence. */
-export type RoomInput = { steer: number; accelerate: boolean; brake: boolean; action?: number };
+export type RoomInput = { steer: number; accelerate: boolean; brake: boolean; drift?: boolean; action?: number };
 export type RoomPlayer = {
   id: string;
   name: string;
@@ -9,6 +9,9 @@ export type RoomPlayer = {
   character?: Appearance["character"];
   vehicle?: Appearance["vehicle"];
   connected: boolean;
+  ready: boolean;
+  /** Frozen by the relay when the host starts. */
+  inRace: boolean;
   input: RoomInput;
   /** Retained across safety resets and reconnects, without replaying an action. */
   actionSequence?: number;
@@ -41,6 +44,7 @@ export function normalizeInput(input: RoomInput): RoomInput {
     steer: Number.isFinite(input.steer) ? Math.max(-1, Math.min(1, input.steer)) : 0,
     accelerate: input.accelerate === true,
     brake: input.brake === true,
+    ...(typeof input.drift === "boolean" ? { drift: input.drift } : {}),
     ...(Number.isSafeInteger(input.action) && input.action! > 0 ? { action: input.action } : {}),
   };
 }
