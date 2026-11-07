@@ -3,13 +3,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://suraaj.me"),
-  title: "Suraaj — A Little Ahead of the Curve",
-  description:
-    "Suraaj Samanta. Exploring the space between intelligence, software, and whatever comes next.",
+  title: "Suraaj Samanta — Learning, Building, Exploring",
+  description: "Suraaj Samanta. Learning, building, exploring.",
   openGraph: {
     title: "Suraaj Samanta",
-    description:
-      "A little ahead of the curve. Intelligence, software, and whatever comes next.",
+    description: "Learning, building, exploring.",
     url: "https://suraaj.me",
     siteName: "Suraaj Samanta",
     type: "website",

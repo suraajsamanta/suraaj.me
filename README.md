@@ -1,6 +1,6 @@
 # suraaj.me
 
-A quiet, dark landing page for Suraaj Samanta, built with Next.js App Router, React, and TypeScript. Black and white design, custom SVG branding, and GitHub and LinkedIn logos. Responsive and reduced-motion aware, with no analytics, tracking, or backend services.
+A quiet, dark landing page for Suraaj Samanta, built with Next.js App Router, React, and TypeScript. Black and white design with a centered name, a simple learning/building/exploring tagline, and GitHub and LinkedIn links. Responsive and reduced-motion aware, with no analytics, tracking, or backend services.
 
 ## Development
 

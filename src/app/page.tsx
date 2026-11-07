@@ -1,24 +1,5 @@
 const linkedin = "https://www.linkedin.com/in/suraaj-samanta-gatech/";
 const github = "https://github.com/suraajsamanta";
-function Mark() {
-  return (
-    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path
-        d="M16 2v28M2 16h28M6 6l20 20M6 26 26 6"
-        stroke="currentColor"
-        strokeWidth="2.5"
-      />
-      <circle
-        cx="16"
-        cy="16"
-        r="5"
-        fill="var(--bg)"
-        stroke="currentColor"
-        strokeWidth="2"
-      />
-    </svg>
-  );
-}
 function GithubIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -36,174 +17,33 @@ function LinkedInIcon() {
 export default function Home() {
   return (
     <main className="site">
-      <a className="skip" href="#signal">
-        Skip to content
-      </a>
       <div className="grain" aria-hidden="true" />
-      <header className="header">
-        <a href="#" className="wordmark" aria-label="Suraaj home">
-          <Mark />
-          suraaj<span>.</span>
-        </a>
-        <nav aria-label="Main navigation">
-          <a href="#signal">The signal</a>
+      <span className="corner-note">suraaj.me</span>
+      <section className="intro" aria-labelledby="name">
+        <p className="hello">hey, I’m</p>
+        <h1 id="name">Suraaj Samanta</h1>
+        <p className="tagline">learning, building, exploring.</p>
+        <nav className="socials" aria-label="Find me online">
           <a href={github} target="_blank" rel="noopener noreferrer">
-            GitHub ↗
+            <GithubIcon />
+            <span>GitHub</span>
+            <span className="arrow" aria-hidden="true">
+              ↗
+            </span>
+          </a>
+          <span className="separator" aria-hidden="true" />
+          <a href={linkedin} target="_blank" rel="noopener noreferrer">
+            <LinkedInIcon />
+            <span>LinkedIn</span>
+            <span className="arrow" aria-hidden="true">
+              ↗
+            </span>
           </a>
         </nav>
-        <a
-          className="contact-link"
-          href={linkedin}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Make contact <span>↗</span>
-        </a>
-      </header>
-      <section className="hero" aria-labelledby="hero-title">
-        <div className="hero-content">
-          <div className="eyebrow">
-            <span className="status-dot" /> INDEPENDENT MIND. INFINITE
-            POSSIBILITIES.
-          </div>
-          <h1 id="hero-title">
-            A little ahead
-            <br />
-            of <span>the curve.</span>
-          </h1>
-          <p className="hero-description">
-            Suraaj Samanta. Exploring the space between
-            <br className="desktop-break" /> intelligence, software, and
-            whatever comes next.
-          </p>
-          <div className="hero-actions">
-            <a
-              className="primary-button"
-              href={linkedin}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Let’s connect <span>↗</span>
-            </a>
-            <a
-              href={github}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="icon-link"
-              aria-label="Suraaj on GitHub"
-            >
-              <GithubIcon />
-            </a>
-            <a
-              href={linkedin}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="icon-link"
-              aria-label="Suraaj on LinkedIn"
-            >
-              <LinkedInIcon />
-            </a>
-          </div>
-        </div>
-        <div className="hero-baseline">
-          <span>
-            <span className="tiny-cross">+</span> LESS NOISE. MORE POSSIBILITY.
-          </span>
-          <a href="#signal" className="discover-link">
-            EXPLORE <span>↓</span>
-          </a>
-        </div>
-      </section>
-      <section className="signal" id="signal" aria-labelledby="signal-title">
-        <div className="signal-intro">
-          <div className="eyebrow">
-            <span className="tiny-cross">+</span> THE SIGNAL
-          </div>
-          <h2 id="signal-title">
-            Stay curious.
-            <br />
-            Build with intent.
-          </h2>
-          <p>
-            Software engineering and machine learning.
-            <br />A Georgia Tech foundation.
-            <br />
-            Always looking at what could be.
-          </p>
-        </div>
-        <div className="principles">
-          {[
-            {
-              title: "Explore the edges.",
-              text: "The most interesting ideas live between disciplines.",
-              icon: "✳",
-            },
-            {
-              title: "Make it real.",
-              text: "From a passing thought to something you can use.",
-              icon: "⌘",
-            },
-            {
-              title: "Keep the horizon open.",
-              text: "Good conversations tend to lead somewhere unexpected.",
-              icon: "◎",
-            },
-          ].map((item, i) => (
-            <article key={item.title}>
-              <span className="principle-icon" aria-hidden="true">
-                {item.icon}
-              </span>
-              <div>
-                <h3>{item.title}</h3>
-                <p>{item.text}</p>
-              </div>
-              <span className="index">0{i + 1}</span>
-            </article>
-          ))}
-        </div>
-      </section>
-      <section className="connect">
-        <div>
-          <span className="eyebrow">OPEN CHANNEL</span>
-          <h2>Something on your mind?</h2>
-          <p>I’m always up for an interesting conversation.</p>
-        </div>
-        <a
-          href={linkedin}
-          className="connect-button"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Send a signal <span>↗</span>
-        </a>
       </section>
       <footer>
-        <a href="#" className="footer-brand">
-          <Mark />
-          suraaj.
-        </a>
-        <span>© 2026 Suraaj Samanta</span>
-        <div>
-          <a
-            href={github}
-            aria-label="GitHub"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <GithubIcon />
-          </a>
-          <a
-            href={linkedin}
-            aria-label="LinkedIn"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <LinkedInIcon />
-          </a>
-          <span className="footer-note">
-            STILL EXPLORING <span className="status-dot" />
-          </span>
-        </div>
+        <span>always a work in progress.</span>
+        <span>© 2026</span>
       </footer>
     </main>
   );
