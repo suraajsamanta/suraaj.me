@@ -78,3 +78,40 @@
   .control,.control.brake,.control.go { border-radius:16px; }
   .controlHint { font-size:12px; }
 }
+
+/* Racer garage: compact enough for a phone, with large touch targets. */
+.appearancePicker { border: 1px solid rgba(255,255,255,.22); border-radius: 18px; margin: 20px 0; padding: 16px; min-width: 0; }
+.appearancePicker legend { color: #ffce58; font-weight: 900; font-size: .75rem; letter-spacing: .14em; padding: 0 6px; }
+.appearancePreview { display: flex; justify-content: center; align-items: center; gap: 22px; border: 2px solid; border-radius: 14px; background: rgba(255,255,255,.07); min-height: 82px; font-size: 2.5rem; margin-bottom: 14px; }
+.appearanceFields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.appearanceFields label { display: flex; flex-direction: column; gap: 6px; font-size: .7rem; font-weight: 800; letter-spacing: .08em; }
+.appearanceFields select { width: 100%; min-width: 0; padding: 10px 8px; border: 1px solid rgba(255,255,255,.25); border-radius: 8px; color: #fff; background: #29243e; font: inherit; letter-spacing: normal; }
+.colorChoices { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; }
+.colorChoices > span, .customColor { font-size: .68rem; font-weight: 800; letter-spacing: .08em; }
+.colorSwatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.colorSwatch[aria-pressed="true"] { outline: 2px solid #fff; outline-offset: 2px; }
+.customColor { display: flex; align-items: center; gap: 5px; }
+.customColor input { width: 36px; height: 34px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.appearanceNote { font-size: .75rem !important; margin: 12px 0 0 !important; opacity: .7; }
+.playerAppearance { display: block; font-size: .7rem; font-weight: 500; opacity: .7; margin-top: 4px; }
+@media (max-width: 420px) { .appearanceFields { grid-template-columns: 1fr; } }
+
+.form .colorChoices .colorSwatch { margin-top: 0; }
+.form .customColor input { width: 36px; height: 34px; margin: 0; padding: 0; }
+.appearanceFields select:focus-visible, .colorSwatch:focus-visible, .customColor input:focus-visible { outline: 3px solid white; outline-offset: 3px; }
+
+/* Stagger the pedals like the B/A buttons on a gamepad, within thumb reach. */
+.controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'steer pedals' 'item item'; align-items: end; }
+.steering { display: block; grid-area: steer; }
+.steering > * { height: clamp(144px, 25dvh, 180px); }
+.itemControl { grid-area: item; }
+.pedals { grid-area: pedals; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, 1fr); gap: 6px; height: clamp(144px, 25dvh, 180px); }
+.control.brake, .control.go { height: 100%; min-height: 64px; border-radius: 50%; font-size: clamp(12px, 3.6vw, 18px); }
+.control.brake { grid-column: 2; grid-row: 1; }
+.control.go { grid-column: 1; grid-row: 2; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .controls { grid-template-columns: minmax(0, 1fr) minmax(72px, .45fr) minmax(0, 1fr); grid-template-areas: 'steer item pedals'; align-items: end; }
+  .steering > *, .pedals { height: clamp(120px, 42dvh, 190px); }
+  .control.brake, .control.go { height: 100%; min-height: 54px; }
+  .itemControl { align-self: end; height: clamp(104px, 35dvh, 160px); }
+}

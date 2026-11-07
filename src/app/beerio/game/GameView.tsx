@@ -21,6 +21,8 @@ export type GameViewProps = {
   localKeyboard?: boolean;
   /** Follow bends automatically. Can be changed during a race without resetting it. */
   autoSteer?: boolean;
+  /** Pauses authoritative simulation while the host connection is unavailable. */
+  paused?: boolean;
   onFinish?: (results: RaceResult[]) => void;
   /** Actions shown on the completed-race leaderboard. */
   onRematch?: () => void;
@@ -53,12 +55,15 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to six chase cameras. */
-export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, onFinish, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
+export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
   const keyboardRef = useRef(localKeyboard);
   const autoSteerRef = useRef(autoSteer);
+  const pausedRef = useRef(paused);
+  const pauseVersionRef = useRef(0);
+  const pauseBaselineRef = useRef(new Map<string, number>());
   const [hud, setHud] = useState<Hud>(EMPTY_HUD);
   const [error, setError] = useState('');
   const [restart, setRestart] = useState(0);
@@ -73,7 +78,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
     };
   }, [selectedTrack]);
   const roster = players.slice(0, 6);
-  const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: Boolean(error) || roster.length === 0 });
+  const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: paused || Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
   const totalLaps = Number.isFinite(laps) ? Math.max(1, Math.min(9, Math.round(laps))) : 3;
   const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : 3;
@@ -83,6 +88,15 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
   useEffect(() => { finishRef.current = onFinish; }, [onFinish]);
   useEffect(() => { keyboardRef.current = localKeyboard; }, [localKeyboard]);
   useEffect(() => { autoSteerRef.current = autoSteer; }, [autoSteer]);
+  useEffect(() => {
+    if (pausedRef.current !== paused) {
+      pausedRef.current = paused;
+      // Capture at the transition, not at the next animation frame: a fresh
+      // post-resume item press must remain eligible even if RAF was delayed.
+      pauseBaselineRef.current = new Map(playersRef.current.map(player => [player.id, actionSequence(player.input.action)]));
+      pauseVersionRef.current++;
+    }
+  }, [paused]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,18 +106,43 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
     selectTrack(trackId);
     const race = createRace(entrants, totalLaps);
     const keys = new Set<string>();
+    const blockedKeys = new Set<string>();
     // One monotonic sequence combines keyboard presses with phone actions for player one.
     let lastControllerAction = actionSequence(entrants[0]?.input.action);
     let localAction = lastControllerAction;
     let renderer: RaceRenderer | null = null;
     let frame = 0, last = 0, accumulator = 0, lastHud = 0;
+    let observedPauseVersion = pauseVersionRef.current;
     let stopped = false, didFinish = false, failed = false;
     // Sound can be unlocked after this effect starts; always pause the live mix.
     const pauseAudio = () => { audioRef.current?.setPaused(true); };
     const clearKeys = () => { keys.clear(); };
     const visibility = () => { clearKeys(); last = 0; accumulator = 0; };
+    const discardPausedInput = (baseline?: ReadonlyMap<string, number>) => {
+      for (const key of keys) blockedKeys.add(key);
+      keys.clear();
+      const currentPlayers = playersRef.current;
+      race.karts.forEach((kart, index) => {
+        const action = baseline?.get(kart.id) ?? actionSequence(currentPlayers.find(player => player.id === kart.id)?.input.action);
+        if (index === 0) lastControllerAction = Math.max(lastControllerAction, action);
+        else kart.power.lastAction = Math.max(kart.power.lastAction, action);
+      });
+      if (race.karts[0]) localAction = race.karts[0].power.lastAction;
+    };
+    const syncPauseTransition = () => {
+      if (observedPauseVersion === pauseVersionRef.current) return;
+      observedPauseVersion = pauseVersionRef.current;
+      last = 0; accumulator = 0; discardPausedInput(pauseBaselineRef.current);
+    };
     const keyDown = (event: KeyboardEvent) => {
+      syncPauseTransition();
       const target = event.target;
+      if (pausedRef.current) { if (KEYS.has(event.code) || event.code === 'KeyE') blockedKeys.add(event.code); return; }
+      if (blockedKeys.has(event.code)) {
+        if (event.repeat) return;
+        // A fresh physical press is safe even if keyup was missed in a hidden tab.
+        blockedKeys.delete(event.code);
+      }
       if (!keyboardRef.current || (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)))) return;
       // Keyboard item and brake controls must not interfere with focused controls.
       if ((event.code === 'Space' || event.code === 'KeyE') && target instanceof HTMLElement && target.closest('button, a[href], [role="button"], [role="switch"]')) return;
@@ -114,7 +153,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
       }
       if (KEYS.has(event.code)) { event.preventDefault(); keys.add(event.code); }
     };
-    const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
+    const keyUp = (event: KeyboardEvent) => { syncPauseTransition(); keys.delete(event.code); blockedKeys.delete(event.code); };
     const contextLost = (event: Event) => {
       event.preventDefault(); failed = true;
       pauseAudio();
@@ -123,16 +162,34 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
     const contextRestored = () => { setRestart((value) => value + 1); };
     const animate = (now: number) => {
       if (stopped || failed) return;
+      syncPauseTransition();
       if (!renderer) {
         try {
           renderer = new RaceRenderer(canvas, entrants, race);
-          audioRef.current?.setPaused(document.hidden);
+          audioRef.current?.setPaused(document.hidden || pausedRef.current);
           setError('');
         } catch (cause) {
           failed = true; pauseAudio();
           setError(cause instanceof Error ? cause.message : 'The 3D renderer could not start.');
           return;
         }
+      }
+      if (pausedRef.current) {
+        // Discard wall time so resuming cannot fast-forward physics or a timer.
+        last = 0; accumulator = 0;
+        // Discard item presses arriving while paused; never fire a stale press
+        // on reconnect. Movement, timers, position and inventory stay frozen.
+        discardPausedInput();
+        if (lastHud === 0) {
+          try { renderer.render(race, 0); setHud(snapshot(race)); lastHud = now; }
+          catch (cause) {
+            failed = true; pauseAudio();
+            setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted.');
+            return;
+          }
+        }
+        frame = requestAnimationFrame(animate);
+        return;
       }
       const elapsed = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;

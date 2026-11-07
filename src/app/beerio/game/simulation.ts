@@ -2,7 +2,7 @@ import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, st
 import { ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, trackCurve, trackPose, TRACK_LENGTH, wrap } from './track';
 
 export type DriverInput = { steer: number; accelerate: boolean; brake: boolean; action?: number };
-export type GamePlayer = { id: string; name: string; color: string; input: DriverInput };
+export type GamePlayer = { id: string; name: string; color: string; character?: string; vehicle?: string; input: DriverInput };
 export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean; itemsUsed: number };
 export type KartState = {
   id: string; name: string; color: string; distance: number; lane: number; speed: number; lateral: number;

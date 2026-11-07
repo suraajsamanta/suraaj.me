@@ -38,6 +38,9 @@ export function useBeerioRoom({ autoResume = true }: { autoResume?: boolean } = 
     publishState: client.publishState,
     onState: client.onState,
     leaveRoom: client.leaveRoom,
+    retryConnection: client.retryConnection,
+    resumeRace: client.resumeRace,
     setLocked: client.setLocked,
+    setAppearance: client.setAppearance,
   };
 }

@@ -66,7 +66,7 @@ test('client creates a room and handles host state permissions', async (t) => {
   const f = fixture(t);
   f.client.createRoom({ maxPlayers: 4 });
   await flush();
-  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4 });
+  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4, recoveryVersion: 1 });
   welcome(f.socket(), 'host');
   assert.equal(f.client.getSnapshot().status, 'connected');
   f.client.setLocked(true);
@@ -306,4 +306,104 @@ test('finish and rematch clear held controls and item events without replacing t
   f.client.setInput(active);
   assert.equal(f.client.useItem(), true);
   assert.deepEqual(f.socket().sent.at(-1).input, { ...active, action: 2 });
+});
+
+const ROOM_ID = '1'.repeat(64);
+function recoveryWelcome(socket, role = 'host', code = 'ABC234') {
+  socket.receive({ type: 'welcome', role, playerId: role === 'player' ? 'player1' : null, token: 'a'.repeat(48), roomId: ROOM_ID,
+    room: { code, maxPlayers: 6, locked: true, hostConnected: true,
+      players: [{ id: 'player1', name: 'Phone', color: '#4ce4f3', connected: true, input: { ...ZERO } }] } });
+}
+function recoveryCheckpoint() {
+  return { version: 1, revision: 3, ackRequired: true, roomId: ROOM_ID, maxPlayers: 6, locked: true,
+    players: [{ id: 'player1', name: 'Phone', color: '#4ce4f3', character: 'frog', vehicle: 'kart', tokenHash: '2'.repeat(64), actionSequence: 0 }] };
+}
+
+test('host stores private checkpoint before acknowledging and retains item high-water floor in the same input packet', async t => {
+  const f = fixture(t); f.client.createRoom(); await flush(); recoveryWelcome(f.socket());
+  f.socket().receive({ type: 'checkpoint', checkpoint: recoveryCheckpoint() });
+  const saved = () => JSON.parse([...f.saved.values()][0]);
+  assert.equal(saved().checkpoint.roomId, ROOM_ID);
+  assert.deepEqual(f.socket().sent.at(-1), { type: 'checkpoint_ack', revision: 3 });
+  f.socket().receive({ type: 'input', playerId: 'player1', input: { ...active, action: 4 }, actionSequence: 4 });
+  assert.equal(saved().checkpoint.players[0].actionSequence, 4);
+  f.client.destroy(); f.client.restoreSession('ABC234'); await flush();
+  const resume = f.socket().sent[0];
+  assert.equal(resume.roomId, ROOM_ID); assert.equal(resume.checkpoint.players[0].actionSequence, 4);
+  assert.ok(!f.socket().url.includes('a'.repeat(48)));
+  recoveryWelcome(f.socket(), 'host', 'DEF567');
+  assert.equal(f.client.getSnapshot().code, 'DEF567');
+  assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO);
+  assert.equal(saved().checkpoint.roomId, ROOM_ID, 'welcome cannot erase the retained checkpoint');
+});
+
+test('relay shutdown and phones waiting for host preserve credentials, neutralize input and allow bounded retry', async t => {
+  const f = fixture(t); f.client.joinRoom({ code: 'ABC234', name: 'Phone' }); await flush(); recoveryWelcome(f.socket(), 'player');
+  f.client.setInput(active);
+  f.socket().receive({ type: 'relay_restarting' }); await flush();
+  assert.equal(f.client.getSnapshot().status, 'reconnecting'); assert.equal(f.saved.size, 1);
+  f.client.retryConnection(); await flush();
+  assert.equal(f.socket().sent[0].roomId, ROOM_ID);
+  assert.equal(f.socket().sent[0].checkpoint, undefined, 'controller never sends a host checkpoint');
+  f.socket().receive({ type: 'error', code: 'recovery_pending', message: 'Host has not returned', fatal: false }); await flush();
+  assert.equal(f.client.getSnapshot().status, 'reconnecting'); assert.equal(f.saved.size, 1);
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
+  f.client.retryConnection(); await flush();
+  for (let i = 0; i < 13; i++) {
+    f.socket().receive({ type: 'error', code: 'recovery_pending', message: 'Waiting', fatal: false });
+    await flush(); t.mock.timers.tick(9000); await flush();
+  }
+  assert.equal(f.client.getSnapshot().status, 'error'); assert.equal(f.client.getSnapshot().canRetryConnection, true);
+  assert.equal(f.saved.size, 1);
+  f.client.retryConnection(); await flush(); recoveryWelcome(f.socket(), 'player', 'DEF567');
+  assert.equal(f.client.getSnapshot().status, 'connected'); assert.equal(f.client.getSnapshot().canRetryConnection, false);
+  assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO);
+  f.client.leaveRoom(); assert.equal(f.saved.size, 0);
+});
+
+test('wrong immutable room identity is rejected without replacing saved identity; explicit invalid session disables retry', async t => {
+  const f = fixture(t); f.client.createRoom(); await flush(); recoveryWelcome(f.socket());
+  f.socket().receive({ type: 'checkpoint', checkpoint: recoveryCheckpoint() });
+  f.socket().receive({ type: 'welcome', role: 'host', token: 'b'.repeat(48), roomId: '3'.repeat(64), room: { code: 'ABC234', players: [] } });
+  assert.equal(f.client.getSnapshot().status, 'error'); assert.equal(f.client.getSnapshot().canRetryConnection, true);
+  assert.equal(JSON.parse([...f.saved.values()][0]).roomId, ROOM_ID);
+  f.client.retryConnection(); await flush();
+  f.socket().receive({ type: 'error', code: 'invalid_session', fatal: true, message: 'Expired' });
+  assert.equal(f.saved.size, 0); assert.equal(f.client.getSnapshot().canRetryConnection, false);
+});
+
+test('storage-disabled hosts keep recovery in memory, while controllers reject private checkpoint traffic', async t => {
+  const f = fixture(t);
+  globalThis.sessionStorage.setItem = () => { throw new Error('Storage disabled'); };
+  f.client.createRoom(); await flush(); recoveryWelcome(f.socket());
+  f.socket().receive({ type: 'checkpoint', checkpoint: recoveryCheckpoint() });
+  assert.deepEqual(f.socket().sent.at(-1), { type: 'checkpoint_ack', revision: 3 });
+  f.socket().close(); await flush(); f.client.retryConnection(); await flush();
+  assert.equal(f.socket().sent[0].checkpoint.roomId, ROOM_ID);
+  f.client.leaveRoom(); f.client.joinRoom({ code: 'ABC234', name: 'Phone' }); await flush(); recoveryWelcome(f.socket(), 'player');
+  f.socket().receive({ type: 'checkpoint', checkpoint: recoveryCheckpoint() });
+  assert.equal(f.socket().sent.some(m => m.type === 'checkpoint_ack'), false);
+});
+
+test('recovered controller updates its public deep link without leaking recovery credentials', async t => {
+  const f = fixture(t); let replaced;
+  globalThis.window.location.href = 'https://game.example/beerio?room=ABC234';
+  globalThis.window.history = { state: null, replaceState(state, title, url) { replaced = url.href; } };
+  f.client.joinRoom({ code: 'ABC234', name: 'Phone' }); await flush(); recoveryWelcome(f.socket(), 'player');
+  f.socket().close(); await flush(); f.client.retryConnection(); await flush(); recoveryWelcome(f.socket(), 'player', 'DEF567');
+  assert.equal(replaced, 'https://game.example/beerio?room=DEF567');
+  assert.ok(!replaced.includes('a'.repeat(48)));
+});
+
+test('recovery gate blocks held controls and item taps until all racers return or host explicitly resumes', async t => {
+  const f = fixture(t); f.client.joinRoom({ code: 'ABC234', name: 'Phone' }); await flush();
+  welcome(f.socket(), 'player', { locked: true, recovering: true, recoveryWaitingFor: ['missing'] });
+  f.client.setInput(active); assert.equal(f.client.useItem(), false);
+  await wait(110); assert.deepEqual(f.socket().sent.at(-1).input, ZERO);
+  f.socket().receive({ type: 'room', room: { ...f.client.getSnapshot(), recovering: false, recoveryWaitingFor: [] } });
+  await wait(110); assert.deepEqual(f.socket().sent.at(-1).input, ZERO, 'recovery completion does not replay the paused hold');
+  f.client.setInput(active); assert.equal(f.client.useItem(), true);
+  f.client.leaveRoom(); f.client.createRoom(); await flush();
+  welcome(f.socket(), 'host', { locked: true, recovering: true, recoveryWaitingFor: ['missing'] });
+  f.client.resumeRace(); assert.deepEqual(f.socket().sent.at(-1), { type: 'resume_race' });
 });

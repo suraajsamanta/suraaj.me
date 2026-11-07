@@ -83,6 +83,15 @@ class Geometry {
       this.quad(p(r, s), p(r + 1, s), p(r + 1, s + 1), p(r, s + 1), color, glow);
     }
   }
+  ellipsoid(center: Vec3, radius: Vec3, color: Color, slices = 10, rings = 6) {
+    for (let r = 0; r < rings; r++) for (let s = 0; s < slices; s++) {
+      const p = (ring: number, slice: number): Vec3 => {
+        const a = ring / rings * Math.PI, b = slice / slices * Math.PI * 2;
+        return [center[0] + Math.sin(a) * Math.cos(b) * radius[0], center[1] + Math.cos(a) * radius[1], center[2] + Math.sin(a) * Math.sin(b) * radius[2]];
+      };
+      this.quad(p(r, s), p(r + 1, s), p(r + 1, s + 1), p(r, s + 1), color);
+    }
+  }
   disc(center: Vec3, radiusX: number, radiusZ: number, color: Color, sides = 20) {
     for (let i = 0; i < sides; i++) {
       const a = i / sides * Math.PI * 2, b = (i + 1) / sides * Math.PI * 2;
@@ -256,60 +265,210 @@ function worldGeometry(): Geometry {
   return g;
 }
 
-function kartGeometry(color: Color, driver = true): Geometry {
+const CHARCOAL: Color = [0.055, 0.08, 0.13], SILVER: Color = [0.7, 0.8, 0.85];
+const CHARACTER_COLORS: Record<string, Color> = {
+  fox: [1, 0.48, 0.19], robot: [0.63, 0.75, 0.84], frog: [0.4, 0.81, 0.29],
+  cat: [0.67, 0.51, 0.87], alien: [0.32, 0.86, 0.72], bear: [0.68, 0.4, 0.23],
+  bird: [1, 0.79, 0.22], blob: [0.99, 0.48, 0.69],
+};
+function characterId(id?: string): string { return id && Object.prototype.hasOwnProperty.call(CHARACTER_COLORS, id) ? id : 'fox'; }
+
+/** A shared, original character model keeps each racer's identity in every pose. */
+function characterHead(g: Geometry, character: string, center: Vec3, accent: Color) {
+  const fur = CHARACTER_COLORS[character], [x, y, z] = center;
+  const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
+  const eyes = (dx = 0.18, dy = 0.05, dz = 0.39) => {
+    for (const side of [-1, 1]) {
+      g.ellipsoid(p(side * dx, dy, dz), [0.12, 0.15, 0.055], CREAM, 8, 5);
+      g.ellipsoid(p(side * dx, dy, dz + 0.05), [0.055, 0.085, 0.028], CHARCOAL, 7, 4);
+      g.sphere(p(side * dx - 0.017, dy + 0.035, dz + 0.072), 0.025, [1, 1, 1], 5, 3, true);
+    }
+  };
+  const pointedEars = () => {
+    for (const side of [-1, 1]) {
+      const a = p(side * 0.18, 0.28, 0.12), b = p(side * 0.52, 0.24, 0.09), tip = p(side * 0.38, 0.78, -0.015), back = p(side * 0.34, 0.24, -0.25);
+      g.triangle(a, b, tip, fur); g.triangle(a, tip, back, fur); g.triangle(b, back, tip, fur);
+      g.triangle(p(side * 0.25, 0.34, 0.124), p(side * 0.44, 0.32, 0.105), p(side * 0.37, 0.64, 0.025), CREAM);
+    }
+  };
+  if (character === 'robot') {
+    g.box(center, [0.94, 0.8, 0.78], fur);
+    g.box(p(0, 0.01, 0.408), [0.75, 0.49, 0.06], CHARCOAL);
+    for (const side of [-1, 1]) {
+      g.box(p(side * 0.18, 0.09, 0.449), [0.13, 0.15, 0.024], TEAL);
+      g.box(p(side * 0.52, -0.02, 0), [0.14, 0.3, 0.32], accent);
+    }
+    g.box(p(0, -0.13, 0.45), [0.27, 0.035, 0.028], CREAM);
+    g.box(p(0, 0.02, -0.405), [0.62, 0.48, 0.035], accent);
+    for (const dy of [-0.1, 0, 0.1]) g.box(p(0, dy, -0.43), [0.39, 0.035, 0.025], CREAM);
+    g.beam(p(0, 0.4, 0), p(0.13, 0.72, 0), 0.035, SILVER);
+    g.sphere(p(0.13, 0.74, 0), 0.13, CORAL, 8, 5);
+  } else if (character === 'frog') {
+    g.ellipsoid(center, [0.57, 0.35, 0.43], fur, 12, 6);
+    for (const side of [-1, 1]) {
+      g.sphere(p(side * 0.3, 0.3, 0.08), 0.25, fur, 9, 6);
+      g.ellipsoid(p(side * 0.3, 0.33, 0.28), [0.17, 0.19, 0.07], CREAM, 8, 5);
+      g.ellipsoid(p(side * 0.3, 0.34, 0.34), [0.07, 0.11, 0.03], CHARCOAL, 7, 4);
+      g.sphere(p(side * 0.4, -0.08, 0.33), 0.09, [0.9, 0.6, 0.44], 7, 4);
+    }
+    g.box(p(0, -0.12, 0.412), [0.5, 0.035, 0.025], CHARCOAL);
+    for (const dx of [-0.22, 0.17]) g.sphere(p(dx, 0.1, -0.39), 0.1, [0.2, 0.57, 0.24], 7, 4);
+  } else if (character === 'alien') {
+    g.ellipsoid(center, [0.52, 0.51, 0.43], fur, 12, 7);
+    for (const side of [-1, 1]) {
+      g.ellipsoid(p(side * 0.21, 0.05, 0.38), [0.16, 0.23, 0.07], CHARCOAL, 9, 6);
+      g.sphere(p(side * 0.2 - 0.035, 0.12, 0.44), 0.04, CREAM, 6, 4, true);
+      g.beam(p(side * 0.27, 0.39, -0.05), p(side * 0.47, 0.75, -0.06), 0.035, fur);
+      g.sphere(p(side * 0.47, 0.75, -0.06), 0.12, accent, 8, 5);
+    }
+    g.box(p(0, -0.23, 0.39), [0.17, 0.035, 0.04], CHARCOAL);
+  } else if (character === 'blob') {
+    g.ellipsoid(center, [0.56, 0.48, 0.46], fur, 12, 7);
+    for (let nub = -1; nub <= 1; nub++) g.sphere(p(nub * 0.24, 0.4 + (nub === 0 ? 0.11 : 0), -0.02), nub === 0 ? 0.22 : 0.15, fur, 8, 5);
+    eyes(0.18, 0.025, 0.415);
+    g.ellipsoid(p(0, -0.18, 0.426), [0.13, 0.09, 0.035], CHARCOAL, 8, 4);
+    for (const side of [-1, 1]) g.sphere(p(side * 0.25, 0.06, -0.39), 0.13, CREAM, 7, 4);
+  } else {
+    g.ellipsoid(center, [0.49, 0.44, 0.43], fur, 12, 7);
+    if (character === 'fox' || character === 'cat') pointedEars();
+    if (character === 'bear') for (const side of [-1, 1]) {
+      g.sphere(p(side * 0.39, 0.34, -0.025), 0.23, fur, 9, 6);
+      g.ellipsoid(p(side * 0.39, 0.34, 0.16), [0.13, 0.14, 0.045], CREAM, 8, 4);
+    }
+    if (character === 'bird') {
+      for (let feather = -1; feather <= 1; feather++) g.beam(p(feather * 0.12, 0.31, -0.05), p(feather * 0.18, 0.71 - Math.abs(feather) * 0.09, -0.13), 0.075, CORAL);
+      const a = p(-0.23, -0.12, 0.35), b = p(0.23, -0.12, 0.35), c = p(0, 0.06, 0.38), tip = p(0, -0.08, 0.75);
+      g.triangle(a, b, tip, CORAL); g.triangle(a, tip, c, [1, 0.62, 0.2]); g.triangle(b, c, tip, [1, 0.62, 0.2]);
+    } else {
+      g.ellipsoid(p(0, -0.12, 0.35), [character === 'fox' ? 0.31 : 0.27, 0.21, 0.2], CREAM, 10, 6);
+      g.ellipsoid(p(0, -0.035, 0.54), [0.095, 0.07, 0.055], character === 'cat' ? CORAL : CHARCOAL, 7, 4);
+      if (character === 'cat') for (const side of [-1, 1]) for (const dy of [-0.15, -0.055]) g.beam(p(side * 0.18, dy, 0.51), p(side * 0.47, dy + 0.035, 0.45), 0.012, CHARCOAL);
+    }
+    eyes(0.2, 0.09, 0.385);
+  }
+  // A bright scarf is visible from the chase camera on every character.
+  g.box(p(0, -0.45, -0.01), [0.66, 0.12, 0.56], accent);
+  g.box(p(0.24, -0.64, -0.28), [0.19, 0.42, 0.06], CREAM, -0.18);
+}
+
+function characterTail(g: Geometry, character: string, hip: Vec3) {
+  const [x, y, z] = hip, fur = CHARACTER_COLORS[character];
+  if (character === 'fox') {
+    g.beam([x, y, z - 0.2], [x + 0.38, y + 0.32, z - 0.83], 0.2, fur);
+    g.beam([x + 0.38, y + 0.32, z - 0.83], [x + 0.47, y + 0.64, z - 1.03], 0.18, CREAM);
+  } else if (character === 'cat') {
+    g.beam([x, y, z - 0.25], [x - 0.46, y + 0.25, z - 0.72], 0.09, fur);
+    g.beam([x - 0.46, y + 0.25, z - 0.72], [x - 0.57, y + 0.74, z - 0.63], 0.09, fur);
+  } else if (character === 'bird') {
+    for (const side of [-1, 0, 1]) g.beam([x, y, z - 0.15], [x + side * 0.25, y + 0.3, z - 0.72], 0.1, side ? CORAL : fur);
+  } else if (character === 'robot') {
+    g.box([x, y + 0.25, z - 0.34], [0.54, 0.6, 0.22], SILVER);
+    g.box([x, y + 0.26, z - 0.465], [0.25, 0.28, 0.03], TEAL);
+  }
+}
+
+function seatedDriver(g: Geometry, color: Color, character: string, motorcycle: boolean) {
+  const y = motorcycle ? 1.47 : 1.3, z = motorcycle ? -0.2 : -0.15;
+  characterTail(g, character, [0, y - 0.2, z]);
+  g.ellipsoid([0, y, z], [0.38, 0.45, 0.31], color, 10, 6);
+  g.box([0, y + 0.04, z + 0.3], [0.14, 0.31, 0.05], CREAM);
+  characterHead(g, character, [0, y + 0.68, z], color);
+  for (const side of [-1, 1]) {
+    const hand: Vec3 = [side * (motorcycle ? 0.48 : 0.39), motorcycle ? 1.48 : 1.23, motorcycle ? 0.59 : 0.57];
+    g.beam([side * 0.3, y + 0.15, z], [side * 0.44, y - 0.03, z + 0.33], 0.11, color);
+    g.beam([side * 0.44, y - 0.03, z + 0.33], hand, 0.11, color);
+    g.sphere(hand, 0.14, CREAM, 7, 4);
+    if (motorcycle) {
+      g.beam([side * 0.23, y - 0.23, z], [side * 0.43, 0.86, 0.1], 0.13, CHARCOAL);
+      g.box([side * 0.44, 0.71, 0.09], [0.27, 0.24, 0.42], CHARCOAL);
+    }
+  }
+}
+
+/** Four deliberately different silhouettes, all made from lightweight geometry. */
+function vehicleGeometry(g: Geometry, color: Color, vehicle: string) {
+  if (vehicle === 'motorcycle') {
+    for (const z of [-0.97, 1.05]) g.wheel([0, 0.54, z], 0.53, 0.37, CHARCOAL, 14);
+    g.beam([0, 0.6, -0.94], [0, 1.12, 0.15], 0.13, SILVER);
+    g.beam([0, 0.62, 1.04], [0, 1.44, 0.55], 0.08, SILVER);
+    g.beam([0, 0.6, -0.94], [0, 0.7, 0.44], 0.1, CHARCOAL);
+    g.ellipsoid([0, 1.05, 0.24], [0.42, 0.36, 0.64], color, 10, 6);
+    g.box([0, 1.15, -0.58], [0.7, 0.22, 0.86], CHARCOAL);
+    g.box([0, 1.02, -1.02], [0.62, 0.25, 0.48], color);
+    g.box([0, 1.04, -1.28], [0.3, 0.13, 0.06], CORAL);
+    g.box([0, 1.43, 0.8], [0.64, 0.42, 0.26], color);
+    g.box([0, 1.46, 0.95], [0.39, 0.22, 0.055], CREAM);
+    g.box([0, 1.5, 0.57], [1.12, 0.11, 0.13], CHARCOAL);
+    g.box([0, 1.38, 0.22], [0.12, 0.055, 0.54], CREAM);
+    for (const side of [-1, 1]) {
+      g.box([side * 0.46, 0.57, -0.65], [0.17, 0.2, 0.95], SILVER);
+      g.box([side * 0.44, 0.68, 0], [0.25, 0.1, 0.36], CHARCOAL);
+    }
+    return;
+  }
+  const buggy = vehicle === 'buggy', roadster = vehicle === 'roadster';
+  const wide = buggy ? 1.1 : 0.92, wheelRadius = buggy ? 0.56 : roadster ? 0.4 : 0.43;
+  g.box([0, buggy ? 0.65 : 0.5, -0.05], [1.45, 0.32, roadster ? 2.65 : 2.2], CHARCOAL);
+  g.box([0, buggy ? 0.87 : 0.7, 0.32], [roadster ? 1.68 : 1.43, 0.4, roadster ? 2.1 : 1.7], color);
+  const nose = roadster ? 1.68 : 1.43, hood = buggy ? 1.07 : 0.93;
+  g.quad([-0.71, hood, 0.43], [0.71, hood, 0.43], [0.55, 0.63, nose], [-0.55, 0.63, nose], color);
+  g.quad([-0.11, hood + 0.01, 0.43], [0.11, hood + 0.01, 0.43], [0.11, 0.64, nose], [-0.11, 0.64, nose], CREAM);
+  g.box([0, 0.48, nose + 0.07], [1.85, 0.18, 0.22], SILVER);
+  g.box([0, 0.5, -1.45], [1.8, 0.2, 0.25], CHARCOAL);
+  for (const side of [-1, 1]) {
+    for (const z of [-0.93, roadster ? 1.08 : 0.92]) {
+      g.wheel([side * wide, wheelRadius, z], wheelRadius, buggy ? 0.57 : 0.43, CHARCOAL);
+      if (buggy) g.beam([side * 0.55, 0.81, z], [side * 1.04, 0.53, z], 0.07, SILVER);
+      if (roadster) g.box([side * 0.91, 0.83, z], [0.39, 0.16, 0.95], color);
+    }
+    g.box([side * 0.5, 0.74, nose + 0.04], [roadster ? 0.32 : 0.25, 0.17, 0.055], CREAM);
+    g.box([side * 0.57, 0.78, -1.22], [0.28, 0.15, 0.06], CORAL);
+    g.box([side * 0.55, 0.47, -1.54], [0.2, 0.18, 0.3], SILVER);
+    if (buggy) {
+      g.beam([side * 0.65, 0.8, -0.99], [side * 0.65, 1.89, -0.75], 0.06, SILVER);
+      g.beam([side * 0.65, 1.89, -0.75], [side * 0.65, 1.34, 0.45], 0.06, SILVER);
+      g.sphere([side * 0.47, 1.95, -0.74], 0.14, CREAM, 7, 4);
+    } else if (!roadster) g.box([side * 0.49, 1.03, -1.09], [0.13, 0.62, 0.15], CHARCOAL);
+  }
+  if (buggy) {
+    g.beam([-0.65, 1.89, -0.75], [0.65, 1.89, -0.75], 0.06, SILVER);
+    g.wheel([0, 1.12, -1.29], 0.43, 0.23, CHARCOAL);
+  } else if (roadster) {
+    g.box([0, 1.03, -1.13], [1.65, 0.22, 0.57], color);
+    g.box([0, 1.22, 0.58], [1.12, 0.39, 0.09], [0.34, 0.72, 0.8]);
+    g.box([0, 1.44, 0.58], [1.2, 0.06, 0.11], SILVER);
+  } else {
+    g.box([0, 1.4, -1.12], [2, 0.15, 0.47], color);
+    for (const side of [-1, 1]) g.box([side * 0.95, 1.48, -1.12], [0.1, 0.24, 0.55], color);
+  }
+  g.box([0, 0.98, -0.28], [0.76, 0.6, 0.54], CHARCOAL);
+  g.box([0, 1.2, 0.58], [0.7, 0.12, 0.15], CHARCOAL);
+}
+
+export function racerGeometry(color: Color, character = 'fox', vehicle = 'kart', driver = true): Geometry {
   const g = new Geometry();
-  const black: Color = [0.055, 0.08, 0.13], silver: Color = [0.7, 0.8, 0.85];
-  g.box([0, 0.5, -0.05], [1.45, 0.35, 2.2], black);
-  g.box([0, 0.7, 0.38], [1.43, 0.45, 1.7], color);
-  // Tapered racing nose, a cream stripe, side pods, and safety bumpers.
-  g.quad([-0.71, 0.93, 0.48], [0.71, 0.93, 0.48], [0.55, 0.63, 1.43], [-0.55, 0.63, 1.43], color);
-  g.quad([-0.11, 0.94, 0.48], [0.11, 0.94, 0.48], [0.11, 0.64, 1.43], [-0.11, 0.64, 1.43], CREAM);
-  g.box([0, 0.47, 1.5], [1.85, 0.19, 0.22], silver);
-  g.box([0, 0.49, -1.47], [1.8, 0.2, 0.25], black);
-  for (const side of [-1, 1]) {
-    g.box([side * 0.78, 0.58, -0.05], [0.25, 0.25, 0.8], color);
-    g.box([side * 0.49, 1.05, -1.09], [0.13, 0.62, 0.15], black);
-    for (const z of [-0.91, 0.9]) g.wheel([side * 0.92, 0.43, z], 0.43, 0.47, black);
-    g.box([side * 0.47, 0.67, 1.43], [0.25, 0.13, 0.04], CREAM);
-    g.box([side * 0.55, 0.75, -1.22], [0.29, 0.15, 0.06], CORAL);
-    g.box([side * 0.54, 0.46, -1.55], [0.21, 0.2, 0.32], silver);
-  }
-  g.box([0, 1.4, -1.12], [2, 0.15, 0.47], color);
-  for (const side of [-1, 1]) g.box([side * 0.95, 1.48, -1.12], [0.1, 0.24, 0.55], color);
-  g.box([0, 0.92, -0.27], [0.74, 0.72, 0.59], black);
-  if (driver) {
-  g.sphere([0, 1.26, -0.05], 0.45, color, 10, 6);
-  g.sphere([0, 1.92, -0.06], 0.51, CREAM, 16, 10);
-  g.sphere([0, 1.99, -0.13], 0.49, color, 16, 8);
-  g.box([0, 1.91, 0.4], [0.73, 0.26, 0.12], black);
-  g.box([-0.16, 1.97, 0.47], [0.2, 0.045, 0.015], [0.47, 0.8, 0.88]);
-  g.box([0, 2.47, -0.08], [0.15, 0.04, 0.3], CREAM);
-  for (const side of [-1, 1]) {
-    g.beam([side * 0.34, 1.38, 0], [side * 0.39, 1.21, 0.59], 0.12, color);
-    g.sphere([side * 0.39, 1.21, 0.59], 0.15, CREAM, 6, 4);
-  }
-  }
-  g.box([0, 1.2, 0.58], [0.7, 0.12, 0.15], black);
+  vehicleGeometry(g, color, vehicle);
+  if (driver) seatedDriver(g, color, characterId(character), vehicle === 'motorcycle');
   return g;
 }
 
-/** Original low-poly dance poses; all motion is derived from the host timer. */
-function dancerGeometry(color: Color, phase: number): Geometry {
-  const g = new Geometry(), black: Color = [0.055, 0.08, 0.13];
+/** Eight poses are uploaded once. All clients use the same host dance timer. */
+export function dancerGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  const g = new Geometry(), id = characterId(character);
   const sway = Math.sin(phase), bounce = Math.abs(Math.cos(phase)) * 0.18;
   const hip: Vec3 = [sway * 0.17, 1.05 + bounce, 0];
   const chest: Vec3 = [-sway * 0.16, 1.72 + bounce, 0];
-  g.beam(hip, chest, 0.28, color);
-  g.sphere([chest[0], 2.22 + bounce, 0], 0.43, color, 14, 8);
-  g.box([chest[0], 2.18 + bounce, 0.39], [0.66, 0.23, 0.09], black);
-  g.box([chest[0], 2.64 + bounce, -0.02], [0.15, 0.04, 0.27], CREAM);
+  characterTail(g, id, hip);
+  g.beam(hip, chest, 0.27, color);
+  g.box([chest[0], 1.68 + bounce, 0.28], [0.14, 0.4, 0.04], CREAM);
+  characterHead(g, id, [chest[0], 2.28 + bounce, 0], color);
   for (const side of [-1, 1]) {
     const hand: Vec3 = [side * (0.95 + 0.18 * Math.cos(phase)), 1.9 + bounce + 0.65 * Math.sin(phase + side * 1.3), 0.1 + side * sway * 0.24];
     g.beam([chest[0] + side * 0.22, 1.75 + bounce, 0], hand, 0.12, color);
-    g.sphere(hand, 0.15, CREAM, 7, 5);
+    g.sphere(hand, 0.15, CREAM, 7, 4);
     const foot: Vec3 = [side * (0.34 + 0.22 * Math.sin(phase + side)), 0.16, side * 0.32 * Math.cos(phase)];
-    g.beam([hip[0] + side * 0.17, hip[1], 0], foot, 0.14, color);
-    g.box([foot[0], 0.14, foot[2] + 0.1], [0.32, 0.25, 0.52], black);
+    g.beam([hip[0] + side * 0.17, hip[1], 0], foot, 0.14, CHARCOAL);
+    g.box([foot[0], 0.14, foot[2] + 0.1], [0.32, 0.25, 0.52], CHARCOAL);
   }
   return g;
 }
@@ -447,9 +606,9 @@ export class RaceRenderer {
     this.spark = this.upload(particleGeometry([1, 0.86, 0.28]));
     this.item = this.upload(itemGeometry()); this.slick = this.upload(slickGeometry());
     this.bolt = this.upload(boltGeometry()); this.shield = this.upload(shieldGeometry());
-    this.karts = players.map((player) => this.upload(kartGeometry(parseColor(player.color))));
-    this.emptyKarts = players.map((player) => this.upload(kartGeometry(parseColor(player.color), false)));
-    this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4))));
+    this.karts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle)));
+    this.emptyKarts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle, false)));
+    this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : 3;
     this.rows = Math.ceil(players.length / this.columns);
     this.cameras = race.karts.map((kart) => ({ eye: trackPose(kart.distance - 10, kart.lane * 0.6, 4.5).position, target: trackPose(kart.distance + 10, kart.lane * 0.35, 0.9).position }));

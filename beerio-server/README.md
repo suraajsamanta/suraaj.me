@@ -23,7 +23,7 @@ The relay listens on `0.0.0.0:8787`. During Next development the client defaults
 ## Internet/cellular deployment
 
 1. Run this directory as a Node 20+ service on a server you already control. Install its independent dependency with `npm ci`; run `node server.mjs`. No Next runtime is needed.
-2. Put it behind a TLS reverse proxy with WebSocket upgrade support and a public domain such as `relay.example.com`. Use one process/replica. Rooms are ephemeral in memory, so restarts end active rooms. Never round-robin multiple independent instances without a shared room router.
+2. Put it behind a TLS reverse proxy with WebSocket upgrade support and a public domain such as `relay.example.com`. Use one process/replica. Rooms live in process memory, with authenticated host-browser recovery after a restart as described below. Never round-robin multiple independent instances without a shared room router.
 3. Set service environment variables:
    - `NODE_ENV=production`
    - `PORT=8787` (or your hosting service's supplied port)
@@ -40,6 +40,19 @@ relay.example.com {
 ```
 
 No external infrastructure or account has been created by this project. Deploying this service is an explicit remaining operator step.
+
+## Restart recovery and safe releases
+
+- Do not release or restart while people are playing. Obtain an agreed quiet window, verify `/health` has zero rooms immediately before release, and coordinate the site and relay versions. Recovery is crash protection, not permission to interrupt a live game.
+- New clients keep an immutable room identity derived by SHA-256 from the private 192-bit host token. The host retains a private roster checkpoint containing controller-token hashes, appearance, race participants, lock state, and item sequence floors. These hashes never enter public rosters or controller messages. No database, paid storage, account, or persistent server key is needed.
+- A new controller receives its welcome only after a recovery-capable host acknowledges retaining its checkpoint. A ten-second acknowledgment timeout fails that join safely. Legacy clients retain the previous join behavior.
+- After a relay process disappears, only the matching host-token preimage can restore the room identity. Every controller still proves its own private token. Public codes are never recovery credentials. The restored room gets a fresh random public code; existing controllers follow the immutable identity automatically and update their deep links. New players should use the updated QR code.
+- Race simulation stays on the existing host page and pauses during reconnect. After recovery, it stays paused until the originally connected race participants return, or the host explicitly chooses to continue without missing controllers. Old disconnected lobby reservations do not block that gate. Waiting participant seats remain reserved until that choice or room closure. All driving input is neutralized, and old item actions cannot replay.
+- The client retries for a bounded period. If the relay or host is still unavailable, use **Retry connection**, which preserves the current race and credentials. Do not leave, refresh, or create a new room to recover an active race.
+- `SIGTERM`/`SIGINT` announce a recoverable relay restart, never an intentional room closure. Explicit host Leave still closes the room and removes saved credentials.
+- Recovery requires a checkpoint from the new protocol and a surviving host page. It cannot restore a room already lost on the old relay, recover a closed host tab's simulation, survive deleted browser credentials, or provide a shared router across independent replicas. Session storage helps restore credentials after reload, but the running race itself is not persisted. Storage-disabled browsers still recover a relay restart while the host page remains open.
+
+Run `node --test src/app/beerio/room/recovery-integration.test.mjs` from the repository root for a real local-process test: six browser clients, an abrupt SIGKILL, a graceful SIGTERM, phones arriving before the host, neutral controls, exact identities/appearance, and preserved item sequence floors. It uses loopback test services only and never connects to the deployed relay.
 
 ## Safety and operational bounds
 
@@ -72,6 +85,6 @@ room.leaveRoom();
 
 `createRoom` and `joinRoom` accept optional `relayUrl` for a deliberate operator override. State fields are `status`, `role`, `code`, `playerId`, `players`, `maxPlayers`, `locked`, `hostConnected`, `error`, and `relayUrl`. `players` are `{ id, name, color, connected, input: { steer, accelerate, brake } }`.
 
-Status is `idle`, `connecting`, `connected`, `reconnecting`, `error`, or `closed`. `onState` returns an unsubscribe callback. `leaveRoom` discards the saved session; unmount/reload preserves it to allow resume. A saved host session restores the lobby and a saved player session restores the controller. A join link targeting a different room skips restoration. Do not start authoritative simulation from a player session or from a disconnected host.
+Status is `idle`, `connecting`, `connected`, `reconnecting`, `error`, or `closed`. `recovering` pauses a restored race while the IDs in `recoveryWaitingFor` return; host-only `resumeRace()` explicitly continues without them. `canRetryConnection` identifies errors where `retryConnection()` can preserve the race. `onState` returns an unsubscribe callback. `leaveRoom` discards the saved session; unmount/reload preserves it to allow resume. A saved host session restores the lobby and a saved player session restores the controller. A join link targeting a different room skips restoration. Do not start authoritative simulation from a player session, a disconnected host, or a room with `recovering: true`.
 
 The headless `BeerioRoomClient` class exposes the same commands, plus `getSnapshot()`, `subscribe(listener)`, `restoreSession(expectedCode?)`, and `destroy()` for non-React integration.

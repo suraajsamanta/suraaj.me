@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:game": "node src/app/beerio/game/run-tests.mjs",
     "test:room": "node --test src/app/beerio/room/*.test.mjs",
-    "test:presentation": "node src/app/beerio/game/run-presentation-tests.mjs"
+    "test:presentation": "node src/app/beerio/game/run-presentation-tests.mjs",
+    "test:view": "node --test src/app/beerio/game/GameView.test.mjs"
   },
   "dependencies": {
     "next": "16.4.5",

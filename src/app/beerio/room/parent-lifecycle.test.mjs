@@ -16,13 +16,15 @@ const RESULTS = [
 // The room stub models asynchronous lock acknowledgments and dropped sends while
 // offline. Network delivery, input resets and simulation have separate tests.
 async function fixture(t, host = true) {
-  const prior = { window: globalThis.window, localStorage: globalThis.localStorage };
+  const prior = { window: globalThis.window, localStorage: globalThis.localStorage, queueMicrotask: globalThis.queueMicrotask };
+  let holdMicrotasks = false; const heldMicrotasks = [];
+  globalThis.queueMicrotask = fn => { if (holdMicrotasks) heldMicrotasks.push(fn); else prior.queueMicrotask(fn); };
   const state = [], dependencies = [], cleanups = [];
   let hook = 0, pending = [], dirty = false;
   const messages = [];
   const room = {
     code: host ? 'ABC234' : null, role: host ? 'host' : null, status: host ? 'connected' : 'idle',
-    playerId: null, locked: false, hostConnected: host, error: null,
+    playerId: null, locked: false, hostConnected: host, error: null, canRetryConnection: false, recovering: false, recoveryWaitingFor: [],
     players: host ? [
       { id: 'a', name: 'First', color: '#ffffff', connected: true, input: { ...ZERO } },
       { id: 'b', name: 'Second', color: '#ff0000', connected: true, input: { ...ZERO } },
@@ -32,7 +34,7 @@ async function fixture(t, host = true) {
     setLocked: locked => { if (room.status === 'connected') messages.push({ type: 'lock', locked }); },
     publishState: payload => { if (room.status === 'connected') messages.push({ type: 'state', payload }); },
     leaveRoom: () => { room.code = null; room.role = null; messages.push({ type: 'leave' }); },
-    createRoom() {}, joinRoom() {}, setInput() {}, useItem() {},
+    createRoom() {}, joinRoom() {}, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); },
   });
   const react = {
     useState(initial) {
@@ -60,6 +62,8 @@ async function fixture(t, host = true) {
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'qrcode') return { default: { toDataURL: () => Promise.resolve('data:image/test') } };
     if (name === 'next/link' || name === 'next/image') return { default: name };
+    if (name === './appearance') return { CHARACTERS: [{ id: 'fox', name: 'Fox', icon: 'fox' }], VEHICLES: [{ id: 'kart', name: 'Kart', icon: 'kart' }], PALETTE: ['#ffce58'], DEFAULT_APPEARANCE: { character: 'fox', vehicle: 'kart', color: '#ffce58' }, validAppearance: () => false };
+    if (name === './game/SteeringJoystick') return { default: 'SteeringJoystick' };
     if (name === './game/GameView') return { default: 'GameView' };
     if (name === './game/audio') return { unlockRaceAudio: () => Promise.resolve() };
     if (name === './game/track') return { TRACKS: ['sunset', 'canyon', 'brewery'].map(id => ({ id, name: id, description: id })) };
@@ -76,7 +80,7 @@ async function fixture(t, host = true) {
       const tree = compiledModule.exports.default();
       const effects = pending; pending = [];
       for (const effect of effects) effect();
-      await new Promise(resolve => queueMicrotask(resolve));
+      await Promise.resolve();
       if (!dirty) return tree;
     }
     throw new Error('Parent component did not settle');
@@ -99,9 +103,11 @@ async function fixture(t, host = true) {
   const start = async () => {
     const tree = await render();
     button(tree, 'START YOUR ENGINES ↗').onClick();
+    await render();
+    room.locked = true;
     return game(await render());
   };
-  return { room, messages, render, button, game, nodes, start };
+  return { room, messages, render, button, game, nodes, start, hold: () => { holdMicrotasks = true; }, flush: () => { holdMicrotasks = false; for (const fn of heldMicrotasks.splice(0)) fn(); } };
 }
 
 test('parent preserves result counts and rematches only connected entrants after unlock acknowledgment', async t => {
@@ -125,6 +131,9 @@ test('parent preserves result counts and rematches only connected entrants after
   game = f.game(await f.render());
   assert.equal(game.rematchDisabled, false);
   game.onRematch();
+  game = f.game(await f.render());
+  assert.equal(game.raceKey, key, 'Wait for the lock acknowledgement');
+  f.room.locked = true;
   game = f.game(await f.render());
   assert.equal(game.raceKey, key + 1);
   assert.equal(game.trackId, 'brewery');
@@ -194,4 +203,139 @@ test('solo finish and rematch do not send multiplayer room commands', async t =>
   tree = await f.render();
   assert.equal(f.game(tree), undefined);
   assert.ok(f.button(tree, 'Try a solo practice lap →'));
+});
+
+
+test('host snapshots each racer appearance when starting split-screen', async t => {
+  const f = await fixture(t);
+  Object.assign(f.room.players[0], { character: 'robot', vehicle: 'motorcycle', color: '#123456' });
+  Object.assign(f.room.players[1], { character: 'frog', vehicle: 'buggy', color: '#abcdef' });
+  const game = await f.start();
+  assert.deepEqual(game.players.map(({ character, vehicle, color }) => ({ character, vehicle, color })), [
+    { character: 'robot', vehicle: 'motorcycle', color: '#123456' },
+    { character: 'frog', vehicle: 'buggy', color: '#abcdef' },
+  ]);
+  Object.assign(f.room.players[0], { character: 'fox', vehicle: 'kart', color: '#eeeeee' });
+  assert.equal(f.game(await f.render()).players[0].character, 'robot');
+});
+
+
+test('start uses authoritative locked roster after a last-moment appearance change', async t => {
+  const f = await fixture(t);
+  let tree = await f.render();
+  f.button(tree, 'START YOUR ENGINES ↗').onClick();
+  tree = await f.render();
+  assert.equal(f.game(tree), undefined);
+  assert.ok(f.button(tree, 'STARTING…').disabled);
+  Object.assign(f.room.players[0], { character: 'robot', vehicle: 'motorcycle', color: '#123456' });
+  f.room.locked = true;
+  const game = f.game(await f.render());
+  assert.equal(game.players[0].character, 'robot');
+  assert.equal(game.players[0].vehicle, 'motorcycle');
+  assert.equal(game.players[0].color, '#123456');
+});
+
+test('start aborts on disconnect and reopens an acknowledged lock on reconnect', async t => {
+  const f = await fixture(t);
+  f.button(await f.render(), 'START YOUR ENGINES ↗').onClick();
+  await f.render();
+  f.room.status = 'reconnecting'; f.room.locked = true;
+  assert.equal(f.game(await f.render()), undefined);
+  f.messages.length = 0; f.room.status = 'connected';
+  assert.equal(f.game(await f.render()), undefined);
+  assert.ok(f.messages.some(message => message.type === 'lock' && message.locked === false));
+});
+
+
+test('closing a pending start invalidates a queued lock acknowledgement', async t => {
+  const f = await fixture(t);
+  f.button(await f.render(), 'START YOUR ENGINES ↗').onClick();
+  await f.render(); f.hold(); f.room.locked = true;
+  let tree = await f.render();
+  assert.equal(f.game(tree), undefined);
+  f.button(tree, 'CLOSE ROOM').onClick();
+  f.flush(); tree = await f.render();
+  assert.equal(f.game(tree), undefined);
+  assert.ok(f.button(tree, 'HOST A RACE ↗'));
+});
+
+test('multiple locked roster snapshots schedule only one start', async t => {
+  const f = await fixture(t);
+  f.button(await f.render(), 'START YOUR ENGINES ↗').onClick();
+  await f.render(); f.hold(); f.room.locked = true;
+  await f.render();
+  f.room.players = f.room.players.map(player => ({ ...player }));
+  await f.render();
+  f.flush();
+  const game = f.game(await f.render());
+  assert.equal(game.raceKey, 1);
+  assert.equal(f.messages.filter(message => message.payload?.phase === 'racing').length, 1);
+});
+
+test('disconnect cancels a queued lock acknowledgement before it starts', async t => {
+  const f = await fixture(t);
+  f.button(await f.render(), 'START YOUR ENGINES ↗').onClick();
+  await f.render(); f.hold(); f.room.locked = true;
+  await f.render(); f.room.status = 'reconnecting';
+  await f.render(); f.flush();
+  assert.equal(f.game(await f.render()), undefined);
+});
+
+test('a recovered public room code does not restart or remount the race', async t => {
+  const f = await fixture(t);
+  const before = await f.start();
+  f.room.status = 'reconnecting';
+  const paused = f.game(await f.render());
+  assert.equal(paused.paused, true);
+  f.room.code = 'QRS789'; f.room.status = 'connected';
+  const after = f.game(await f.render());
+  assert.equal(after.paused, false);
+  assert.equal(after.raceKey, before.raceKey);
+  assert.deepEqual(after.players.map(player => player.id), before.players.map(player => player.id));
+});
+
+
+test('paused host offers retry only for recoverable connection errors', async t => {
+  const f = await fixture(t); await f.start();
+  f.room.status = 'error'; f.room.error = 'Connection lost'; f.room.canRetryConnection = true;
+  let tree = await f.render();
+  assert.equal(f.game(tree).paused, true);
+  f.button(tree, 'RETRY CONNECTION').onClick();
+  assert.ok(f.messages.some(message => message.type === 'retry'));
+  f.room.canRetryConnection = false;
+  tree = await f.render();
+  assert.equal(f.button(tree, 'RETRY CONNECTION'), undefined);
+});
+
+
+test('recovery waits for missing drivers and resumes without resetting the race', async t => {
+  const f = await fixture(t); const before = await f.start();
+  f.room.recovering = true; f.room.recoveryWaitingFor = ['b']; f.room.players[1].connected = false;
+  let tree = await f.render();
+  assert.equal(f.game(tree).paused, true);
+  assert.ok(f.nodes(tree, node => node.props?.children === 'Second').length || JSON.stringify(tree).includes('Second'));
+  f.button(tree, 'CONTINUE WITHOUT MISSING DRIVERS').onClick();
+  assert.ok(f.messages.some(message => message.type === 'resume'));
+  assert.equal(f.game(await f.render()).paused, true, 'Wait for relay acknowledgement');
+  f.room.recovering = false; f.room.recoveryWaitingFor = [];
+  tree = await f.render(); assert.equal(f.game(tree).paused, false); assert.equal(f.game(tree).raceKey, before.raceKey);
+});
+
+test('all drivers returning automatically clears recovery without restarting', async t => {
+  const f = await fixture(t); const before = await f.start();
+  f.room.recovering = true; f.room.recoveryWaitingFor = ['b'];
+  assert.equal(f.game(await f.render()).paused, true);
+  f.room.recovering = false; f.room.recoveryWaitingFor = [];
+  const after = f.game(await f.render());
+  assert.equal(after.paused, false); assert.equal(after.raceKey, before.raceKey);
+  assert.equal(f.messages.filter(message => message.type === 'resume').length, 0);
+});
+
+test('phone controller remains hidden during recovery and returns after acknowledgement', async t => {
+  const f = await fixture(t, false);
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: true, recovering: true, players: [{ id: 'a', name: 'First', color: '#ffffff', connected: true, input: { ...ZERO } }] });
+  let tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
+  f.room.recovering = false; tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 1);
 });

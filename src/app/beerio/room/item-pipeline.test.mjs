@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -22,12 +22,18 @@ const compiled = spawnSync(process.execPath, [require.resolve('typescript/bin/ts
   '--skipLibCheck', '--esModuleInterop',
 ], { cwd: root, encoding: 'utf8' });
 assert.equal(compiled.status, 0, compiled.stderr || compiled.stdout);
-const { BeerioRoomClient } = require(join(output, 'room/client.js'));
+const clientPath = join(output, 'room/client.js');
+// Browser storage belongs to a tab, not to the whole test process. Give each
+// actual compiled client lexical browser globals so asynchronous checkpoints,
+// socket callbacks and reconnect timers keep using their originating tab.
+const loadClient = new Function('require', 'module', 'exports', 'sessionStorage', 'window', 'WebSocket', readFileSync(clientPath, 'utf8'));
+const clientRequire = createRequire(clientPath);
 const { createRace, stepRace } = require(join(output, 'game/simulation.js'));
 const { mergeControllerAction } = require(join(output, 'game/actionMerge.js'));
 const ZERO = { steer: 0, accelerate: false, brake: false };
 const DRIVE = { steer: 0.8, accelerate: true, brake: false };
 const ORIGIN = 'https://beerio.example';
+const STORAGE_KEY = 'beerio-room-session-v1';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function until(predicate, description) {
@@ -39,7 +45,6 @@ async function until(predicate, description) {
 }
 
 async function fixture(t, count = 1) {
-  const prior = { WebSocket: globalThis.WebSocket, window: globalThis.window, sessionStorage: globalThis.sessionStorage };
   const sockets = [];
   class BrowserSocket extends WebSocket {
     dropInputs = false;
@@ -49,25 +54,32 @@ async function fixture(t, count = 1) {
       super.send(data);
     }
   }
-  globalThis.WebSocket = BrowserSocket;
-  globalThis.window = { location: { protocol: 'http:', hostname: 'localhost' } };
-  const saved = new Map();
-  globalThis.sessionStorage = {
-    getItem: key => saved.get(key) ?? null,
-    setItem: (key, value) => saved.set(key, value),
-    removeItem: key => saved.delete(key),
-  };
   const relay = createRelay({ allowedOrigins: [ORIGIN] });
   const clients = [];
+  const storageByClient = new WeakMap();
   t.after(async () => {
     for (const client of clients) client.destroy();
     await relay.close();
-    Object.assign(globalThis, prior);
   });
   relay.server.listen(0, '127.0.0.1');
   await once(relay.server, 'listening');
   const url = `ws://127.0.0.1:${relay.server.address().port}`;
-  const newClient = () => { const client = new BeerioRoomClient(); clients.push(client); return client; };
+  const newClient = (saved = new Map()) => {
+    const sessionStorage = {
+      getItem: key => saved.get(key) ?? null,
+      setItem: (key, value) => saved.set(key, value),
+      removeItem: key => saved.delete(key),
+    };
+    const clientModule = { exports: {} };
+    loadClient(clientRequire, clientModule, clientModule.exports, sessionStorage,
+      { location: { protocol: 'http:', hostname: 'localhost' } }, BrowserSocket);
+    const client = new clientModule.exports.BeerioRoomClient();
+    clients.push(client);
+    storageByClient.set(client, saved);
+    return client;
+  };
+  const storageFor = client => storageByClient.get(client);
+  const savedSession = client => JSON.parse(storageFor(client).get(STORAGE_KEY) ?? 'null');
   const host = newClient();
   host.createRoom({ relayUrl: url });
   await until(() => host.getSnapshot().status === 'connected', 'host welcome');
@@ -104,7 +116,7 @@ async function fixture(t, count = 1) {
     // consistent effect; Dance Break's intentional stop is tested separately.
     kart.power.item = item;
   };
-  return { host, phones, race, input, step, pickup, sockets, saved, newClient };
+  return { host, phones, race, input, step, pickup, sockets, storageFor, savedSession, newClient };
 }
 
 test('held accelerator and steering carry ITEM through both clients, relay, host merge and simulation', async t => {
@@ -130,6 +142,29 @@ test('held accelerator and steering carry ITEM through both clients, relay, host
   await until(() => f.input(0).action === 2 && !f.input(0).accelerate, 'release retains item event');
   f.step();
   assert.equal(f.race.karts[0].power.used, 2, 'release does not erase the pending press');
+});
+
+test('host checkpoint writes and controller departures preserve each browser tab\'s own session', async t => {
+  const f = await fixture(t, 2);
+  const [first, second] = f.phones;
+  const firstSession = f.savedSession(first), secondSession = f.savedSession(second);
+  assert.equal(f.savedSession(f.host).role, 'host');
+  assert.equal(f.savedSession(f.host).checkpoint.players.length, 2, 'real host checkpoint writes are retained');
+  assert.equal(firstSession.role, 'player');
+  assert.equal(secondSession.role, 'player');
+  assert.notEqual(firstSession.token, secondSession.token);
+  assert.equal(firstSession.checkpoint, undefined, 'private host checkpoints do not enter controller storage');
+  assert.equal(secondSession.checkpoint, undefined);
+  first.useItem();
+  await until(() => f.savedSession(f.host).checkpoint.players.find(player => player.id === first.getSnapshot().playerId)?.actionSequence === 1,
+    'asynchronous action receipt updates host checkpoint storage');
+  assert.deepEqual(f.savedSession(first), firstSession, 'host action checkpoints cannot overwrite a phone session');
+  assert.deepEqual(f.savedSession(second), secondSession);
+  second.leaveRoom();
+  await until(() => f.savedSession(f.host).checkpoint.players.length === 1, 'departure updates host checkpoint');
+  assert.equal(f.storageFor(second).size, 0, 'leaving clears only that controller tab');
+  assert.equal(f.savedSession(f.host).role, 'host');
+  assert.deepEqual(f.savedSession(first), firstSession, 'another phone leaving does not clear this controller');
 });
 
 test('empty presses, stale traffic and explicit safety resets cannot fire a later pickup', async t => {
@@ -226,14 +261,14 @@ test('automatic reconnect and a reloaded phone retain item sequence without repl
   f.step();
   assert.equal(f.race.karts[0].power.used, 2);
   f.pickup(0, 2);
-  const savedSession = new Map(f.saved);
+  const savedSession = f.storageFor(phone);
   phone.destroy();
   await until(() => !f.host.getSnapshot().players[0].connected, 'old page disconnects');
-  f.saved.clear();
-  for (const [key, value] of savedSession) f.saved.set(key, value);
-  const reloaded = f.newClient();
+  const reloaded = f.newClient(savedSession); // Reload reuses only this tab's storage.
   reloaded.restoreSession(f.host.getSnapshot().code);
   await until(() => reloaded.getSnapshot().status === 'connected', 'reloaded phone restores session');
+  assert.equal(reloaded.getSnapshot().role, 'player');
+  assert.equal(reloaded.getSnapshot().playerId, id, 'reload resumes the same phone, never the host');
   f.step();
   assert.equal(f.race.karts[0].power.used, 2, 'new client does not replay its predecessor');
   reloaded.setInput(DRIVE);

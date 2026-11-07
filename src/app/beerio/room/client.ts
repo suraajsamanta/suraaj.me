@@ -1,12 +1,15 @@
 "use client";
 
+import type { Appearance } from "../appearance";
 import { ZERO_INPUT, normalizeInput, type RoomInput, type RoomPlayer, type RoomSnapshot, type CreateRoomOptions, type JoinRoomOptions, type RoomRole } from "./types";
 
 const STORAGE_KEY = "beerio-room-session-v1";
 const MAX_RETRIES = 12;
 const FIRST_CONNECTION_WINDOW_MS = 90_000;
-type SavedSession = { code: string; token: string; role: RoomRole; relayUrl: string };
-type WelcomeRoom = { code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; hostConnected: boolean };
+type RecoveryPlayer = { id: string; actionSequence: number; [key: string]: unknown };
+type RecoveryCheckpoint = { version: 1; roomId: string; revision: number; ackRequired?: boolean; maxPlayers: number; locked: boolean; players: RecoveryPlayer[] };
+type SavedSession = { code: string; token: string; role: RoomRole; relayUrl: string; roomId?: string; checkpoint?: RecoveryCheckpoint };
+type WelcomeRoom = { code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; recovering?: boolean; recoveryWaitingFor?: string[]; hostConnected: boolean };
 
 /** NEXT_PUBLIC values are compiled at build time. Never point cellular phones at localhost. */
 export function getRelayUrl(): string {
@@ -32,7 +35,7 @@ function validateUrl(value: string): string {
 }
 
 function initialSnapshot(): RoomSnapshot {
-  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 6, locked: false, hostConnected: false, error: null, relayUrl: getRelayUrl() };
+  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 6, locked: false, recovering: false, recoveryWaitingFor: [], hostConnected: false, error: null, relayUrl: getRelayUrl(), canRetryConnection: false };
 }
 
 /** Browser room transport. Every reconnect resumes with a secret token, not the public room code. */
@@ -107,12 +110,12 @@ export class BeerioRoomClient {
   };
 
   createRoom = (options: CreateRoomOptions = {}) => {
-    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 6 }, options.relayUrl, "host");
+    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 6, recoveryVersion: 1 }, options.relayUrl, "host");
   };
   joinRoom = (options: JoinRoomOptions) => {
     const code = options.code.replace(/\s/g, "").toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) { this.update({ status: "error", error: "Enter the six-character room code shown on the host screen." }); return; }
-    this.begin({ type: "join", code, name: options.name.trim().slice(0, 18) || "Racer" }, options.relayUrl, "player");
+    this.begin({ type: "join", code, name: options.name.trim().slice(0, 18) || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
   };
   private begin(hello: Record<string, unknown>, relayUrl: string | undefined, role: RoomRole) {
     this.leaveRoom();
@@ -132,7 +135,7 @@ export class BeerioRoomClient {
   private connect(resume: boolean) {
     this.clearTimers();
     this.input = { ...ZERO_INPUT };
-    this.update({ status: resume ? "reconnecting" : "connecting", error: null, players: this.zeroPlayers() });
+    this.update({ status: resume ? "reconnecting" : "connecting", error: null, canRetryConnection: false, players: this.zeroPlayers() });
     let socket: WebSocket;
     try { socket = new WebSocket(this.snapshot.relayUrl); }
     catch { this.fail("Could not connect to the relay. Check its URL and try again."); return; }
@@ -149,7 +152,11 @@ export class BeerioRoomClient {
     }
     socket.onopen = () => {
       if (this.socket !== socket) return;
-      const hello = this.session ? { type: "resume", code: this.session.code, token: this.session.token } : this.pendingHello;
+      const hello = this.session ? {
+        type: "resume", code: this.session.code, token: this.session.token,
+        ...(this.session.roomId ? { roomId: this.session.roomId, recoveryVersion: 1 } : {}),
+        ...(this.session.role === "host" && this.session.checkpoint ? { checkpoint: this.session.checkpoint } : {}),
+      } : this.pendingHello;
       if (hello) this.send(hello);
     };
     socket.onmessage = (event) => {
@@ -171,7 +178,7 @@ export class BeerioRoomClient {
         return;
       }
       if (!this.session || this.retries >= MAX_RETRIES) {
-        this.fail(this.session ? "Connection lost. Rejoin the room when your connection returns." : "The relay did not respond within 90 seconds. Check that it is running and reachable, then try again.");
+        this.fail(this.session ? "Connection is still unavailable. Your race is paused. Retry the connection without leaving the room." : "The relay did not respond within 90 seconds. Check that it is running and reachable, then try again.");
         return;
       }
       this.update({ status: "reconnecting", error: "Connection lost. Reconnecting…" });
@@ -185,7 +192,27 @@ export class BeerioRoomClient {
       case "welcome": {
         const room = message.room as WelcomeRoom;
         if (!room || !Array.isArray(room.players) || typeof message.token !== "string" || (message.role !== "host" && message.role !== "player")) return;
-        this.session = { code: room.code, token: message.token, role: message.role, relayUrl: this.snapshot.relayUrl };
+        const roomId = typeof message.roomId === "string" && /^[a-f0-9]{64}$/.test(message.roomId) ? message.roomId : undefined;
+        // Never allow a stale/reused six-character code to replace this session's identity.
+        if (this.session?.roomId && roomId !== this.session.roomId) {
+          this.fail("The relay returned a different room identity. Your race is paused; retry the connection.");
+          return;
+        }
+        const checkpoint = this.session?.checkpoint;
+        const previousCode = this.session?.code;
+        // Keep this controller's existing deep link consistent with its recovered
+        // public code. Never put the private token or checkpoint in a URL.
+        if (message.role === "player" && previousCode && previousCode !== room.code && typeof window !== "undefined") {
+          try {
+            const url = new URL(window.location.href);
+            if (url.searchParams.get("room")?.toUpperCase() === previousCode) {
+              url.searchParams.set("room", room.code);
+              window.history.replaceState(window.history.state, "", url);
+            }
+          } catch { /* Restricted navigation must not block in-memory recovery. */ }
+        }
+        this.session = { code: room.code, token: message.token, role: message.role, relayUrl: this.snapshot.relayUrl,
+          ...(roomId ? { roomId } : {}), ...(message.role === "host" && checkpoint?.roomId === roomId ? { checkpoint } : {}) };
         this.storeSession();
         // A resumed phone starts from the relay's high-water mark, not zero.
         // Pending presses are deliberately not replayed across a reconnect.
@@ -201,7 +228,7 @@ export class BeerioRoomClient {
         this.connectionTimer = null;
         this.coldStartTimer = null;
         this.firstConnectionDeadline = 0;
-        this.update({ ...room, status: "connected", role: message.role, playerId: typeof message.playerId === "string" ? message.playerId : null, error: null });
+        this.update({ ...room, recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [], status: "connected", role: message.role, playerId: typeof message.playerId === "string" ? message.playerId : null, error: null, canRetryConnection: false });
         this.inputTimer = setInterval(() => {
           if (this.snapshot.role === "player") this.sendInput();
         }, 100);
@@ -225,13 +252,19 @@ export class BeerioRoomClient {
         if (!room || room.code !== this.snapshot.code || !Array.isArray(room.players)) return;
         // A lock transition is a race boundary. Held controls from the previous
         // race (or its results screen) must not continue into the next one.
-        if (!room.hostConnected || room.locked !== this.snapshot.locked) this.input = { ...ZERO_INPUT };
-        this.update(room);
+        if (!room.hostConnected || room.locked !== this.snapshot.locked || (room.recovering === true) !== this.snapshot.recovering) this.input = { ...ZERO_INPUT };
+        this.update({ ...room, recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [] });
         break;
       }
       case "input": {
         if (this.snapshot.role !== "host" || typeof message.playerId !== "string" || !message.input || typeof message.input !== "object") return;
         const input = normalizeInput(message.input as RoomInput);
+        const sequence = message.actionSequence;
+        const savedPlayer = this.session?.checkpoint?.players.find(player => player.id === message.playerId);
+        if (savedPlayer && typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence > savedPlayer.actionSequence) {
+          savedPlayer.actionSequence = sequence;
+          this.storeSession();
+        }
         this.lastInputAt.set(message.playerId, Date.now());
         this.update({ players: this.snapshot.players.map((player) => player.id === message.playerId ? { ...player, input } : player) });
         break;
@@ -239,7 +272,30 @@ export class BeerioRoomClient {
       case "state":
         for (const listener of this.stateListeners) listener(message.payload);
         break;
+      case "checkpoint": {
+        const checkpoint = message.checkpoint as RecoveryCheckpoint;
+        if (this.session?.role !== "host" || !checkpoint || checkpoint.version !== 1 ||
+          checkpoint.roomId !== this.session.roomId || !Number.isSafeInteger(checkpoint.revision) || checkpoint.revision < 1 ||
+          !Array.isArray(checkpoint.players) || checkpoint.players.length > 6) return;
+        // Memory retention protects a running host even if sessionStorage is
+        // unavailable. This is not a promise that a reloaded browser can recover.
+        this.session.checkpoint = checkpoint;
+        this.storeSession();
+        if (checkpoint.ackRequired) this.send({ type: "checkpoint_ack", revision: checkpoint.revision });
+        break;
+      }
+      case "relay_restarting":
+        // A server restart is recoverable. Only an explicit room_closed ends it.
+        this.input = { ...ZERO_INPUT };
+        this.update({ status: "reconnecting", error: "The relay is restarting. Your race is paused while it reconnects.", hostConnected: false, players: this.zeroPlayers() });
+        this.socket?.close();
+        break;
       case "error":
+        if (this.session?.roomId && (message.code === "recovery_pending" || message.code === "room_not_found")) {
+          this.update({ status: "reconnecting", error: "Waiting for the host to restore the room…", hostConnected: false, players: this.zeroPlayers() });
+          this.socket?.close();
+          break;
+        }
         if (message.fatal) {
           this.session = null;
           this.storeSession();
@@ -250,15 +306,23 @@ export class BeerioRoomClient {
         this.session = null;
         this.storeSession();
         this.stopConnection();
-        this.update({ status: "closed", players: this.zeroPlayers(), hostConnected: false, error: typeof message.reason === "string" ? message.reason : "The host ended the room." });
+        this.update({ status: "closed", players: this.zeroPlayers(), hostConnected: false, canRetryConnection: false, error: typeof message.reason === "string" ? message.reason : "The host ended the room." });
         break;
     }
   }
 
   private fail(error: string) {
     this.stopConnection();
-    this.update({ status: "error", error, hostConnected: false, players: this.zeroPlayers() });
+    this.update({ status: "error", error, hostConnected: false, players: this.zeroPlayers(), canRetryConnection: Boolean(this.session) });
   }
+  /** Retry without destroying the live host's simulation or saved identity. */
+  retryConnection = () => {
+    if (!this.session || this.snapshot.status === "connected") return;
+    this.stopConnection();
+    this.intentionalClose = false;
+    this.retries = 0;
+    this.connect(true);
+  };
   setInput = (input: RoomInput) => {
     const previous = this.input;
     // Only useItem creates action events. Direction updates preserve the current
@@ -273,7 +337,7 @@ export class BeerioRoomClient {
   };
   /** A discrete press, separate from held driving controls. */
   useItem = (): boolean => {
-    if (this.suppressInput || this.snapshot.role !== "player" || this.snapshot.status !== "connected" || !this.snapshot.hostConnected || !this.snapshot.locked || this.socket?.readyState !== WebSocket.OPEN) return false;
+    if (this.suppressInput || this.snapshot.role !== "player" || this.snapshot.status !== "connected" || !this.snapshot.hostConnected || !this.snapshot.locked || this.snapshot.recovering || this.socket?.readyState !== WebSocket.OPEN) return false;
     const self = this.snapshot.players.find(player => player.id === this.snapshot.playerId);
     this.actionSequence = Math.max(this.actionSequence, self?.actionSequence ?? 0);
     if (this.actionSequence >= Number.MAX_SAFE_INTEGER) return false;
@@ -284,15 +348,22 @@ export class BeerioRoomClient {
   private sendInput() {
     if (this.snapshot.role !== "player" || this.snapshot.status !== "connected") return;
     this.lastSentInput = Date.now();
-    this.send({ type: "input", input: this.snapshot.hostConnected && this.snapshot.locked ? this.input : { ...ZERO_INPUT } });
+    this.send({ type: "input", input: this.snapshot.hostConnected && this.snapshot.locked && !this.snapshot.recovering ? this.input : { ...ZERO_INPUT } });
   }
   publishState = (state: unknown) => {
     if (this.snapshot.role !== "host" || this.snapshot.status !== "connected" || Date.now() - this.lastSentState < 50) return;
     this.lastSentState = Date.now();
     this.send({ type: "state", payload: state });
   };
+  setAppearance = (appearance: Appearance) => {
+    if (this.snapshot.role === "player" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "appearance", appearance });
+  };
   setLocked = (locked: boolean) => {
     if (this.snapshot.role === "host" && this.snapshot.status === "connected") this.send({ type: "lock", locked });
+  };
+  /** Host choice: continue a recovered race without waiting for missing phones. */
+  resumeRace = () => {
+    if (this.snapshot.role === "host" && this.snapshot.status === "connected" && this.snapshot.recovering) this.send({ type: "resume_race" });
   };
   /** Bind to page visibility/blur so backgrounded controllers can never keep accelerating. */
   resetInput = () => { this.input = { ...ZERO_INPUT }; this.sendInput(); };

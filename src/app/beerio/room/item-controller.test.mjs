@@ -40,6 +40,7 @@ function controllerButtons(props, effects) {
   const source = ts.transpileModule(
     'const { useRef, useState, useCallback, useEffect } = require("react");\n' +
     'const styles = new Proxy({}, { get: (_, name) => name });\n' +
+    'const SteeringJoystick = require("./SteeringJoystick").default;\n' +
     fullSource.slice(start, end) + '\nexport { Controller };',
     { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } },
   ).outputText;
@@ -50,17 +51,29 @@ function controllerButtons(props, effects) {
     useState: initial => [initial, () => {}],
   };
   const jsx = (type, props) => ({ type, props });
+  const joystickSource = ts.transpileModule(readFileSync(resolve(root, 'src/app/beerio/game/SteeringJoystick.tsx'), 'utf8'), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText;
+  const joystickModule = { exports: {} };
+  new Function('require', 'module', 'exports', joystickSource)(name => {
+    if (name === 'react') return react;
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name.endsWith('.css')) return { default: new Proxy({}, { get: (_, key) => key }) };
+    throw new Error(`Unexpected joystick dependency: ${name}`);
+  }, joystickModule, joystickModule.exports);
   const loadedModule = { exports: {} };
   new Function('require', 'module', 'exports', source)(name => {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === './SteeringJoystick') return joystickModule.exports;
     throw new Error(`Unexpected Controller dependency: ${name}`);
   }, loadedModule, loadedModule.exports);
   const buttons = new Map();
   const visit = node => {
     if (!node) return;
     if (Array.isArray(node)) return node.forEach(visit);
-    if (node.type === 'button') buttons.set(node.props['aria-label'], node.props);
+    if (typeof node.type === 'function') return visit(node.type(node.props));
+    if (node.type === 'button' || node.props?.role === 'slider') buttons.set(node.props['aria-label'], node.props);
     visit(node.props?.children);
   };
   visit(loadedModule.exports.Controller(props));
@@ -69,10 +82,10 @@ function controllerButtons(props, effects) {
 
 function pointer(pointerId, { isPrimary = false, pointerType = 'touch', button = 0, detail = 1 } = {}) {
   return {
-    pointerId, isPrimary, pointerType, button, detail,
+    pointerId, isPrimary, pointerType, button, detail, clientX: 244,
     nativeEvent: { pointerId, isPrimary, pointerType, button, detail },
     preventDefault() { this.defaultPrevented = true; },
-    currentTarget: { setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => true },
+    currentTarget: { setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => true, getBoundingClientRect: () => ({ left: 10, width: 268 }) },
   };
 }
 
@@ -153,7 +166,7 @@ async function fixture(t) {
 
 test('third-finger item press reaches the race while GO and steering stay held', async t => {
   const f = await fixture(t);
-  const go = f.buttons.get('Accelerate'), right = f.buttons.get('Steer right'), item = f.buttons.get('Use item');
+  const go = f.buttons.get('Accelerate'), right = f.buttons.get('Steering joystick'), item = f.buttons.get('Use item');
   go.onPointerDown(pointer(1, { isPrimary: true }));
   right.onPointerDown(pointer(2));
   f.kart.power.item = 'guard';

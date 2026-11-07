@@ -65,7 +65,9 @@ export function createRelay({ allowedOrigins = [], maxConnections = 2000, logger
   const close = () => new Promise((resolve) => {
     clearInterval(sweep);
     clearInterval(heartbeat);
-    for (const room of rooms.rooms.values()) rooms.closeRoom(room, 'The relay restarted. Please create a new room.');
+    // A transport restart is not a host Leave. Never erase clients' recovery
+    // credentials with room_closed; their host retains the authoritative race.
+    for (const room of rooms.rooms.values()) rooms.broadcast(room, { type: 'relay_restarting' });
     for (const ws of wss.clients) ws.terminate();
     wss.close(() => server.close(resolve));
   });
