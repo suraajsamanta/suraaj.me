@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { RaceRenderer } from './renderer';
+import { useRaceAudio } from './useRaceAudio';
 import { createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
 import { TRACK_POINTS, trackPose } from './track';
 import styles from './game.module.css';
@@ -54,6 +55,7 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
   const [error, setError] = useState('');
   const [restart, setRestart] = useState(0);
   const roster = players.slice(0, 6);
+  const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
   const totalLaps = Number.isFinite(laps) ? Math.max(1, Math.min(9, Math.round(laps))) : 3;
   const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : 3;
@@ -74,6 +76,8 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     let renderer: RaceRenderer | null = null;
     let frame = 0, last = 0, accumulator = 0, lastHud = 0;
     let stopped = false, didFinish = false, failed = false;
+    // Sound can be unlocked after this effect starts; always pause the live mix.
+    const pauseAudio = () => { audioRef.current?.setPaused(true); };
     const clearKeys = () => { keys.clear(); };
     const visibility = () => { clearKeys(); last = 0; accumulator = 0; };
     const keyDown = (event: KeyboardEvent) => {
@@ -86,14 +90,22 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
     const contextLost = (event: Event) => {
       event.preventDefault(); failed = true;
+      pauseAudio();
       setError('The graphics connection was interrupted. Restart the race to reconnect.');
     };
     const contextRestored = () => { setRestart((value) => value + 1); };
     const animate = (now: number) => {
       if (stopped || failed) return;
       if (!renderer) {
-        try { renderer = new RaceRenderer(canvas, entrants, race); setError(''); }
-        catch (cause) { setError(cause instanceof Error ? cause.message : 'The 3D renderer could not start.'); return; }
+        try {
+          renderer = new RaceRenderer(canvas, entrants, race);
+          audioRef.current?.setPaused(document.hidden);
+          setError('');
+        } catch (cause) {
+          failed = true; pauseAudio();
+          setError(cause instanceof Error ? cause.message : 'The 3D renderer could not start.');
+          return;
+        }
       }
       const elapsed = last ? Math.min((now - last) / 1000, 0.1) : 0;
       last = now;
@@ -109,7 +121,13 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
         });
         accumulator += elapsed;
         while (accumulator >= 1 / 60) { stepRace(race, currentPlayers, 1 / 60, autoSteerRef.current); accumulator -= 1 / 60; }
-        renderer.render(race, Math.max(elapsed, 1 / 60));
+        try { renderer.render(race, Math.max(elapsed, 1 / 60)); }
+        catch (cause) {
+          failed = true; pauseAudio();
+          setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted. Restart the race to reconnect.');
+          return;
+        }
+        updateAudio(race);
         if (now - lastHud > 80 || lastHud === 0 || (race.complete && !didFinish)) {
           setHud(snapshot(race, currentPlayers)); lastHud = now;
         }
@@ -128,12 +146,12 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     canvas.addEventListener('webglcontextrestored', contextRestored);
     frame = requestAnimationFrame(animate);
     return () => {
-      stopped = true; cancelAnimationFrame(frame); renderer?.dispose();
+      stopped = true; cancelAnimationFrame(frame); pauseAudio(); renderer?.dispose();
       window.removeEventListener('keydown', keyDown); window.removeEventListener('keyup', keyUp); window.removeEventListener('blur', clearKeys);
       document.removeEventListener('visibilitychange', visibility);
       canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored);
     };
-  }, [rosterKey, totalLaps, raceKey, restart]);
+  }, [rosterKey, totalLaps, raceKey, restart, audioRef, updateAudio]);
 
   const gridStyle = { '--game-columns': columns, '--game-rows': rows } as CSSProperties;
   return (
@@ -182,6 +200,7 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
         <ol>{hud.results.map((result) => <li key={result.id}><span className={styles.resultPlace}>{result.place}</span><span className={styles.resultName} style={{ color: result.color }}>{result.name}</span><strong>{result.time === null ? 'DNF' : clock(result.time)}</strong></li>)}</ol>
         <p>Use the race controls to head back to the lobby.</p>
       </div></div>}
+      {soundControls}
       <span className={styles.srOnly} aria-live="polite">{hud.complete ? `Race complete. ${hud.results[0]?.name || 'The leader'} placed first.` : hud.countdown > 0 ? 'Race starting. Hold accelerate when the countdown ends.' : 'Race in progress.'}</span>
     </div>
   );

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:game": "node src/app/beerio/game/run-tests.mjs",
-    "test:room": "node --test src/app/beerio/room/client.test.mjs"
+    "test:room": "node --test src/app/beerio/room/client.test.mjs",
+    "test:presentation": "node src/app/beerio/game/run-presentation-tests.mjs"
   },
   "dependencies": {
     "next": "16.4.5",

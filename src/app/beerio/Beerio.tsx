@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import Link from "next/link";
 import Image from "next/image";
 import GameView from "./game/GameView";
+import { unlockRaceAudio } from "./game/audio";
 import { useBeerioRoom } from "./room/useBeerioRoom";
 import styles from "./beerio.module.css";
 
@@ -111,7 +112,9 @@ export default function Beerio() {
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", clear); };
   }, [mode]);
   const exit = () => { room.leaveRoom(); setRacing(false); setFinished(false); setMode("home"); };
-  const start = () => { setRaceRoster(room.players.filter((player) => player.connected)); setFinished(false); setRaceKey((n) => n + 1); setRacing(true); room.setLocked(true); room.publishState({ phase: "racing" }); };
+  // Resume audio directly inside the gesture, before React mounts the race.
+  const start = () => { void unlockRaceAudio(); setRaceRoster(room.players.filter((player) => player.connected)); setFinished(false); setRaceKey((n) => n + 1); setRacing(true); room.setLocked(true); room.publishState({ phase: "racing" }); };
+  const practice = () => { void unlockRaceAudio(); setMode("practice"); setRaceKey((n) => n + 1); setFinished(false); };
   const lobby = () => { setRacing(false); setFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
   const players = mode === "practice" ? [{ id: "practice", name: "YOU", color: "#ffce58", input: practiceInput }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
@@ -126,7 +129,7 @@ export default function Beerio() {
 
   if (mode === "practice" || (mode === "host" && racing)) return <main className={styles.race}>
     <GameView players={players} raceKey={raceKey} localKeyboard={mode === "practice"} autoSteer={steeringAssist} onFinish={() => setFinished(true)} />
-    <div className={styles.raceTop}><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD TO DRIVE</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}{finished && mode === "practice" && <button className={styles.smallButton} onClick={() => { setRaceKey((n) => n + 1); setFinished(false); }}>RACE AGAIN ↻</button>}</div>
+    <div className={styles.raceTop}><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD TO DRIVE</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}{finished && mode === "practice" && <button className={styles.smallButton} onClick={practice}>RACE AGAIN ↻</button>}</div>
     {mode === "host" && room.status !== "connected" && <div role="alert" className={styles.connectionWarning}>{room.error || "Connection lost. Reconnecting…"}{(room.status === "closed" || room.status === "error") && <button className={styles.smallButton} onClick={exit}>EXIT ROOM</button>}</div>}
   </main>;
 
@@ -162,7 +165,7 @@ export default function Beerio() {
         <div className={styles.eyebrow}>THE PARTY RACING GAME</div><h1>READY.<br /><em>SET.</em> RACE.</h1>
         <p>One big screen. Your phones as controllers. Up to six friends racing for the glory.</p>
         <div className={styles.actions}><button className={styles.primary} onClick={() => setMode("host")}>HOST A RACE <span>↗</span></button><button className={styles.secondary} onClick={() => setMode("join")}>JOIN WITH A CODE</button></div>
-        <button className={styles.textButton} onClick={() => { setMode("practice"); setRaceKey((n) => n + 1); }}>Try a solo practice lap →</button>
+        <button className={styles.textButton} onClick={practice}>Try a solo practice lap →</button>
         <div className={styles.checkers} aria-hidden="true" /><div className={styles.bigStar} aria-hidden="true">✳</div>
       </section>}
       {mode === "host" && !room.code && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>THE HOST SCREEN</div><h1>Get the gang<br /><em>together.</em></h1><p>Open this page on the laptop connected to your TV. Create a room, then have everyone join on their phones.</p><button className={styles.primary} disabled={room.status === "connecting"} onClick={() => room.createRoom({ maxPlayers: 6 })}>{room.status === "connecting" ? "CONNECTING..." : "CREATE ROOM ↗"}</button>{room.error && <p role="alert" className={styles.error}>{room.error}</p>}<p className={styles.fine}>The host screen runs the race. Players join from any network using a room code.</p></section>}
