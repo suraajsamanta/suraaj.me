@@ -107,8 +107,10 @@ export class RoomService {
         const sequence = message.input.action;
         if (sequence === undefined || sequence === 0) player.actionFloor = player.actionSequence;
         else player.actionSequence = Math.max(player.actionSequence, sequence);
-        if (!room.host) player.actionFloor = player.actionSequence;
-        player.input = room.host ? {
+        // Lobby/results traffic must never queue movement or an item for a rematch.
+        const racing = Boolean(room.host) && room.locked;
+        if (!racing) player.actionFloor = player.actionSequence;
+        player.input = racing ? {
           steer: message.input.steer, accelerate: message.input.accelerate, brake: message.input.brake,
           ...(sequence > player.actionFloor ? { action: player.actionSequence } : {}),
         } : freshInput();
@@ -131,7 +133,10 @@ export class RoomService {
         if (peer.role !== 'host' || room.host !== peer || typeof message.locked !== 'boolean') {
           this.error(peer, 'host_only', 'Only the host may lock the room.'); return;
         }
-        room.locked = message.locked;
+        if (room.locked !== message.locked) {
+          room.locked = message.locked;
+          for (const player of room.players.values()) this.resetInput(room, player);
+        }
         this.broadcastRoom(room);
         break;
       case 'leave':

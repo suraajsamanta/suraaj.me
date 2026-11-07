@@ -1,5 +1,6 @@
-import { ACTIVE_TRACK, circularDistance, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, TRACK_LENGTH, TRACK_POINTS, trackPose, type Vec3 } from './track';
+import { ACTIVE_TRACK, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, TRACK_LENGTH, TRACK_POINTS, trackPose, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
+import { DANCE_SECONDS } from './powerups';
 
 type Color = [number, number, number];
 type Mesh = { buffer: WebGLBuffer; count: number };
@@ -255,7 +256,7 @@ function worldGeometry(): Geometry {
   return g;
 }
 
-function kartGeometry(color: Color): Geometry {
+function kartGeometry(color: Color, driver = true): Geometry {
   const g = new Geometry();
   const black: Color = [0.055, 0.08, 0.13], silver: Color = [0.7, 0.8, 0.85];
   g.box([0, 0.5, -0.05], [1.45, 0.35, 2.2], black);
@@ -276,6 +277,7 @@ function kartGeometry(color: Color): Geometry {
   g.box([0, 1.4, -1.12], [2, 0.15, 0.47], color);
   for (const side of [-1, 1]) g.box([side * 0.95, 1.48, -1.12], [0.1, 0.24, 0.55], color);
   g.box([0, 0.92, -0.27], [0.74, 0.72, 0.59], black);
+  if (driver) {
   g.sphere([0, 1.26, -0.05], 0.45, color, 10, 6);
   g.sphere([0, 1.92, -0.06], 0.51, CREAM, 16, 10);
   g.sphere([0, 1.99, -0.13], 0.49, color, 16, 8);
@@ -286,7 +288,29 @@ function kartGeometry(color: Color): Geometry {
     g.beam([side * 0.34, 1.38, 0], [side * 0.39, 1.21, 0.59], 0.12, color);
     g.sphere([side * 0.39, 1.21, 0.59], 0.15, CREAM, 6, 4);
   }
+  }
   g.box([0, 1.2, 0.58], [0.7, 0.12, 0.15], black);
+  return g;
+}
+
+/** Original low-poly dance poses; all motion is derived from the host timer. */
+function dancerGeometry(color: Color, phase: number): Geometry {
+  const g = new Geometry(), black: Color = [0.055, 0.08, 0.13];
+  const sway = Math.sin(phase), bounce = Math.abs(Math.cos(phase)) * 0.18;
+  const hip: Vec3 = [sway * 0.17, 1.05 + bounce, 0];
+  const chest: Vec3 = [-sway * 0.16, 1.72 + bounce, 0];
+  g.beam(hip, chest, 0.28, color);
+  g.sphere([chest[0], 2.22 + bounce, 0], 0.43, color, 14, 8);
+  g.box([chest[0], 2.18 + bounce, 0.39], [0.66, 0.23, 0.09], black);
+  g.box([chest[0], 2.64 + bounce, -0.02], [0.15, 0.04, 0.27], CREAM);
+  for (const side of [-1, 1]) {
+    const hand: Vec3 = [side * (0.95 + 0.18 * Math.cos(phase)), 1.9 + bounce + 0.65 * Math.sin(phase + side * 1.3), 0.1 + side * sway * 0.24];
+    g.beam([chest[0] + side * 0.22, 1.75 + bounce, 0], hand, 0.12, color);
+    g.sphere(hand, 0.15, CREAM, 7, 5);
+    const foot: Vec3 = [side * (0.34 + 0.22 * Math.sin(phase + side)), 0.16, side * 0.32 * Math.cos(phase)];
+    g.beam([hip[0] + side * 0.17, hip[1], 0], foot, 0.14, color);
+    g.box([foot[0], 0.14, foot[2] + 0.1], [0.32, 0.25, 0.52], black);
+  }
   return g;
 }
 
@@ -362,6 +386,8 @@ export class RaceRenderer {
   private bolt: Mesh;
   private shield: Mesh;
   private karts: Mesh[];
+  private emptyKarts: Mesh[];
+  private dancers: Mesh[][];
   private cameras: Camera[];
   private columns: number;
   private rows: number;
@@ -422,6 +448,8 @@ export class RaceRenderer {
     this.item = this.upload(itemGeometry()); this.slick = this.upload(slickGeometry());
     this.bolt = this.upload(boltGeometry()); this.shield = this.upload(shieldGeometry());
     this.karts = players.map((player) => this.upload(kartGeometry(parseColor(player.color))));
+    this.emptyKarts = players.map((player) => this.upload(kartGeometry(parseColor(player.color), false)));
+    this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4))));
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : 3;
     this.rows = Math.ceil(players.length / this.columns);
     this.cameras = race.karts.map((kart) => ({ eye: trackPose(kart.distance - 10, kart.lane * 0.6, 4.5).position, target: trackPose(kart.distance + 10, kart.lane * 0.35, 0.9).position }));
@@ -508,15 +536,27 @@ export class RaceRenderer {
       }
       for (let j = 0; j < race.karts.length; j++) {
         const other = race.karts[j];
-        // Keep the space between the chase camera and its own racer clear: nearby
-        // trailing karts should never hide the kart whose screen this is.
-        const separation = circularDistance(other.distance, kart.distance);
-        if (j !== i && separation < -2.4 && separation > -18) continue;
+        // Render every racer, including close followers between this kart and
+        // its chase camera. The view frustum handles those behind the camera.
         const pose = trackPose(other.distance, other.lane, 0.04);
         const yaw = pose.yaw + other.heading;
         const transform = model(pose.position, yaw);
         this.draw(this.shadow, model([pose.position[0], 0.095, pose.position[2]], yaw));
-        this.draw(this.karts[j], transform);
+        const dancing = other.power.dance > 0;
+        this.draw(dancing ? this.emptyKarts[j] : this.karts[j], transform);
+        if (dancing) {
+          const age = DANCE_SECONDS - other.power.dance;
+          // Step out and return during the first and last third of a second.
+          const exit = Math.max(0, Math.min(1, age / 0.35, other.power.dance / 0.35));
+          const offset = 2.2 * exit;
+          const dancerPosition: Vec3 = [pose.position[0] + Math.cos(yaw) * offset, pose.position[1], pose.position[2] - Math.sin(yaw) * offset];
+          const frame = Math.floor(age * 12) % 8;
+          this.draw(this.dancers[j][frame], model(dancerPosition, yaw + Math.sin(age * 3) * 0.25));
+          for (let particle = 0; particle < 6; particle++) {
+            const angle = particle * Math.PI / 3 + age * 4;
+            this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
+          }
+        }
         if (other.boost > 0) this.draw(this.boost, model(pose.position, yaw, 1 + Math.sin(race.elapsed * 43 + j) * 0.07));
         if (other.speed > 13 && (Math.abs(other.lane) > 6.5 || Math.abs(other.lateral) > 7)) {
           for (let particle = 0; particle < 5; particle++) {
@@ -535,8 +575,6 @@ export class RaceRenderer {
       // Transparent shells are the final world pass, after all opaque karts.
       for (const other of race.karts) {
         if (other.power.shield <= 0) continue;
-        const separation = circularDistance(other.distance, kart.distance);
-        if (other !== kart && separation < -2.4 && separation > -18) continue;
         const pose = trackPose(other.distance, other.lane, 0.04);
         this.draw(this.shield, model(pose.position, pose.yaw), 0.16 + Math.sin(race.elapsed * 3) * 0.025);
       }
@@ -544,7 +582,7 @@ export class RaceRenderer {
   }
   dispose() {
     const gl = this.gl;
-    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, ...this.karts]) gl.deleteBuffer(mesh.buffer);
+    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, ...this.karts, ...this.emptyKarts, ...this.dancers.flat()]) gl.deleteBuffer(mesh.buffer);
     gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }

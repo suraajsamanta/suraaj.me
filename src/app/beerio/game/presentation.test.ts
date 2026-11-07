@@ -38,6 +38,9 @@ test('power-up cues are edge-triggered and shield expiry is silent', () => {
   race.karts[0].power.shield = 0; race.karts[0].power.flash = 0.55;
   assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['shield']);
   assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
+  previous = audioSnapshot(race); race.karts[0].power.dance = 3.5; race.karts[0].power.used++;
+  assert.deepEqual(soundEvents(previous, audioSnapshot(race)), ['item', 'dance']);
+  assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
 });
 test('pitched synth notes are tuned and invalid kart colors safely fall back', () => {
   assert.equal(noteFrequency(69), 440); assert.equal(noteFrequency(81), 880);
@@ -114,13 +117,38 @@ test('six-view renderer builds finite geometry, draws every viewport and frees G
     const players = Array.from({ length: 6 }, (_, i) => ({ ...player, id: String(i) }));
     const race = createRace(players), renderer = new RaceRenderer(canvas, players, race);
     race.karts[0].boost = 1; race.karts[1].bump = 0.2; race.karts[2].lane = 8; race.karts[2].speed = 25;
-    race.karts[0].power.shield = 6; race.karts[1].power.flash = 0.5;
+    race.karts[0].power.shield = 6; race.karts[1].power.flash = 0.5; race.karts[2].power.dance = 2.1;
     race.powers.hazards.push({ id: 1, ownerId: '0', distance: 20, lane: -2, life: 8 });
     race.powers.projectiles.push({ id: 2, ownerId: '0', distance: 25, lane: 2, life: 3 });
     renderer.render(race, 1 / 60);
     assert.equal(stats.viewports, 6); assert.ok(stats.draws > 30); assert.ok(stats.vertices > 10000);
     assert.equal(stats.nonFinite, false); assert.ok(canvas.width <= 1800);
     renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('overtaken racers and their shields remain rendered throughout the chase-camera gap', () => {
+  const { gl, stats } = fakeWebGL();
+  const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1280, height: 720 }) } as unknown as HTMLCanvasElement;
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    const players = [player, { ...player, id: 'opponent', color: '#39cbb4' }];
+    const race = createRace(players), renderer = new RaceRenderer(canvas, players, race);
+    race.powers.boxes = [];
+    race.karts.forEach(kart => { kart.power.shield = 5; });
+    // Cross the old 2.4m disappearing boundary, move close to and behind the
+    // camera, and cross the lap seam. Both viewports still submit both karts.
+    for (const distance of [100, TRACK_LENGTH + 1]) {
+      race.karts[0].distance = distance;
+      for (const gap of [2.3, 0, -2.3, -2.5, -5, -10, -17.9, -18.1]) {
+        race.karts[1].distance = distance + gap;
+        const draws = stats.draws;
+        renderer.render(race, 1 / 60);
+        assert.equal(stats.draws - draws, 16, `every kart, shadow and shield should be submitted at gap ${gap}`);
+      }
+    }
+    renderer.dispose();
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
 });
 

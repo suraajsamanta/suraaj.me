@@ -223,7 +223,9 @@ export class BeerioRoomClient {
       case "room": {
         const room = message.room as WelcomeRoom;
         if (!room || room.code !== this.snapshot.code || !Array.isArray(room.players)) return;
-        if (!room.hostConnected) this.input = { ...ZERO_INPUT };
+        // A lock transition is a race boundary. Held controls from the previous
+        // race (or its results screen) must not continue into the next one.
+        if (!room.hostConnected || room.locked !== this.snapshot.locked) this.input = { ...ZERO_INPUT };
         this.update(room);
         break;
       }
@@ -282,7 +284,7 @@ export class BeerioRoomClient {
   private sendInput() {
     if (this.snapshot.role !== "player" || this.snapshot.status !== "connected") return;
     this.lastSentInput = Date.now();
-    this.send({ type: "input", input: this.snapshot.hostConnected ? this.input : { ...ZERO_INPUT } });
+    this.send({ type: "input", input: this.snapshot.hostConnected && this.snapshot.locked ? this.input : { ...ZERO_INPUT } });
   }
   publishState = (state: unknown) => {
     if (this.snapshot.role !== "host" || this.snapshot.status !== "connected" || Date.now() - this.lastSentState < 50) return;

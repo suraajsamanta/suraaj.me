@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, POWER_UPS, stepPowers, type PowerUp } from './powerups';
+import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, DANCE_SECONDS, POWER_UPS, stepPowers, type PowerUp } from './powerups';
 import { createRace, stepRace, type GamePlayer } from './simulation';
 import { TRACK_LENGTH } from './track';
 import { mergeControllerAction } from './actionMerge';
@@ -14,8 +14,8 @@ function ready(ids = ['a', 'b']) {
   return { race, players };
 }
 
-test('all four original items have clear controls and active-track item boxes', () => {
-  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt']);
+test('all five original items have clear controls and active-track item boxes', () => {
+  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt', 'dance']);
   const world = createPowerWorld();
   assert.equal(world.boxes.length, 12);
   assert.ok(world.boxes.every(box => box.distance > 0 && box.distance < TRACK_LENGTH));
@@ -206,4 +206,52 @@ test('controller action stays at its high-water mark after neutral or stale pack
   assert.equal(kart.power.item, 'fizz');
   send(2);
   assert.equal(kart.power.used, 2, 'a new action still fires');
+});
+
+
+test('dance activates only from a fresh use, counts once, and expires without replaying', () => {
+  const { race, players } = ready(['a']);
+  const kart = race.karts[0];
+  kart.power.item = 'dance';
+  players[0].input.accelerate = true;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(kart.power.dance, 0);
+  players[0].input.action = 1;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(kart.power.used, 1);
+  assert.equal(kart.power.item, null);
+  assert.equal(kart.power.dance, DANCE_SECONDS);
+  assert.equal(kart.speed, 0);
+  assert.equal(kart.boost, 0);
+  kart.power.item = 'fizz';
+  players[0].input.action = 2;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(kart.power.item, 'fizz', 'presses during dance cannot fire');
+  for (let i = 0; i < 40; i++) stepPowers(race, players, 0.1);
+  assert.equal(kart.power.dance, 0);
+  assert.equal(kart.power.used, 1);
+  assert.equal(kart.power.item, 'fizz', 'old press does not auto-fire after dance');
+  players[0].input.action = 3;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(kart.power.used, 2);
+});
+
+test('dance can be collected from deterministic item boxes and cannot start disconnected or after finishing', () => {
+  const { race, players } = ready(['a']);
+  const kart = race.karts[0];
+  const seen = new Set<PowerUp>();
+  for (let i = 0; i < 30; i++) {
+    const box = race.powers.boxes[i % race.powers.boxes.length];
+    box.cooldown = 0; kart.power.item = null; kart.lane = box.lane; kart.distance = box.distance;
+    collectPowerups(race, new Map([[kart.id, kart.distance]]));
+    if (kart.power.item) seen.add(kart.power.item);
+  }
+  assert.ok(seen.has('dance'));
+  kart.power.item = 'dance';
+  stepPowers(race, [], 1 / 60);
+  assert.equal(kart.power.used, 0);
+  kart.finishTime = 10; players[0].input.action = 1;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(kart.power.dance, 0);
+  assert.equal(kart.power.used, 0);
 });

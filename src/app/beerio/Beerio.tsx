@@ -100,7 +100,7 @@ export default function Beerio() {
   const [qr, setQr] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
   const [practiceInput, setPracticeInput] = useState<Input>(neutral);
-  const [finished, setFinished] = useState(false);
+  const [raceFinished, setRaceFinished] = useState(false);
   const [steeringAssist, setSteeringAssist] = useState(true);
   const [selectedTrack, setSelectedTrack] = useState<TrackId>("sunset");
   const [raceTrack, setRaceTrack] = useState<TrackId>("sunset");
@@ -124,6 +124,15 @@ export default function Beerio() {
     }
   }, [roomCode, roomRole, roomStatus, setLocked, publishState, mode]);
   useEffect(() => {
+    // A finish/start command can be lost while the host is offline. Reconcile
+    // the durable room lock after reconnect so phones match the host screen.
+    const shouldLock = racing && !raceFinished;
+    if (mode === "host" && roomRole === "host" && roomCode && roomStatus === "connected" && room.locked !== shouldLock) {
+      setLocked(shouldLock);
+      if (!shouldLock) publishState({ phase: raceFinished ? "results" : "lobby" });
+    }
+  }, [mode, racing, raceFinished, roomRole, roomCode, roomStatus, room.locked, setLocked, publishState]);
+  useEffect(() => {
     if (!room.code || room.role !== "host") return;
     const url = new URL(window.location.href); url.search = ""; url.searchParams.set("room", room.code);
     QRCode.toDataURL(url.toString(), { width: 220, margin: 1, color: { dark: "#171528", light: "#ffffff" } }).then((data) => { setJoinUrl(url.toString()); setQr(data); }).catch(() => { setJoinUrl(url.toString()); setQr(""); });
@@ -138,11 +147,11 @@ export default function Beerio() {
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", clear);
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", clear); };
   }, [mode]);
-  const exit = () => { room.leaveRoom(); setRacing(false); setFinished(false); setMode("home"); };
+  const exit = () => { room.leaveRoom(); setRacing(false); setRaceFinished(false); setMode("home"); };
   // Resume audio directly inside the gesture, before React mounts the race.
-  const start = () => { void unlockRaceAudio(); setRaceTrack(selectedTrack); setRaceRoster(room.players.filter((player) => player.connected)); setFinished(false); setRaceKey((n) => n + 1); setRacing(true); room.setLocked(true); room.publishState({ phase: "racing" }); };
-  const practice = () => { void unlockRaceAudio(); setRaceTrack(selectedTrack); setMode("practice"); setRaceKey((n) => n + 1); setFinished(false); };
-  const lobby = () => { setRacing(false); setFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
+  const start = () => { void unlockRaceAudio(); setRaceFinished(false); setRaceTrack(selectedTrack); setRaceRoster(room.players.filter((player) => player.connected)); setRaceKey((n) => n + 1); setRacing(true); room.setLocked(true); room.publishState({ phase: "racing" }); };
+  const practice = () => { void unlockRaceAudio(); setRaceFinished(false); setRaceTrack(selectedTrack); setMode("practice"); setRaceKey((n) => n + 1); };
+  const lobby = () => { setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
   const players = mode === "practice" ? [{ id: "practice", name: "YOU", color: "#ffce58", input: practiceInput }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
     return { ...driver, input: current?.connected ? current.input : neutral };
@@ -159,8 +168,12 @@ export default function Beerio() {
   };
 
   if (mode === "practice" || (mode === "host" && racing)) return <main className={styles.race}>
-    <GameView players={players} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist} onFinish={() => setFinished(true)} />
-    <div className={styles.raceTop}><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD · SPACE BRAKES · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}{finished && mode === "practice" && <button className={styles.smallButton} onClick={practice}>RACE AGAIN ↻</button>}</div>
+    <GameView players={players} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
+      onFinish={(results) => { setRaceFinished(true); if (mode === "host") { room.setLocked(false); room.publishState({ phase: "results", results }); } }}
+      onRematch={mode === "practice" ? practice : start} onLobby={mode === "practice" ? exit : lobby}
+      lobbyLabel={mode === "practice" ? "Back to menu" : "Back to lobby"}
+      rematchDisabled={mode === "host" && (room.status !== "connected" || room.locked || activePlayers.length === 0)} />
+    <div className={styles.raceTop}><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD · SPACE BRAKES · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}</div>
     {mode === "host" && room.status !== "connected" && <div role="alert" className={styles.connectionWarning}>{room.error || "Connection lost. Reconnecting…"}{(room.status === "closed" || room.status === "error") && <button className={styles.smallButton} onClick={exit}>EXIT ROOM</button>}</div>}
   </main>;
 

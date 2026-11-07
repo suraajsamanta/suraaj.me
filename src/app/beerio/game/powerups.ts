@@ -1,12 +1,13 @@
 import { circularDistance, clamp, ROAD_HALF_WIDTH, TRACK_LENGTH, wrap } from './track';
 
 /** Original party-racing items. Only the host mutates these states. */
-export type PowerUp = 'fizz' | 'guard' | 'slick' | 'bolt';
+export type PowerUp = 'fizz' | 'guard' | 'slick' | 'bolt' | 'dance';
 export const POWER_UPS: Record<PowerUp, { name: string; icon: string; color: string; description: string }> = {
   fizz: { name: 'Fizz Boost', icon: '↗', color: '#ffd364', description: 'A sparkling burst of speed. Clears a sticky slowdown.' },
   guard: { name: 'Foam Guard', icon: '◈', color: '#69eddd', description: 'A foamy shield that blocks the next item or obstacle hit.' },
   slick: { name: 'Citrus Slick', icon: '≈', color: '#b9ed72', description: 'Drop a slippery citrus puddle behind you.' },
   bolt: { name: 'Bubble Bolt', icon: '●', color: '#f8a6ef', description: 'Launch a bouncing bubble that chases the racer ahead.' },
+  dance: { name: 'Dance Break', icon: '♪', color: '#ff8ddb', description: 'Hop out for a fabulous dance! You cannot drive for a few seconds.' },
 };
 export type KartPowerState = {
   item: PowerUp | null;
@@ -14,6 +15,8 @@ export type KartPowerState = {
   slow: number;
   flash: number;
   hitCooldown: number;
+  /** Seconds left in the host-simulated self-inflicted dance break. */
+  dance: number;
   /** High-water mark: repeated heartbeats and out-of-order packets never fire twice. */
   lastAction: number;
   collected: number;
@@ -31,6 +34,7 @@ type PowerKart = {
 type PowerRace = { karts: PowerKart[]; powers: PowerWorld; countdown?: number; complete?: boolean };
 type PowerPlayer = { id: string; input: { action?: number } };
 export const ITEM_RESPAWN_SECONDS = 4.5;
+export const DANCE_SECONDS = 3.5;
 export const ITEM_BOX_FRACTIONS = [0.075, 0.31, 0.565, 0.86];
 export const ITEM_BOX_LANES = [-4.2, 0, 4.2];
 
@@ -38,7 +42,7 @@ export function actionSequence(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 }
 export function createPowerState(initialAction = 0): KartPowerState {
-  return { item: null, shield: 0, slow: 0, flash: 0, hitCooldown: 0, lastAction: actionSequence(initialAction), collected: 0, used: 0 };
+  return { item: null, shield: 0, slow: 0, flash: 0, hitCooldown: 0, dance: 0, lastAction: actionSequence(initialAction), collected: 0, used: 0 };
 }
 export function createPowerWorld(): PowerWorld {
   return {
@@ -66,7 +70,7 @@ function hit(kart: PowerKart, strength: number): void {
 }
 function activateItem(race: PowerRace, kart: PowerKart): void {
   const item = kart.power.item;
-  if (!item || kart.finishTime !== null) return;
+  if (!item || kart.finishTime !== null || kart.power.dance > 0) return;
   kart.power.item = null;
   kart.power.used++;
   kart.power.flash = 0.45;
@@ -79,6 +83,10 @@ function activateItem(race: PowerRace, kart: PowerKart): void {
     kart.power.slow = 0;
   } else if (item === 'slick') {
     race.powers.hazards.push({ id: race.powers.nextId++, ownerId: kart.id, distance: wrap(kart.distance - 4), lane: clamp(kart.lane, -ROAD_HALF_WIDTH, ROAD_HALF_WIDTH), life: 9 });
+  } else if (item === 'dance') {
+    kart.power.dance = DANCE_SECONDS;
+    kart.speed = 0;
+    kart.boost = 0;
   } else {
     race.powers.projectiles.push({ id: race.powers.nextId++, ownerId: kart.id, distance: wrap(kart.distance + 3), lane: kart.lane, life: 4 });
   }
@@ -94,6 +102,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
     kart.power.slow = Math.max(0, kart.power.slow - step);
     kart.power.flash = Math.max(0, kart.power.flash - step);
     kart.power.hitCooldown = Math.max(0, kart.power.hitCooldown - step);
+    kart.power.dance = Math.max(0, kart.power.dance - step);
     const sequence = actionSequence(players.find(player => player.id === kart.id)?.input.action);
     if (sequence > kart.power.lastAction) {
       // Consume empty presses too: a held/old packet must not auto-fire a later pickup.
@@ -132,7 +141,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
 function itemFor(kart: PowerKart, box: ItemBox, karts: PowerKart[]): PowerUp {
   // Stable deterministic variety, with a small catch-up bias rather than a random winner.
   const rank = karts.filter(other => other.finishTime === null && other.distance > kart.distance).length;
-  const choices: PowerUp[] = rank > 1 ? ['fizz', 'bolt', 'guard', 'fizz', 'slick', 'bolt'] : ['fizz', 'guard', 'slick', 'bolt'];
+  const choices: PowerUp[] = rank > 1 ? ['fizz', 'bolt', 'guard', 'fizz', 'slick', 'bolt', 'dance'] : ['fizz', 'guard', 'slick', 'bolt', 'dance'];
   let seed = box.id * 11 + kart.power.collected * 7;
   for (const char of kart.id) seed = (seed * 31 + char.charCodeAt(0)) >>> 0;
   return choices[seed % choices.length];
@@ -148,7 +157,7 @@ export function collectPowerups(race: PowerRace, previousDistances: ReadonlyMap<
   if (race.complete || (race.countdown ?? 0) > 0) return;
   for (const box of race.powers.boxes) {
     if (box.cooldown > 0) continue;
-    const candidates = race.karts.filter(kart => kart.finishTime === null && kart.power.item === null && Math.abs(kart.lane - box.lane) < 1.55 && crossesBox(previousDistances.get(kart.id) ?? kart.distance, kart.distance, box));
+    const candidates = race.karts.filter(kart => kart.finishTime === null && kart.power.dance <= 0 && kart.power.item === null && Math.abs(kart.lane - box.lane) < 1.55 && crossesBox(previousDistances.get(kart.id) ?? kart.distance, kart.distance, box));
     // Resolve shared pickups by proximity, then stable ID, never roster iteration order.
     candidates.sort((a, b) => Math.abs(circularDistance(a.distance, box.distance)) - Math.abs(circularDistance(b.distance, box.distance)) || a.id.localeCompare(b.id));
     const kart = candidates[0];

@@ -82,7 +82,7 @@ test('controller normalizes input, releases immediately, heartbeats and suppress
   f.client.joinRoom({ code: ' abc234 ', name: 'Phone' });
   await flush();
   assert.equal(f.socket().sent[0].code, 'ABC234');
-  welcome(f.socket());
+  welcome(f.socket(), 'player', { locked: true });
   f.client.setInput({ steer: 4, accelerate: true, brake: false });
   assert.deepEqual(f.socket().sent.at(-1).input, { steer: 1, accelerate: true, brake: false });
   f.client.setInput(ZERO);
@@ -283,4 +283,27 @@ test('host receives item sequences, stale action-only packets are neutralized, a
   assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO);
   f.socket().receive({ type: 'input', playerId: 'player1', input: { ...ZERO, action: -10 } });
   assert.deepEqual(f.client.getSnapshot().players[0].input, ZERO, 'malformed sequences are discarded');
+});
+
+test('finish and rematch clear held controls and item events without replacing the controller', async (t) => {
+  const f = fixture(t);
+  f.client.joinRoom({ code: 'ABC234', name: 'Phone' });
+  await flush();
+  welcome(f.socket(), 'player', { locked: true });
+  f.client.setInput(active);
+  f.client.useItem();
+  assert.deepEqual(f.socket().sent.at(-1).input, { ...active, action: 1 });
+  const roomUpdate = locked => f.socket().receive({ type: 'room', room: { ...f.client.getSnapshot(), locked } });
+  roomUpdate(false);
+  f.client.setInput(active); // A controller cleanup or late pointer event races the transition.
+  await wait(110);
+  assert.deepEqual(f.socket().sent.at(-1).input, ZERO, 'results cannot send held driving');
+  assert.equal(f.client.useItem(), false);
+  roomUpdate(true);
+  await wait(110);
+  assert.deepEqual(f.socket().sent.at(-1).input, ZERO, 'fresh race does not reuse a previous hold');
+  assert.equal(f.client.getSnapshot().playerId, 'player1');
+  f.client.setInput(active);
+  assert.equal(f.client.useItem(), true);
+  assert.deepEqual(f.socket().sent.at(-1).input, { ...active, action: 2 });
 });

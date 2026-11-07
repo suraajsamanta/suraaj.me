@@ -3,9 +3,9 @@ import { ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDis
 
 export type DriverInput = { steer: number; accelerate: boolean; brake: boolean; action?: number };
 export type GamePlayer = { id: string; name: string; color: string; input: DriverInput };
-export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean };
+export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean; itemsUsed: number };
 export type KartState = {
-  id: string; distance: number; lane: number; speed: number; lateral: number;
+  id: string; name: string; color: string; distance: number; lane: number; speed: number; lateral: number;
   /** World yaw relative to the local track tangent, also used by the renderer. */
   heading: number;
   boost: number; bump: number; finishTime: number | null; padCooldown: number; obstacleCooldown: number; power: KartPowerState;
@@ -20,7 +20,7 @@ export function createRace(players: GamePlayer[], laps = 3): RaceState {
     elapsed: 0, countdown: COUNTDOWN_SECONDS, complete: false, laps, firstFinish: null, powers: createPowerWorld(),
     // Start behind the line, without awarding a lap on the initial crossing.
     karts: players.slice(0, 6).map((player, i) => ({
-      id: player.id, distance: -6 - Math.floor(i / 2) * 4.5,
+      id: player.id, name: player.name, color: player.color, distance: -6 - Math.floor(i / 2) * 4.5,
       lane: i % 2 === 0 ? -2.1 : 2.1, speed: 0, lateral: 0, heading: 0,
       boost: 0, bump: 0, finishTime: null, padCooldown: 0, obstacleCooldown: 0, power: createPowerState(player.input.action),
     })),
@@ -36,11 +36,12 @@ export function rankKarts(race: RaceState): KartState[] {
   });
 }
 
-export function raceResults(race: RaceState, players: GamePlayer[]): RaceResult[] {
-  return rankKarts(race).map((kart, i) => {
-    const player = players.find((p) => p.id === kart.id);
-    return { id: kart.id, name: player?.name || 'Racer', color: player?.color || '#f5b654', place: i + 1, time: kart.finishTime, finished: kart.finishTime !== null };
-  });
+export function raceResults(race: RaceState): RaceResult[] {
+  // The starting roster belongs to the race, even if a controller disconnects.
+  return rankKarts(race).map((kart, i) => ({
+    id: kart.id, name: kart.name, color: kart.color, place: i + 1,
+    time: kart.finishTime, finished: kart.finishTime !== null, itemsUsed: kart.power.used,
+  }));
 }
 
 export function stepRace(race: RaceState, players: GamePlayer[], dt: number, autoSteer = true): void {
@@ -63,8 +64,18 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     kart.bump = Math.max(0, kart.bump - dt);
     kart.padCooldown = Math.max(0, kart.padCooldown - dt);
     kart.obstacleCooldown = Math.max(0, kart.obstacleCooldown - dt);
+    // A dancing racer is stationary even if they keep holding a driving control.
+    if (kart.power.dance > 0) {
+      kart.speed = 0; kart.lateral = 0; kart.boost = 0;
+      continue;
+    }
     const boost = kart.boost > 0;
-    const maximum = finished ? 14 : offRoad ? 19 : kart.power.slow > 0 ? 24 : boost ? MAX_SPEED + 15 : MAX_SPEED;
+    // The shoulder adds progressively more drag toward the rail. A gentle,
+    // monotonic penalty avoids both the old grass speed cliff and a fast strip
+    // at the wall where driving farther off-road would increase speed again.
+    const shoulder = clamp((Math.abs(kart.lane) - (ROAD_HALF_WIDTH - 0.5)) / (BARRIER_OFFSET - 1.15 - (ROAD_HALF_WIDTH - 0.5)), 0, 1);
+    const surfaceMaximum = offRoad ? MAX_SPEED * (1 - shoulder * 0.1) : MAX_SPEED + 15;
+    const maximum = finished ? 14 : Math.min(surfaceMaximum, kart.power.slow > 0 ? 24 : boost ? MAX_SPEED + 15 : MAX_SPEED);
     const engine = (finished ? 7 : accelerating ? boost ? 23 : 13 : -5) * (kart.power.slow > 0 ? 0.55 : 1);
     kart.speed = clamp(kart.speed + (braking ? -30 : engine) * dt, 0, MAX_SPEED + 17);
     if (kart.speed > maximum) kart.speed = Math.max(maximum, kart.speed - (offRoad ? 32 : 14) * dt);
@@ -91,10 +102,16 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       forwardFraction = Math.cos(kart.heading);
     }
     if (Math.abs(kart.lane) > BARRIER_OFFSET - 1.15) {
-      kart.lane = Math.sign(kart.lane) * (BARRIER_OFFSET - 1.15);
-      kart.lateral *= -0.45;
-      kart.heading *= -0.45;
-      if (kart.bump <= 0) { kart.speed *= 0.7; kart.bump = 0.35; }
+      const side = Math.sign(kart.lane);
+      kart.lane = side * (BARRIER_OFFSET - 1.15);
+      // Remove only motion into the rail, preserving forward travel and any
+      // steering away from it. Reflecting either value makes the kart bounce.
+      if (kart.lateral * side > 0) kart.lateral = 0;
+      if (kart.heading * side > 0) kart.heading = 0;
+      forwardFraction = autoSteer || finished ? 1 : Math.cos(kart.heading);
+      // A scrape adds mild continuous friction, not repeated 30% impact cuts.
+      kart.speed = Math.max(0, kart.speed - 3 * dt);
+      kart.bump = Math.max(kart.bump, 0.08);
     }
     kart.distance += kart.speed * forwardFraction * dt;
     if (!autoSteer && !finished) {
@@ -157,12 +174,15 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       if (Math.abs(longitudinal) < 2.7 && Math.abs(lateral) < 1.75) {
         const push = (1.75 - Math.abs(lateral)) * 0.5 + 0.025;
         const direction = lateral >= 0 ? 1 : -1;
-        a.lane += direction * push; b.lane -= direction * push;
-        a.lane = clamp(a.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
-        b.lane = clamp(b.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
-        if (a.bump <= 0 && b.bump <= 0) {
+        const aDancing = a.power.dance > 0, bDancing = b.power.dance > 0;
+        if (!aDancing) a.lane += direction * push * (bDancing ? 2 : 1);
+        if (!bDancing) b.lane -= direction * push * (aDancing ? 2 : 1);
+        if (!aDancing) a.lane = clamp(a.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
+        if (!bDancing) b.lane = clamp(b.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
+        if (a.bump <= 0 && b.bump <= 0 && !(aDancing && bDancing)) {
           const average = (a.speed + b.speed) * 0.46;
-          a.speed = average; b.speed = average;
+          if (!aDancing) a.speed = average;
+          if (!bDancing) b.speed = average;
           a.bump = 0.28; b.bump = 0.28;
         }
       }

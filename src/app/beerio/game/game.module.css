@@ -72,3 +72,20 @@
 .itemHud small { margin-top: 2px; font-size: 9px; opacity: 0.75; }
 .itemIcon { font-size: 24px; font-weight: 900; line-height: 1; }
 .itemEmpty { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; color: #ffffff80; }
+
+/* Results remain usable with six entrants and on smaller screens. */
+.podium { max-height: 100%; overflow-y: auto; }
+.resultItems { color: #b7bfcc; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.resultActions { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+.resultActions button { border: 1px solid #ffffff40; border-radius: 8px; padding: 11px 16px; background: #ffb15e; color: #151a23; font: inherit; font-weight: 800; cursor: pointer; }
+.resultActions button + button { background: transparent; color: #fff; }
+.resultActions button:disabled { cursor: not-allowed; opacity: 0.45; }
+.resultActions button:focus-visible { outline: 2px solid white; outline-offset: 4px; }
+@media (max-width: 480px), (max-height: 550px) {
+  .overlay { padding: 12px; }
+  .podium { padding: 16px; }
+  .podium h2 { margin: 6px 0 12px; }
+  .podium li { gap: 7px; padding: 7px 0; font-size: 13px; }
+  .resultItems { font-size: 10px; }
+  .resultActions { margin-top: 12px; }
+}

@@ -46,15 +46,71 @@ test('accelerator, braking, and coasting produce bounded speed', () => {
   advance(race, players, 1);
   assert.equal(race.karts[0].speed, 0);
 });
-test('right steering decreases the track lane; guard rails bound and slow impacts', () => {
+test('right steering decreases the track lane; guard rails bound and mildly slow scrapes', () => {
   const players = [driver('a', 1)], race = createRace(players); race.countdown = 0;
   const initial = race.karts[0].lane;
   advance(race, players, 1);
   assert.ok(race.karts[0].lane < initial);
-  race.karts[0].lane = BARRIER_OFFSET + 1; race.karts[0].speed = 30; race.karts[0].bump = 0;
+  race.karts[0].lane = BARRIER_OFFSET + 1; race.karts[0].speed = MAX_SPEED; race.karts[0].bump = 0;
   stepRace(race, players, 1 / 60);
   assert.ok(race.karts[0].lane <= BARRIER_OFFSET - 1.15);
-  assert.ok(race.karts[0].speed < 25);
+  assert.ok(race.karts[0].speed > MAX_SPEED * 0.97 && race.karts[0].speed < MAX_SPEED);
+});
+test('both walls slide without reflecting the kart in either steering mode', () => {
+  const limit = BARRIER_OFFSET - 1.15;
+  for (const autoSteer of [true, false]) {
+    for (const side of [-1, 1]) {
+      const players = [driver('scrape', -side)], race = createRace(players); race.countdown = 0;
+      const kart = race.karts[0];
+      Object.assign(kart, { distance: 0, lane: side * (limit - 0.01), speed: MAX_SPEED, lateral: side * 6, heading: side * 0.6 });
+      stepRace(race, players, 1 / 60, autoSteer);
+      assert.equal(kart.lane, side * limit);
+      assert.equal(kart.lateral, 0, 'outward velocity is stopped, not reversed');
+      assert.ok(Math.abs(kart.heading) < 0.04, 'the kart aligns with the rail instead of bouncing away');
+      assert.ok(kart.speed > MAX_SPEED * 0.97, 'a scrape must not impose a large impact speed cut');
+      assert.ok(kart.distance > 0.7, 'forward travel is preserved on contact');
+      const start = kart.distance;
+      advance(race, players, 2, autoSteer);
+      assert.ok(kart.distance - start > MAX_SPEED * 2 * 0.88, 'holding into a wall keeps sliding forward');
+      assert.ok(Math.abs(kart.lane) <= limit);
+      assert.ok(kart.speed > MAX_SPEED * 0.88, 'sustained contact only mildly slows the kart');
+      players[0].input.steer = side;
+      advance(race, players, 0.35, autoSteer);
+      assert.ok(kart.lane * side < limit - 0.15, 'steering away leaves the rail immediately');
+    }
+  }
+});
+test('shoulder speed falls gradually toward either rail without a fast wall strip', () => {
+  const limit = BARRIER_OFFSET - 1.15;
+  for (const side of [-1, 1]) {
+    let previousSpeed = MAX_SPEED;
+    for (const lane of [6.49, 6.6, 7, 8, limit]) {
+      const players = [driver('shoulder')], race = createRace(players); race.countdown = 0;
+      const kart = race.karts[0]; kart.speed = MAX_SPEED;
+      for (let frame = 0; frame < 120; frame++) {
+        // Hold each surface sample constant to measure its speed limit alone.
+        Object.assign(kart, { distance: 0, lane: side * lane, lateral: 0, heading: 0 });
+        stepRace(race, players, 1 / 60);
+      }
+      assert.ok(kart.speed <= previousSpeed + 0.01, 'driving deeper into the shoulder cannot increase speed');
+      assert.ok(kart.speed >= MAX_SPEED * 0.88, 'the shoulder has a mild penalty');
+      previousSpeed = kart.speed;
+    }
+  }
+});
+test('wall correction preserves existing motion away from either rail', () => {
+  const limit = BARRIER_OFFSET - 1.15;
+  for (const autoSteer of [true, false]) {
+    for (const side of [-1, 1]) {
+      const players = [driver('leave-wall', side)], race = createRace(players); race.countdown = 0;
+      const kart = race.karts[0];
+      Object.assign(kart, { distance: 0, lane: side * (limit + 0.3), speed: 20, lateral: -side * 6, heading: -side * 0.3 });
+      stepRace(race, players, 1 / 60, autoSteer);
+      assert.ok(Math.abs(kart.lane) <= limit);
+      assert.ok(kart.lateral * side < 0);
+      assert.ok(kart.heading * side < 0);
+    }
+  }
 });
 test('left and right controls move visually left and right around the full circuit in both modes', () => {
   for (const autoSteer of [true, false]) {
@@ -155,7 +211,7 @@ test('finish order is permanent and unfinished racers receive DNF after the grac
   assert.equal(race.complete, false);
   advance(race, players, 25.1);
   assert.equal(race.complete, true);
-  const results = raceResults(race, players);
+  const results = raceResults(race);
   assert.equal(results[0].id, 'a'); assert.equal(results[0].finished, true);
   assert.equal(results[1].finished, false); assert.equal(results[1].time, null);
 });
@@ -255,4 +311,60 @@ test('old item input is baselined at race creation', () => {
   stepRace(race, players, 1 / 60);
   assert.equal(race.karts[0].power.item, null);
   assert.ok(race.karts[0].boost > 0);
+});
+
+test('leaderboard keeps the race roster, counts only used items, and resets for a rematch', () => {
+  const players = [driver('first'), driver('offline')];
+  const race = createRace(players, 1); race.countdown = 0;
+  const [first, offline] = race.karts;
+  first.power.item = 'guard'; players[0].input.action = 1;
+  offline.power.item = 'fizz'; players[1].input.action = 1;
+  stepRace(race, players, 1 / 60);
+  // A duplicate heartbeat and an empty press do not count as item uses.
+  stepRace(race, players, 1 / 60);
+  players[0].input.action = 2;
+  stepRace(race, players, 1 / 60);
+  first.power.item = 'slick'; players[0].input.action = 3;
+  stepRace(race, players, 1 / 60);
+  first.distance = TRACK_LENGTH - 0.1; first.speed = 40;
+  // Player two disappears from the live input roster but remains in the race.
+  stepRace(race, [players[0]], 1 / 60);
+  advance(race, [players[0]], 25.1);
+  const results = raceResults(race);
+  assert.deepEqual(results.map(({ name, place, finished, itemsUsed }) => ({ name, place, finished, itemsUsed })), [
+    { name: 'Racer first', place: 1, finished: true, itemsUsed: 2 },
+    { name: 'Racer offline', place: 2, finished: false, itemsUsed: 1 },
+  ]);
+  const rematch = createRace([players[0]], 1);
+  assert.equal(raceResults(rematch)[0].itemsUsed, 0);
+  rematch.countdown = 0; rematch.karts[0].power.item = 'fizz';
+  stepRace(rematch, [players[0]], 1 / 60);
+  assert.equal(raceResults(rematch)[0].itemsUsed, 0, 'old action must not replay on rematch');
+});
+
+test('dance break holds the kart still through driving and collisions, then resumes', () => {
+  const players = [driver('dancer', 1), driver('rival')];
+  const race = createRace(players); race.countdown = 0;
+  const [dancer, rival] = race.karts;
+  Object.assign(dancer, { distance: 100, lane: 0, speed: 25, lateral: 4, heading: 0.3, boost: 2 });
+  Object.assign(rival, { distance: 100, lane: 0.2, speed: 20 });
+  dancer.power.item = 'dance'; players[0].input.action = 1;
+  stepRace(race, players, 1 / 60, false);
+  const stationary = { distance: dancer.distance, lane: dancer.lane, heading: dancer.heading };
+  assert.ok(dancer.power.dance > 0);
+  assert.deepEqual(stationary, { distance: 100, lane: 0, heading: 0.3 });
+  assert.equal(dancer.speed, 0); assert.equal(dancer.lateral, 0); assert.equal(dancer.boost, 0);
+  // Repeated overlap cannot push a dancing kart aside.
+  for (let i = 0; i < 30; i++) {
+    rival.distance = dancer.distance; rival.lane = dancer.lane + 0.2;
+    stepRace(race, players, 1 / 60, false);
+    assert.deepEqual({ distance: dancer.distance, lane: dancer.lane, heading: dancer.heading }, stationary);
+  }
+  assert.equal(dancer.power.used, 1);
+  // Move the rival away so it cannot interfere with the resumed acceleration.
+  rival.distance = 300;
+  advance(race, players, 4, false);
+  assert.equal(dancer.power.dance, 0);
+  assert.ok(dancer.speed > 0);
+  assert.ok(dancer.distance > stationary.distance);
 });

@@ -51,6 +51,7 @@ test('valid input forwards to host only; stale and disconnected controls reset',
   const f = fixture();
   const player = f.join();
   const other = f.join();
+  f.service.receive(f.host, { type: 'lock', locked: true });
   const count = other.messages.length;
   f.service.receive(player, { type: 'input', input: { steer: 0.5, accelerate: true, brake: false } });
   assert.deepEqual(f.host.messages.at(-1).input, { steer: 0.5, accelerate: true, brake: false });
@@ -95,6 +96,7 @@ test('player can resume same slot with secret while locked; room code is not a c
 test('host disconnect clears input, resume retains room, and departure eventually closes it', () => {
   const f = fixture();
   const player = f.join();
+  f.service.receive(f.host, { type: 'lock', locked: true });
   f.service.receive(player, { type: 'input', input: { steer: 1, accelerate: true, brake: false } });
   f.service.disconnect(f.host);
   assert.equal(player.messages.at(-1).room.hostConnected, false);
@@ -161,6 +163,7 @@ test('item sequences survive heartbeats but cannot replay across resets, stale c
   const f = fixture();
   const player = f.join();
   const token = player.messages[0].token;
+  f.service.receive(f.host, { type: 'lock', locked: true });
   const input = action => ({ steer: 0, accelerate: false, brake: false, action });
   f.service.receive(player, { type: 'input', input: input(5) });
   assert.equal(f.host.messages.at(-1).input.action, 5);
@@ -195,4 +198,30 @@ test('invalid item sequences are rejected while legacy driving-only input stays 
   }
   f.service.receive(player, { type: 'input', input: { ...ZERO_INPUT } });
   assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT);
+});
+
+test('finish and rematch boundaries clear held input and reject lobby action replay', () => {
+  const f = fixture();
+  const player = f.join();
+  const held = action => ({ steer: 0.7, accelerate: true, brake: false, action });
+  const send = action => f.service.receive(player, { type: 'input', input: held(action) });
+  send(1);
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'lobby input is neutral');
+  f.service.receive(f.host, { type: 'lock', locked: true });
+  assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT);
+  send(2);
+  assert.deepEqual(f.host.messages.at(-1).input, held(2));
+  f.service.receive(f.host, { type: 'lock', locked: true });
+  assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, held(2), 'duplicate lock does not cancel live input');
+  f.service.receive(f.host, { type: 'lock', locked: false });
+  assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT, 'finish releases held controls');
+  send(3);
+  assert.deepEqual(f.host.messages.at(-1).input, ZERO_INPUT, 'results-screen packets cannot queue controls');
+  f.service.receive(f.host, { type: 'lock', locked: true });
+  assert.deepEqual(f.service.roomView(f.service.rooms.get(f.code)).players[0].input, ZERO_INPUT, 'rematch starts neutral');
+  send(3);
+  assert.equal(f.host.messages.at(-1).input.action, undefined, 'results-screen item is below the action floor');
+  send(4);
+  assert.deepEqual(f.host.messages.at(-1).input, held(4), 'a new race accepts fresh controls and item presses');
+  assert.equal(f.service.roomView(f.service.rooms.get(f.code)).players.length, 1, 'same controller slot survives');
 });
