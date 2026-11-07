@@ -115,3 +115,12 @@
   .control.brake, .control.go { height: 100%; min-height: 54px; }
   .itemControl { align-self: end; height: clamp(104px, 35dvh, 160px); }
 }
+
+/* The phone lobby puts the driver’s garage directly under a compact status. */
+.phoneShell .garagePhone { height: auto; }
+.garagePhone .phoneReady { flex: 0 0 auto; padding: 18px 4px 4px; }
+.garagePhone .phoneReady .eyebrow { margin-bottom: 8px; }
+.garagePhone .phoneReady h1 { font-size: clamp(28px, 7vw, 40px); }
+.garagePhone .phoneReady p { margin: 10px 0; font-size: 13px; }
+.garagePhone .appearancePicker { flex: 0 0 auto; margin-top: 16px; }
+.practiceSetup .primary { width: 100%; margin-top: 20px; }

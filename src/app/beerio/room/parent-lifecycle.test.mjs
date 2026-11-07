@@ -34,7 +34,7 @@ async function fixture(t, host = true) {
     setLocked: locked => { if (room.status === 'connected') messages.push({ type: 'lock', locked }); },
     publishState: payload => { if (room.status === 'connected') messages.push({ type: 'state', payload }); },
     leaveRoom: () => { room.code = null; room.role = null; messages.push({ type: 'leave' }); },
-    createRoom() {}, joinRoom() {}, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); },
+    createRoom() {}, joinRoom(options) { messages.push({ type: 'join', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); },
   });
   const react = {
     useState(initial) {
@@ -189,6 +189,8 @@ test('solo finish and rematch do not send multiplayer room commands', async t =>
   const f = await fixture(t, false);
   let tree = await f.render();
   f.button(tree, 'Try a solo practice lap →').onClick();
+  tree = await f.render();
+  f.button(tree, 'START SOLO PRACTICE ↗').onClick();
   let game = f.game(await f.render());
   const key = game.raceKey;
   game.onFinish(RESULTS.slice(0, 1));
@@ -337,5 +339,47 @@ test('phone controller remains hidden during recovery and returns after acknowle
   let tree = await f.render();
   assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
   f.room.recovering = false; tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 1);
+});
+
+
+test('garage is absent on host landing and host lobby, and solo setup opens separately', async t => {
+  const f = await fixture(t, false);
+  let tree = await f.render();
+  const garages = () => f.nodes(tree, node => node.type?.name === 'AppearancePicker');
+  assert.equal(garages().length, 0);
+  f.button(tree, 'HOST A RACE ↗').onClick(); tree = await f.render();
+  assert.equal(garages().length, 0);
+  f.room.code = 'ABC234'; f.room.role = 'host'; f.room.status = 'connected'; f.room.hostConnected = true;
+  tree = await f.render(); assert.equal(garages().length, 0);
+  f.button(tree, 'CLOSE ROOM').onClick(); tree = await f.render();
+  f.button(tree, 'Try a solo practice lap →').onClick(); tree = await f.render();
+  assert.equal(garages().length, 1);
+});
+
+test('each phone can choose before join, edit in lobby, and uses relay selection after reconnect', async t => {
+  const f = await fixture(t, false); let tree = await f.render();
+  f.button(tree, 'JOIN WITH A CODE').onClick(); tree = await f.render();
+  let picker = f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0];
+  assert.ok(picker, 'phone join form exposes garage');
+  const chosen = { character: 'robot', vehicle: 'motorcycle', color: '#123456' };
+  picker.props.onChange(chosen); tree = await f.render();
+  const inputs = f.nodes(tree, node => node.type === 'input');
+  inputs.find(node => node.props.placeholder === 'ABC123').props.onChange({ target: { value: 'ABC234' } });
+  inputs.find(node => node.props.placeholder === 'Your name').props.onChange({ target: { value: 'Sam' } });
+  tree = await f.render(); f.nodes(tree, node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  assert.deepEqual(f.messages.find(message => message.type === 'join').options.appearance, chosen);
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...chosen, connected: true, input: { ...ZERO } }] });
+  tree = await f.render(); picker = f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0];
+  assert.deepEqual(picker.props.value, chosen);
+  const edited = { character: 'frog', vehicle: 'buggy', color: '#abcdef' };
+  picker.props.onChange(edited);
+  assert.deepEqual(f.messages.find(message => message.type === 'appearance').appearance, edited);
+  Object.assign(f.room.players[0], edited); f.room.status = 'reconnecting';
+  tree = await f.render(); assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 0);
+  f.room.status = 'connected'; tree = await f.render();
+  assert.deepEqual(f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0].props.value, edited);
+  f.room.locked = true; tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 0);
   assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 1);
 });
