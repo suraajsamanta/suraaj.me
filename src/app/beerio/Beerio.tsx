@@ -25,7 +25,7 @@ function TrackPicker({ value, onChange, label = "CHOOSE YOUR TRACK" }: { value: 
   </div>;
 }
 
-function Controller({ send, useItem }: { send: (input: Input) => void; useItem: () => void }) {
+function Controller({ send, useItem: activateItem }: { send: (input: Input) => void; useItem: () => void }) {
   const keys = useRef({ ...releasedControls });
   const pointers = useRef(new Map<number, ControlKey>());
   const keyboard = useRef(new Set<ControlKey>());
@@ -70,7 +70,20 @@ function Controller({ send, useItem }: { send: (input: Input) => void; useItem: 
     <p className={styles.controlHint}>Hold GO + a direction. Grab a pickup, then tap USE ITEM.</p>
     <div className={styles.controls}>
       <div className={styles.steering}>{control("left", "Steer left", "◀")}{control("right", "Steer right", "▶")}</div>
-      <button type="button" className={styles.itemControl} onClick={useItem} onContextMenu={(event) => event.preventDefault()} aria-label="Use item"><span aria-hidden="true">✦</span><strong>USE ITEM</strong></button>
+      <button type="button" className={styles.itemControl}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          // Secondary touches may never produce a click while GO/steering are held.
+          event.preventDefault();
+          activateItem();
+        }}
+        // Keyboard and assistive activation have no pointerdown. Ignore the
+        // compatibility click after a pointer press so each press fires once.
+        onClick={(event) => {
+          const pointerType = (event.nativeEvent as PointerEvent).pointerType;
+          if (event.detail === 0 && !pointerType) activateItem();
+        }}
+        onContextMenu={(event) => event.preventDefault()} aria-label="Use item"><span aria-hidden="true">✦</span><strong>USE ITEM</strong></button>
       <div className={styles.pedals}>{control("brake", "Brake", "BRAKE", styles.brake)}{control("accelerate", "Accelerate", "GO", styles.go)}</div>
     </div>
   </div>;
