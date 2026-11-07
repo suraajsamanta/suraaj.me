@@ -28,3 +28,9 @@ Deploy the GitHub repository on Vercel, then add `suraaj.me` in the project doma
 - Styles and mobile layout: `src/app/globals.css`
 - Search and social metadata: `src/app/layout.tsx`
 - Favicon: `src/app/icon.svg`
+
+## Beerio
+
+`/beerio` is a split-screen kart racer. Solo practice runs in the browser; internet play also requires the separately hosted room relay described in [beerio-server/README.md](beerio-server/README.md). The laptop is authoritative and phones send controller inputs only. For local development, run the relay and Next app in separate terminals as documented there.
+
+Checks: `npm run test:game`, `npm run test:room`, and `npm --prefix beerio-server test`. A production build needs `NEXT_PUBLIC_BEERIO_RELAY_URL` set to the public secure WebSocket URL for multiplayer. Without it, solo practice works but room creation and joining will report that a relay is required.

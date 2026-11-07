@@ -1,0 +1,10 @@
+{
+  "name": "beerio-relay",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone, ephemeral room relay for Beerio. Run separately from Vercel.",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node server.mjs", "test": "node --test test/*.test.mjs" },
+  "dependencies": { "ws": "^8.18.3" }
+}
