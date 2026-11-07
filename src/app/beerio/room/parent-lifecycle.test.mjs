@@ -35,7 +35,7 @@ async function fixture(t, host = true) {
     setLocked: locked => { if (room.status === 'connected') { if (locked) room.error = null; messages.push({ type: 'lock', locked }); } },
     publishState: payload => { if (room.status === 'connected') messages.push({ type: 'state', payload }); },
     leaveRoom: () => { room.code = null; room.role = null; messages.push({ type: 'leave' }); },
-    onState(listener) { stateListener = listener; return () => { stateListener = () => {}; }; }, createRoom() {}, joinRoom(options) { messages.push({ type: 'join', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); }, setReady(ready) { messages.push({ type: 'ready', ready }); },
+    onState(listener) { stateListener = listener; return () => { stateListener = () => {}; }; }, createRoom(options) { messages.push({ type: 'create', options }); }, joinRoom(options) { messages.push({ type: 'join', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); }, setReady(ready) { messages.push({ type: 'ready', ready }); },
   });
   const react = {
     useState(initial) {
@@ -587,4 +587,31 @@ test('ten-entrant finish preserves complete score and item counts through host r
   const tree = await f.render();
   assert.equal(f.nodes(tree, node => node.type === 'StartingGrid')[0].props.players.length, 10);
   assert.equal(f.button(tree, 'START YOUR ENGINES ↗').disabled, true);
+});
+
+
+test('older room capacity is explained and an empty room can be replaced explicitly', async t => {
+  const f = await fixture(t);
+  let tree = await f.render();
+  assert.equal(f.button(tree, 'CREATE 10-PLAYER ROOM ↗'), undefined);
+  Object.assign(f.room, { maxPlayers: 6, players: [], relayUrl: 'wss://relay.example/' });
+  tree = await f.render();
+  const text = node => typeof node === 'string' || typeof node === 'number' ? String(node) : Array.isArray(node) ? node.map(text).join('') : text(node?.props?.children ?? '');
+  const warning = f.nodes(tree, node => node.props?.role === 'status' && text(node).includes('older room'))[0];
+  assert.match(text(warning), /only 6 players/);
+  assert.match(text(warning), /closes the current room/);
+  assert.match(text(warning), /rejoin with the new code/);
+  assert.ok(text(tree).includes('Up to 6 can play in this room.'));
+  assert.equal(f.messages.some(message => message.type === 'create' || message.type === 'leave'), false);
+  f.button(tree, 'CREATE 10-PLAYER ROOM ↗').onClick();
+  assert.deepEqual(f.messages.at(-1), { type: 'create', options: { maxPlayers: 10, relayUrl: 'wss://relay.example/' } });
+});
+
+test('occupied older room asks before replacement and does nothing on cancel', async t => {
+  const f = await fixture(t); Object.assign(f.room, { maxPlayers: 6, relayUrl: 'wss://relay.example/' });
+  f.setConfirm(false); f.button(await f.render(), 'CREATE 10-PLAYER ROOM ↗').onClick();
+  assert.equal(f.messages.some(message => message.type === 'create' || message.type === 'leave'), false);
+  f.setConfirm(true); f.button(await f.render(), 'CREATE 10-PLAYER ROOM ↗').onClick();
+  assert.deepEqual(f.messages.at(-1), { type: 'create', options: { maxPlayers: 10, relayUrl: 'wss://relay.example/' } });
+  f.room.status = 'reconnecting'; assert.equal(f.button(await f.render(), 'CREATE 10-PLAYER ROOM ↗').disabled, true);
 });

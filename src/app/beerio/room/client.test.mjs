@@ -415,3 +415,18 @@ test('join sends the full name, including supplementary Unicode characters', asy
   await flush();
   assert.equal(f.socket().sent[0].name, name);
 });
+
+test('replacing an older host room leaves it and requests a new ten-player room on the same relay', async t => {
+  const f = fixture(t);
+  f.client.createRoom({ maxPlayers: 6, relayUrl: 'ws://relay.example' }); await flush();
+  const oldSocket = f.socket(); welcome(oldSocket, 'host');
+  f.client.createRoom({ maxPlayers: 10, relayUrl: f.client.getSnapshot().relayUrl }); await flush();
+  assert.ok(oldSocket.sent.some(message => message.type === 'leave'));
+  assert.equal(oldSocket.readyState, 3);
+  const newSocket = f.socket(); assert.notEqual(newSocket, oldSocket);
+  assert.equal(newSocket.url, oldSocket.url);
+  assert.deepEqual(newSocket.sent[0], { type: 'create', maxPlayers: 10, recoveryVersion: 1 });
+  welcome(newSocket, 'host', { code: 'DEF345', maxPlayers: 10, players: [] });
+  assert.equal(f.client.getSnapshot().code, 'DEF345');
+  assert.equal(f.client.getSnapshot().maxPlayers, 10);
+});

@@ -35,6 +35,7 @@ test('empty slots and responsive, wrapping layout are represented', () => {
   const html = renderToStaticMarkup(React.createElement(grid.exports.default, { players: [], maxPlayers: 10 }));
   assert.equal((html.match(/OPEN SLOT/g) || []).length, 10);
   const css = readFileSync(new URL('../lobby/starting-grid.module.css', import.meta.url), 'utf8');
-  assert.match(css, /repeat\(5, minmax\(0, 1fr\)\)/); assert.match(css, /repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /repeat\(auto-fit, minmax\(min\(100%, 130px\), 1fr\)\)/);
+  assert.doesNotMatch(css, /@media/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
 });

@@ -145,3 +145,14 @@
   .itemControl { align-self: stretch; flex-direction: row; min-height: 44px; height: auto; padding: 5px 8px; }
   .steering > *, .pedals { height: clamp(100px, 35dvh, 160px); }
 }
+
+/* Restored older rooms retain their original capacity. */
+.capacityWarning { margin-top: 20px; padding: 18px 20px; border: 1px solid #ffce58; background: #3b3021; color: #fff1ca; line-height: 1.5; }
+.capacityWarning p { margin: 5px 0 12px; font-size: 14px; }
+.capacityWarning .secondary { min-height: 44px; }
+.capacityWarning .secondary:disabled { cursor: not-allowed; opacity: .45; }
+
+/* The roster adapts to the width of its panel rather than the window. */
+.lobbyGrid { grid-template-columns: minmax(250px, .8fr) minmax(0, 1fr); }
+.players { min-width: 0; }
+@media (max-width: 700px) { .lobbyGrid { grid-template-columns: 1fr; } }
