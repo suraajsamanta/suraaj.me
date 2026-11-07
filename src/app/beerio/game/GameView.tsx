@@ -14,6 +14,8 @@ export type GameViewProps = {
   raceKey?: string | number;
   /** Arrow keys or WASD drive the first kart, in addition to phone controls. */
   localKeyboard?: boolean;
+  /** Follow bends automatically. Can be changed during a race without resetting it. */
+  autoSteer?: boolean;
   onFinish?: (results: RaceResult[]) => void;
 };
 
@@ -42,11 +44,12 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to six chase cameras. */
-export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true, onFinish }: GameViewProps) {
+export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true, autoSteer = true, onFinish }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
   const keyboardRef = useRef(localKeyboard);
+  const autoSteerRef = useRef(autoSteer);
   const [hud, setHud] = useState<Hud>(EMPTY_HUD);
   const [error, setError] = useState('');
   const [restart, setRestart] = useState(0);
@@ -59,6 +62,7 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { finishRef.current = onFinish; }, [onFinish]);
   useEffect(() => { keyboardRef.current = localKeyboard; }, [localKeyboard]);
+  useEffect(() => { autoSteerRef.current = autoSteer; }, [autoSteer]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -75,6 +79,8 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
     const keyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (!keyboardRef.current || (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)))) return;
+      // Space must still activate focused race settings and sound controls.
+      if (event.code === 'Space' && target instanceof HTMLElement && target.closest('button, a[href], [role="button"]')) return;
       if (KEYS.has(event.code)) { event.preventDefault(); keys.add(event.code); }
     };
     const keyUp = (event: KeyboardEvent) => { keys.delete(event.code); };
@@ -102,7 +108,7 @@ export function GameView({ players, laps = 3, raceKey = 0, localKeyboard = true,
           } };
         });
         accumulator += elapsed;
-        while (accumulator >= 1 / 60) { stepRace(race, currentPlayers, 1 / 60); accumulator -= 1 / 60; }
+        while (accumulator >= 1 / 60) { stepRace(race, currentPlayers, 1 / 60, autoSteerRef.current); accumulator -= 1 / 60; }
         renderer.render(race, Math.max(elapsed, 1 / 60));
         if (now - lastHud > 80 || lastHud === 0 || (race.complete && !didFinish)) {
           setHud(snapshot(race, currentPlayers)); lastHud = now;

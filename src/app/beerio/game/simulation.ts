@@ -1,10 +1,12 @@
-import { BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, trackCurve, TRACK_LENGTH, wrap } from './track';
+import { BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, trackCurve, trackPose, TRACK_LENGTH, wrap } from './track';
 
 export type DriverInput = { steer: number; accelerate: boolean; brake: boolean };
 export type GamePlayer = { id: string; name: string; color: string; input: DriverInput };
 export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean };
 export type KartState = {
   id: string; distance: number; lane: number; speed: number; lateral: number;
+  /** World yaw relative to the local track tangent, also used by the renderer. */
+  heading: number;
   boost: number; bump: number; finishTime: number | null; padCooldown: number;
 };
 export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null };
@@ -18,7 +20,7 @@ export function createRace(players: GamePlayer[], laps = 3): RaceState {
     // Start behind the line, without awarding a lap on the initial crossing.
     karts: players.slice(0, 6).map((player, i) => ({
       id: player.id, distance: -6 - Math.floor(i / 2) * 4.5,
-      lane: i % 2 === 0 ? -2.1 : 2.1, speed: 0, lateral: 0,
+      lane: i % 2 === 0 ? -2.1 : 2.1, speed: 0, lateral: 0, heading: 0,
       boost: 0, bump: 0, finishTime: null, padCooldown: 0,
     })),
   };
@@ -40,7 +42,7 @@ export function raceResults(race: RaceState, players: GamePlayer[]): RaceResult[
   });
 }
 
-export function stepRace(race: RaceState, players: GamePlayer[], dt: number): void {
+export function stepRace(race: RaceState, players: GamePlayer[], dt: number, autoSteer = true): void {
   if (race.complete) return;
   if (race.countdown > 0) {
     race.countdown = Math.max(0, race.countdown - dt);
@@ -50,7 +52,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number): vo
   for (const kart of race.karts) {
     const input = players.find((player) => player.id === kart.id)?.input;
     const finished = kart.finishTime !== null;
-    const steer = finished ? clamp(-kart.lane * 0.2, -1, 1) : clamp(Number.isFinite(input?.steer) ? input!.steer : 0, -1, 1);
+    const steer = clamp(Number.isFinite(input?.steer) ? input!.steer : 0, -1, 1);
     const accelerating = !finished && input?.accelerate === true;
     const braking = !finished && input?.brake === true;
     const offRoad = Math.abs(kart.lane) > ROAD_HALF_WIDTH - 0.5;
@@ -62,17 +64,39 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number): vo
     const engine = finished ? 7 : accelerating ? boost ? 23 : 13 : -5;
     kart.speed = clamp(kart.speed + (braking ? -30 : engine) * dt, 0, MAX_SPEED + 17);
     if (kart.speed > maximum) kart.speed = Math.max(maximum, kart.speed - (offRoad ? 32 : 14) * dt);
-    // A little outward drift makes bends matter without requiring a racing wheel.
-    const drift = finished ? 0 : -trackCurve(kart.distance) * kart.speed * kart.speed * 0.045;
-    const targetLateral = steer * (2.4 + kart.speed * 0.19) + drift;
-    kart.lateral += (targetLateral - kart.lateral) * Math.min(1, dt * 7);
-    kart.lane += kart.lateral * dt * Math.min(1, kart.speed / 4);
+    const previousDistance = kart.distance;
+    let forwardFraction = 1;
+    if (autoSteer || finished) {
+      // The track's positive lane axis points LEFT in a chase camera. Controller
+      // input stays conventional (+1 right), so invert only at this boundary.
+      const laneSteer = finished ? clamp(-kart.lane * 0.2, -1, 1) : -steer;
+      // Assisted driving follows the track, with a little outward drift on bends.
+      const drift = finished ? 0 : -trackCurve(kart.distance) * kart.speed * kart.speed * 0.045;
+      const targetLateral = laneSteer * (2.4 + kart.speed * 0.19) + drift;
+      kart.lateral += (targetLateral - kart.lateral) * Math.min(1, dt * 7);
+      kart.lane += kart.lateral * dt * Math.min(1, kart.speed / 4);
+      kart.heading = Math.atan2(kart.lateral, Math.max(8, kart.speed)) * 0.65;
+    } else {
+      // Manual mode steers a heading rather than a lane. Releasing the controls
+      // keeps the kart pointed forward in the world instead of following bends.
+      // Limit the angle for arcade handling: no reversing or spinning in place.
+      const turnRate = (1.4 + kart.speed * 0.025) * Math.min(1, kart.speed / 6);
+      kart.heading = clamp(kart.heading - steer * turnRate * dt, -1.2, 1.2);
+      kart.lateral = Math.sin(kart.heading) * kart.speed;
+      kart.lane += kart.lateral * dt;
+      forwardFraction = Math.cos(kart.heading);
+    }
     if (Math.abs(kart.lane) > BARRIER_OFFSET - 1.15) {
       kart.lane = Math.sign(kart.lane) * (BARRIER_OFFSET - 1.15);
       kart.lateral *= -0.45;
+      kart.heading *= -0.45;
       if (kart.bump <= 0) { kart.speed *= 0.7; kart.bump = 0.35; }
     }
-    kart.distance += kart.speed * dt;
+    kart.distance += kart.speed * forwardFraction * dt;
+    if (!autoSteer && !finished) {
+      const turn = trackPose(kart.distance).yaw - trackPose(previousDistance).yaw;
+      kart.heading = clamp(kart.heading - Math.atan2(Math.sin(turn), Math.cos(turn)), -1.2, 1.2);
+    }
     if (!finished && kart.padCooldown <= 0) {
       BOOST_FRACTIONS.forEach((fraction, i) => {
         if (Math.abs(circularDistance(kart.distance, fraction * TRACK_LENGTH)) < 3 && Math.abs(kart.lane - BOOST_LANES[i]) < 1.8) {

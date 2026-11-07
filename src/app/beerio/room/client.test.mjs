@@ -54,11 +54,11 @@ function fixture(t) {
   return { client, saved, socket: () => FakeWebSocket.instances.at(-1) };
 }
 
-function welcome(socket, role = 'player') {
+function welcome(socket, role = 'player', roomOverrides = {}) {
   socket.receive({
     type: 'welcome', role, playerId: role === 'player' ? 'player1' : null, token: 'a'.repeat(48),
     room: { code: 'ABC234', maxPlayers: 6, locked: false, hostConnected: true,
-      players: [{ id: 'player1', name: 'Phone', color: '#4ce4f3', connected: true, input: { ...ZERO } }] },
+      players: [{ id: 'player1', name: 'Phone', color: '#4ce4f3', connected: true, input: { ...ZERO } }], ...roomOverrides },
   });
 }
 
@@ -169,6 +169,40 @@ test('room closed clears state and session; state callbacks unsubscribe cleanly'
   f.socket().receive({ type: 'room_closed', reason: 'The host ended the room.' });
   assert.equal(f.client.getSnapshot().status, 'closed');
   assert.equal(f.saved.size, 0);
+});
+
+test('durable room lock drives waiting, race, resume, and return to lobby without state listeners', async (t) => {
+  const f = fixture(t);
+  const canDrive = () => {
+    const room = f.client.getSnapshot();
+    return room.status === 'connected' && room.hostConnected && room.locked;
+  };
+  const roomUpdate = (patch) => {
+    const { code, players, maxPlayers, locked, hostConnected } = f.client.getSnapshot();
+    f.socket().receive({ type: 'room', room: { code, players, maxPlayers, locked, hostConnected, ...patch } });
+  };
+  f.client.joinRoom({ code: 'ABC234', name: 'Phone' });
+  await flush();
+  welcome(f.socket());
+  assert.equal(canDrive(), false, 'newly joined phones wait for the host');
+  roomUpdate({ locked: true });
+  assert.equal(canDrive(), true, 'starting the race enables controls without a state listener');
+  f.client.destroy();
+  f.client.restoreSession('ABC234');
+  await flush();
+  assert.equal(canDrive(), false, 'resuming phones are paused until welcome');
+  welcome(f.socket(), 'player', { locked: true });
+  assert.equal(canDrive(), true, 'locked welcome restores current race after reload');
+  roomUpdate({ locked: false });
+  assert.equal(canDrive(), false, 'host returning to lobby disables controls');
+  roomUpdate({ locked: true });
+  roomUpdate({ hostConnected: false });
+  assert.equal(canDrive(), false, 'host loss immediately pauses controls');
+  roomUpdate({ hostConnected: true, locked: false });
+  assert.equal(canDrive(), false, 'reloaded host opens lobby rather than stale racing controls');
+  f.socket().receive({ type: 'room_closed', reason: 'The host ended the room.' });
+  assert.equal(canDrive(), false, 'closed rooms cannot accept driving input');
+  assert.equal(f.client.getSnapshot().status, 'closed');
 });
 
 test('missing production relay and mixed-content URL fail explicitly rather than pretending online', (t) => {
