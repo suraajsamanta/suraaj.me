@@ -1,5 +1,7 @@
-.sound { position: absolute; z-index: 11; left: 50%; bottom: 15px; transform: translateX(-50%); display: flex; align-items: center; gap: 7px; min-height: 34px; padding: 7px 12px; border: 1px solid #ffffff35; border-radius: 22px; color: #fff9e9; background: #162032cf; box-shadow: 0 3px 16px #0002; font: 800 9px/1.2 Arial, sans-serif; letter-spacing: .08em; cursor: pointer; backdrop-filter: blur(8px); white-space: nowrap; }
+.controls { position: absolute; z-index: 11; left: 50%; bottom: 15px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; max-width: calc(100% - 20px); }
+.sound { display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 8px 12px; border: 1px solid #ffffff35; border-radius: 22px; color: #fff9e9; background: #162032e8; box-shadow: 0 3px 16px #0002; font: 800 9px/1.2 Arial, sans-serif; letter-spacing: .08em; cursor: pointer; backdrop-filter: blur(8px); white-space: nowrap; }
 .sound:hover { background: #26364beb; border-color: #ffe38c; }
 .sound[aria-pressed="true"] { color: #ccffe7; }
-.sound:focus-visible { outline: 3px solid #ffda73; outline-offset: 3px; }
-@media (max-width: 650px) { .sound { bottom: 9px; padding: 7px 9px; font-size: 8px; } }
+.sound:focus-visible, .retry:focus-visible { outline: 3px solid #ffda73; outline-offset: 3px; }
+.retry { min-height: 36px; border: 1px solid #ffffff35; border-radius: 18px; padding: 7px 10px; color: #ffe38c; background: #162032e8; font: 700 10px/1.2 Arial, sans-serif; cursor: pointer; white-space: nowrap; }
+@media (max-width: 650px) { .controls { bottom: 9px; } .sound { padding: 8px 9px; font-size: 8px; } }

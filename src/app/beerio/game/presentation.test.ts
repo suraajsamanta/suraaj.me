@@ -71,13 +71,14 @@ function fakeAudioContext() {
     createGain() { const gain = parameter(); gains.push(gain); return { ...node(), gain }; },
     createOscillator: source, createBufferSource: source,
     createBiquadFilter() { return { ...node(), frequency: parameter(), Q: parameter() }; },
-    createDynamicsCompressor() { return { ...node(), threshold: parameter(), ratio: parameter() }; },
+    createDynamicsCompressor() { return { ...node(), threshold: parameter(), knee: parameter(), ratio: parameter(), attack: parameter(), release: parameter() }; },
+    createWaveShaper() { return { ...node(), curve: null, oversample: 'none' }; },
     createBuffer(_channels: number, length: number) { return { getChannelData: () => new Float32Array(length) }; },
   };
   return { context: context as unknown as AudioContext, sources, gains };
 }
 test('audio mute, pause and disposal silence the mix and release every source', () => {
-  const { context, sources, gains } = fakeAudioContext(), audio = new RaceAudio(context);
+  const { context, sources, gains } = fakeAudioContext(), audio = new RaceAudio(context, { musicBuffer: { duration: 29 } as AudioBuffer });
   const race = createRace([player]);
   audio.update(race); assert.ok(sources.length > 3); assert.equal(gains[0].target, 0.62);
   audio.setMuted(true); assert.equal(gains[0].target, 0);
@@ -91,7 +92,7 @@ test('audio mute, pause and disposal silence the mix and release every source', 
   const disposedCount = sources.length; audio.update(race); assert.equal(sources.length, disposedCount);
 });
 test('restarting races reuses one audio graph rather than accumulating motors', () => {
-  const { context, sources } = fakeAudioContext(), audio = new RaceAudio(context);
+  const { context, sources } = fakeAudioContext(), audio = new RaceAudio(context, { musicBuffer: { duration: 29 } as AudioBuffer });
   const race = createRace([player]); race.countdown = 0; race.elapsed = 15; audio.update(race);
   const count = sources.length;
   audio.setMuted(true); audio.update(createRace([player]));
