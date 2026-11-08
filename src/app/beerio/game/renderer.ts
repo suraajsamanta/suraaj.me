@@ -1,3 +1,6 @@
+import { addSpaceScenery } from './spaceScenery';
+import { SPACE_THEME } from './spaceCourse';
+import { addSeattleScenery } from './seattleScenery';
 import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, shortcutPose, trackPose, wrap, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
 import { DANCE_SECONDS } from './powerups';
@@ -119,6 +122,14 @@ class Geometry {
     this.quad(p(a, 1, 1), p(a, -1, 1), p(b, -1, 1), p(b, 1, 1), color);
     this.quad(p(a, -1, 1), p(a, -1, -1), p(b, -1, -1), p(b, -1, 1), color);
   }
+  /** A rail follows both the curve and elevation of the road at its ends. */
+  railStrip(from: number, to: number, lane: number, width: number, bottom: number, top: number, color: Color) {
+    const p = (at: number, offset: number, height: number) => trackPose(at, lane + offset * width / 2, height).position;
+    const a = p(from,-1,bottom), b = p(from,1,bottom), c = p(to,1,bottom), d = p(to,-1,bottom);
+    const e = p(from,-1,top), f = p(from,1,top), h = p(to,1,top), i = p(to,-1,top);
+    this.quad(a,b,f,e,color); this.quad(b,c,h,f,color); this.quad(c,d,i,h,color);
+    this.quad(d,a,e,i,color); this.quad(e,f,h,i,color);
+  }
   roadStrip(from: number, to: number, left: number, right: number, color: Color, y = 0.04, glow = false) {
     this.quad(trackPose(from, left, y).position, trackPose(to, left, y).position, trackPose(to, right, y).position, trackPose(from, right, y).position, color, glow);
   }
@@ -157,13 +168,34 @@ export function barrierIntersectsShortcut(from: number, to: number, side: number
     return Math.hypot(beyondEnd, beyondSide) < BARRIER_OFFSET + 0.5;
   });
 }
+/** Keep a rail out of a different section of the same drivable road. */
+export function barrierIntersectsOtherRoad(from: number, to: number, side: number): boolean {
+  const mid = (from + to) / 2, pose = trackPose(mid, side * 10.6);
+  const halfLength = (to - from + .2) / 2;
+  return TRACK_POINTS.some(point => {
+    const delta = Math.abs(wrap(point.distance - mid));
+    if (Math.min(delta, TRACK_LENGTH - delta) < halfLength + 10) return false;
+    const dx = point.x - pose.position[0], dz = point.z - pose.position[2];
+    const along = dx * pose.forward[0] + dz * pose.forward[2];
+    const across = dx * pose.right[0] + dz * pose.right[2];
+    return Math.hypot(Math.max(0, Math.abs(along) - halfLength), Math.max(0, Math.abs(across) - .325)) < ROAD_HALF_WIDTH + 1;
+  });
+}
 function worldGeometry(): Geometry {
   const g = new Geometry();
-  g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
-  const dark: Color = [0.2, 0.25, 0.32], cream = CREAM, orange = CORAL;
+  if (ACTIVE_TRACK.id === 'seattle') {
+    // Short tiles give the interpolated fog meaningful local distances.
+    for (let x = -1200; x < 1200; x += 100) for (let z = -1200; z < 1200; z += 100)
+      g.quad([x,-.15,z], [x,-.15,z+100], [x+100,-.15,z+100], [x+100,-.15,z], [0.38,0.55,0.46]);
+  } else if (ACTIVE_TRACK.id !== 'space') g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
+  const space = ACTIVE_TRACK.id === 'space';
+  const dark: Color = space ? SPACE_THEME.road : [0.2, 0.25, 0.32], cream: Color = space ? SPACE_THEME.stripe : CREAM, orange: Color = space ? SPACE_THEME.curb : CORAL;
   for (let i = 0; i < TRACK_POINTS.length - 1; i++) {
     const a = TRACK_POINTS[i].distance, b = TRACK_POINTS[i + 1].distance;
-    g.roadStrip(a, b, -11.2, 11.2, [0.51, 0.68, 0.42], 0);
+    const shoulder: Color = space ? SPACE_THEME.shoulder : [0.51, 0.68, 0.42];
+    // Separate side bands avoid depth-fighting the sloped, curved road mesh.
+    g.roadStrip(a, b, -11.2, -ROAD_HALF_WIDTH, shoulder, 0);
+    g.roadStrip(a, b, ROAD_HALF_WIDTH, 11.2, shoulder, 0);
     g.roadStrip(a, b, -ROAD_HALF_WIDTH, ROAD_HALF_WIDTH, dark, 0.035);
     g.roadStrip(a, b, -6.9, -6.72, cream, 0.055); g.roadStrip(a, b, 6.72, 6.9, cream, 0.055);
     const curb = Math.floor(i / 3) % 2 === 0 ? cream : orange;
@@ -174,10 +206,9 @@ function worldGeometry(): Geometry {
       for (const side of [-1, 1]) {
         // Leave generous openings where the branch separates and rejoins.
         const mid = (a + next) / 2;
-        if ((side === ACTIVE_SHORTCUT.side && Math.min(Math.abs(mid - ACTIVE_SHORTCUT.start * TRACK_LENGTH), Math.abs(mid - ACTIVE_SHORTCUT.end * TRACK_LENGTH)) < 35) || barrierIntersectsShortcut(a, next, side)) continue;
-        const pose = trackPose(mid, side * 10.6, 0.55);
-        g.box(pose.position, [0.55, 1.05, next - a + 0.2], i % 12 === 0 ? orange : cream, pose.yaw);
-        g.box([pose.position[0], 1.12, pose.position[2]], [0.65, 0.15, next - a + 0.2], TEAL, pose.yaw);
+        if ((side === ACTIVE_SHORTCUT.side && Math.min(Math.abs(mid - ACTIVE_SHORTCUT.start * TRACK_LENGTH), Math.abs(mid - ACTIVE_SHORTCUT.end * TRACK_LENGTH)) < 35) || barrierIntersectsShortcut(a, next, side) || barrierIntersectsOtherRoad(a, next, side)) continue;
+        g.railStrip(a, next, side * 10.6, .55, .025, 1.075, i % 12 === 0 ? orange : cream);
+        g.railStrip(a, next, side * 10.6, .65, 1.045, 1.195, space ? SPACE_THEME.rail : TEAL);
       }
     }
   }
@@ -202,18 +233,18 @@ function worldGeometry(): Geometry {
   // Static course hazards use the simulation's exact lane and distance coordinates.
   for (const obstacle of ACTIVE_TRACK.obstacles) {
     const at = obstacle.fraction * TRACK_LENGTH, pose = trackPose(at, obstacle.lane);
-    const [x, , z] = pose.position;
+    const [x, y, z] = pose.position;
     if (obstacle.kind === 'barrel') {
-      g.disc([x + 0.2, 0.07, z + 0.25], 1, 0.85, [0.11, 0.16, 0.22]);
-      g.cylinder([x, 0.08, z], 0.72, 1.35, [0.92, 0.4, 0.17], 12, 0.72);
-      for (const height of [0.22, 1.05]) g.cylinder([x, height, z], 0.75, 0.18, [1, 0.91, 0.58], 12);
-      g.cylinder([x, 1.44, z], 0.69, 0.07, [0.55, 0.25, 0.12], 12);
-      g.cylinder([x, 1.52, z], 0.16, 0.08, [0.23, 0.22, 0.24], 8);
+      g.disc([x + 0.2, y + 0.07, z + 0.25], 1, 0.85, [0.11, 0.16, 0.22]);
+      g.cylinder([x, y + 0.08, z], 0.72, 1.35, [0.92, 0.4, 0.17], 12, 0.72);
+      for (const height of [0.22, 1.05]) g.cylinder([x, y + height, z], 0.75, 0.18, [1, 0.91, 0.58], 12);
+      g.cylinder([x, y + 1.44, z], 0.69, 0.07, [0.55, 0.25, 0.12], 12);
+      g.cylinder([x, y + 1.52, z], 0.16, 0.08, [0.23, 0.22, 0.24], 8);
     } else {
-      g.disc([x, 0.075, z], 2.05, 2.25, [0.075, 0.07, 0.14]);
-      g.disc([x - 0.4, 0.078, z], 1.25, 1.6, [0.2, 0.14, 0.31]);
-      g.disc([x + 0.4, 0.08, z + 0.2], 1, 1.25, [0.1, 0.29, 0.35]);
-      g.disc([x + 0.75, 0.083, z + 0.1], 0.5, 0.6, [0.24, 0.4, 0.44]);
+      g.disc([x, y + 0.075, z], 2.05, 2.25, [0.075, 0.07, 0.14]);
+      g.disc([x - 0.4, y + 0.078, z], 1.25, 1.6, [0.2, 0.14, 0.31]);
+      g.disc([x + 0.4, y + 0.08, z + 0.2], 1, 1.25, [0.1, 0.29, 0.35]);
+      g.disc([x + 0.75, y + 0.083, z + 0.1], 0.5, 0.6, [0.24, 0.4, 0.44]);
     }
   }
   BOOST_FRACTIONS.forEach((fraction, i) => {
@@ -234,6 +265,10 @@ function worldGeometry(): Geometry {
   for (const side of [-1, 1]) g.box(trackPose(1.3, side * 9, 4.4).position, [0.9, 8.8, 1], orange, gate.yaw);
   g.box(trackPose(1.3, 0, 8.4).position, [19, 1.4, 1], [0.2, 0.2, 0.32], gate.yaw);
   for (let i = -4; i <= 4; i++) g.box(trackPose(1.3, i * 1.9, 8.4).position, [0.9, 0.7, 1.03], i % 2 ? cream : orange, gate.yaw);
+
+  // Course-specific scenery is batched once into the shared world mesh.
+  if (ACTIVE_TRACK.id === 'seattle') { addSeattleScenery(g); return g; }
+  if (space) { addSpaceScenery(g); return g; }
 
   // Keep decorative scenery out of the drivable branch corridor.
   const nearShortcut = (point: Vec3, margin = 12) => SHORTCUT_POINTS.some(p => Math.hypot(p.x - point[0], p.z - point[2]) < margin);
@@ -646,9 +681,10 @@ export class RaceRenderer {
       varying vec3 v_color; varying float v_distance; varying float v_height;
       void main() { vec4 world = u_model * vec4(a_position, 1.0); gl_Position = u_view * world; v_color = a_color; v_distance = distance(world.xyz, u_eye); v_height = world.y; }
     `);
+    const isSpace = ACTIVE_TRACK.id === 'space', isSeattle = ACTIVE_TRACK.id === 'seattle';
     const fragment = this.shader(gl.FRAGMENT_SHADER, `
       precision mediump float; uniform float u_opacity; varying vec3 v_color; varying float v_distance; varying float v_height;
-      void main() { float fog = smoothstep(145.0, 610.0, v_distance); vec3 haze = mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0)); gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
+      void main() { float fog = ${isSpace ? '0.0' : 'smoothstep(145.0, 610.0, v_distance)'}; vec3 haze = ${isSeattle ? 'vec3(0.61, 0.73, 0.75)' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0))'}; gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
     `);
     const program = gl.createProgram();
     if (!program) throw new Error('Could not initialize the 3D race renderer.');
@@ -668,10 +704,9 @@ export class RaceRenderer {
       void main() {
         vec3 ray = normalize(u_forward + u_right * v_uv.x * u_lens.x + u_up * v_uv.y * u_lens.y);
         float horizon = clamp(ray.y * 1.8, 0.0, 1.0);
-        vec3 sky = mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6));
+        vec3 sky = ${isSpace ? 'vec3(0.018, 0.024, 0.065)' : isSeattle ? 'mix(vec3(0.61, 0.73, 0.75), vec3(0.32, 0.56, 0.68), pow(horizon, 0.6))' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6))'};
         float sun = dot(ray, normalize(vec3(-0.6, 0.32, 0.65)));
-        sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0);
-        sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));
+        ${isSpace || isSeattle ? '' : 'sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0); sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));'}
         gl_FragColor = vec4(sky, 1.0);
       }`);
     const skyProgram = gl.createProgram(), skyBuffer = gl.createBuffer();
@@ -787,7 +822,7 @@ export class RaceRenderer {
         const pose = racePose(other.distance, other.lane, 0.04, other.onShortcut);
         const yaw = pose.yaw + other.heading;
         const transform = model(pose.position, yaw);
-        this.draw(this.shadow, model([pose.position[0], 0.095, pose.position[2]], yaw));
+        this.draw(this.shadow, model([pose.position[0], pose.position[1] + 0.055, pose.position[2]], yaw));
         const dancing = other.power.dance > 0;
         this.draw(dancing ? this.emptyKarts[j] : this.karts[j], transform);
         if (dancing) {
@@ -800,7 +835,7 @@ export class RaceRenderer {
           this.draw(this.dancers[j][frame], model(dancerPosition, yaw + Math.sin(age * 3) * 0.25));
           for (let particle = 0; particle < 6; particle++) {
             const angle = particle * Math.PI / 3 + age * 4;
-            this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
+            this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, dancerPosition[1] + 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
           }
         }
         if (other.power.prism > 0) this.draw(this.prism, model(pose.position, race.elapsed * 2));
@@ -823,7 +858,7 @@ export class RaceRenderer {
         if (other.bump > 0 || other.power.flash > 0) {
           for (let particle = 0; particle < 5; particle++) {
             const angle = particle * 2.4 + race.elapsed * 5, radius = 1.2 + Math.max(0, 0.7 - Math.max(other.bump, other.power.flash)) * 2;
-            this.draw(this.spark, model([pose.position[0] + Math.cos(angle) * radius, 0.55 + Math.abs(Math.sin(angle)) * 0.7, pose.position[2] + Math.sin(angle) * radius], angle, 0.65));
+            this.draw(this.spark, model([pose.position[0] + Math.cos(angle) * radius, pose.position[1] + 0.55 + Math.abs(Math.sin(angle)) * 0.7, pose.position[2] + Math.sin(angle) * radius], angle, 0.65));
           }
         }
       }

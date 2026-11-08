@@ -228,6 +228,9 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       if (a.onShortcut || b.onShortcut) {
         const ap = (a.onShortcut ? shortcutPose : trackPose)(a.distance, a.lane);
         const bp = (b.onShortcut ? shortcutPose : trackPose)(b.distance, b.lane);
+        // A bridge may pass directly above a branch: contact requires physical
+        // vertical proximity as well as horizontal proximity.
+        if (Math.abs(ap.position[1] - bp.position[1]) >= 2.7) continue;
         const dx = ap.position[0] - bp.position[0], dz = ap.position[2] - bp.position[2];
         // A shared frame makes the contact test independent of roster order.
         // Opposite tangents use a stable tie-breaker rather than an unstable sum.

@@ -1,13 +1,15 @@
+import { SPACE_COURSE } from './spaceCourse';
+
 /** Original closed circuit. Distances are world metres, not screen coordinates. */
 export type Vec3 = [number, number, number];
-export type TrackPoint = { x: number; z: number; distance: number };
+export type TrackPoint = { x: number; y: number; z: number; distance: number };
 export type TrackPose = { position: Vec3; forward: Vec3; right: Vec3; yaw: number };
 
-export type TrackId = 'sunset' | 'canyon' | 'brewery';
+export type TrackId = 'sunset' | 'canyon' | 'brewery' | 'seattle' | 'space';
 export type TrackObstacle = { fraction: number; lane: number; kind: 'barrel' | 'oil' };
 export type TrackDefinition = {
   id: TrackId; name: string; description: string;
-  controlPoints: [number, number][]; obstacles: TrackObstacle[];
+  controlPoints: [number, number][]; elevations?: number[]; obstacles: TrackObstacle[];
   shortcut: { start: number; end: number; side: -1 | 1 };
 };
 
@@ -42,6 +44,24 @@ export const TRACKS: TrackDefinition[] = [
       { fraction: 0.73, lane: -2.8, kind: 'oil' }, { fraction: 0.91, lane: 0, kind: 'barrel' },
     ],
   },
+  {
+    id: 'seattle', name: 'Seattle Skyline', description: 'Climb Rainier, circle the Needle and race through the glass Spheres.',
+    // The bypass cuts across a city bend, never across the mountain or a lap gate.
+    shortcut: { start: 0.58, end: 0.70, side: 1 },
+    controlPoints: [
+      [-165, -100], [-105, -100], [-30, -100], [45, -90], [110, -75],
+      [155, -40], [170, 5], [145, 35], [110, 32], [85, 8], [65, 0],
+      [30, 10], [-30, 10], [-65, 20], [-65, 75], [-90, 100],
+      [-125, 95], [-145, 70], [-155, 35], [-153, 5], [-160, -25], [-180, -65],
+    ],
+    // A continuous physical climb and descent, measured in the same world units as the road.
+    elevations: [0, 0, 0, 0, 6, 16, 28, 28, 21, 14, 7, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    obstacles: [
+      { fraction: 0.12, lane: -3.4, kind: 'barrel' }, { fraction: 0.29, lane: 2.8, kind: 'oil' },
+      { fraction: 0.47, lane: 3.2, kind: 'barrel' }, { fraction: 0.78, lane: -2.8, kind: 'oil' },
+    ],
+  },
+  SPACE_COURSE,
 ];
 export const ROAD_HALF_WIDTH = 7;
 export const BARRIER_OFFSET = 10.2;
@@ -73,11 +93,14 @@ export let SHORTCUT_LENGTH = 0;
 export function sampleTrack(track: TrackDefinition): TrackPoint[] {
   const sampled: TrackPoint[] = [];
   let distance = 0;
+  const elevationPoints: [number, number][] | undefined = track.elevations?.map(value => [value, 0]);
   for (let i = 0; i <= SAMPLES; i++) {
-    const [x, z] = curve((i % SAMPLES) / SAMPLES, track.controlPoints);
+    const t = (i % SAMPLES) / SAMPLES;
+    const [x, z] = curve(t, track.controlPoints);
+    const y = elevationPoints ? Math.max(0, curve(t, elevationPoints)[0]) : 0;
     const previous = sampled[i - 1];
-    if (previous) distance += Math.hypot(x - previous.x, z - previous.z);
-    sampled.push({ x, z, distance });
+    if (previous) distance += Math.hypot(x - previous.x, y - previous.y, z - previous.z);
+    sampled.push({ x, y, z, distance });
   }
   return sampled;
 }
@@ -109,10 +132,11 @@ function poseOnTrack(points: TrackPoint[], length: number, at: number, lane = 0,
   const a = points[low], b = points[low + 1];
   const segmentLength = b.distance - a.distance;
   const f = segmentLength > 0 ? (d - a.distance) / segmentLength : 0;
-  const dx = (b.x - a.x) / segmentLength, dz = (b.z - a.z) / segmentLength;
+  const dx = (b.x - a.x) / segmentLength, dy = (b.y - a.y) / segmentLength, dz = (b.z - a.z) / segmentLength;
+  const horizontal = Math.hypot(dx, dz) || 1, rx = dz / horizontal, rz = -dx / horizontal;
   return {
-    position: [a.x + (b.x - a.x) * f + dz * lane, height, a.z + (b.z - a.z) * f - dx * lane],
-    forward: [dx, 0, dz], right: [dz, 0, -dx], yaw: Math.atan2(dx, dz),
+    position: [a.x + (b.x - a.x) * f + rx * lane, a.y + (b.y - a.y) * f + height, a.z + (b.z - a.z) * f + rz * lane],
+    forward: [dx, dy, dz], right: [rx, 0, rz], yaw: Math.atan2(dx, dz),
   };
 }
 
@@ -139,17 +163,18 @@ export function sampleShortcut(track: TrackDefinition): TrackPoint[] {
   const a = poseOnTrack(points, length, start * length), b = poseOnTrack(points, length, end * length);
   const chord = Math.hypot(b.position[0] - a.position[0], b.position[2] - a.position[2]);
   const handle = Math.min(chord * 0.24, 22);
-  const p0 = a.position, p1 = [p0[0] + a.forward[0] * handle, 0, p0[2] + a.forward[2] * handle];
-  const p3 = b.position, p2 = [p3[0] - b.forward[0] * handle, 0, p3[2] - b.forward[2] * handle];
+  const p0 = a.position, p1 = [p0[0] + a.forward[0] * handle, p0[1] + a.forward[1] * handle, p0[2] + a.forward[2] * handle];
+  const p3 = b.position, p2 = [p3[0] - b.forward[0] * handle, p3[1] - b.forward[1] * handle, p3[2] - b.forward[2] * handle];
   const result: TrackPoint[] = [];
   let distance = 0;
   for (let i = 0; i <= 128; i++) {
     const t = i / 128, u = 1 - t;
     const x = u ** 3 * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t ** 3 * p3[0];
+    const y = u ** 3 * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t ** 3 * p3[1];
     const z = u ** 3 * p0[2] + 3 * u * u * t * p1[2] + 3 * u * t * t * p2[2] + t ** 3 * p3[2];
     const previous = result[i - 1];
-    if (previous) distance += Math.hypot(x - previous.x, z - previous.z);
-    result.push({ x, z, distance });
+    if (previous) distance += Math.hypot(x - previous.x, y - previous.y, z - previous.z);
+    result.push({ x, y, z, distance });
   }
   return result;
 }
@@ -169,9 +194,10 @@ export function shortcutPose(at: number, lane = 0, height = 0): TrackPose {
   const a = SHORTCUT_POINTS[low], b = SHORTCUT_POINTS[low + 1];
   const length = b.distance - a.distance;
   const f = length ? (d - a.distance) / length : 0;
-  const dx = (b.x - a.x) / length, dz = (b.z - a.z) / length;
-  return { position: [a.x + (b.x - a.x) * f + dz * lane, height, a.z + (b.z - a.z) * f - dx * lane],
-    forward: [dx, 0, dz], right: [dz, 0, -dx], yaw: Math.atan2(dx, dz) };
+  const dx = (b.x - a.x) / length, dy = (b.y - a.y) / length, dz = (b.z - a.z) / length;
+  const horizontal = Math.hypot(dx, dz) || 1, rx = dz / horizontal, rz = -dx / horizontal;
+  return { position: [a.x + (b.x - a.x) * f + rx * lane, a.y + (b.y - a.y) * f + height, a.z + (b.z - a.z) * f + rz * lane],
+    forward: [dx, dy, dz], right: [rx, 0, rz], yaw: Math.atan2(dx, dz) };
 }
 
 selectTrack('sunset');
