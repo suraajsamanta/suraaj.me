@@ -30,10 +30,10 @@ export function createRace(players: GamePlayer[], laps = 3): RaceState {
 
 export function rankKarts(race: RaceState): KartState[] {
   return [...race.karts].sort((a, b) => {
-    if (a.finishTime !== null && b.finishTime !== null) return a.finishTime - b.finishTime;
+    if (a.finishTime !== null && b.finishTime !== null) return a.finishTime - b.finishTime || a.id.localeCompare(b.id);
     if (a.finishTime !== null) return -1;
     if (b.finishTime !== null) return 1;
-    return b.distance - a.distance;
+    return b.distance - a.distance || a.id.localeCompare(b.id);
   });
 }
 

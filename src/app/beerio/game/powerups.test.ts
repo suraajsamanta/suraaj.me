@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, DANCE_SECONDS, FLASK_SECONDS, FLASK_PULSE_SECONDS, PRISM_SECONDS, SPLATTER_SECONDS, JET_SECONDS, CROWN_WARNING_SECONDS, powerDrivingState, POWER_UPS, stepPowers, type PowerUp } from './powerups';
+import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, DANCE_SECONDS, LIGHTNING_SECONDS, racerAhead, racerBehind, FLASK_SECONDS, FLASK_PULSE_SECONDS, PRISM_SECONDS, SPLATTER_SECONDS, JET_SECONDS, CROWN_WARNING_SECONDS, powerDrivingState, POWER_UPS, stepPowers, type PowerUp } from './powerups';
 import { createRace, stepRace, type GamePlayer } from './simulation';
 import { ACTIVE_SHORTCUT, selectTrack, SHORTCUT_LENGTH, TRACKS, TRACK_LENGTH, wrap } from './track';
 import { mergeControllerAction } from './actionMerge';
@@ -14,8 +14,8 @@ function ready(ids = ['a', 'b']) {
   return { race, players };
 }
 
-test('all ten original items have clear controls and active-track item boxes', () => {
-  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'jet', 'crown']);
+test('all twelve original items have clear controls and active-track item boxes', () => {
+  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'twerk']);
   const world = createPowerWorld();
   assert.equal(world.boxes.length, 12);
   assert.ok(world.boxes.every(box => box.distance > 0 && box.distance < TRACK_LENGTH));
@@ -209,35 +209,35 @@ test('controller action stays at its high-water mark after neutral or stale pack
 });
 
 
-test('dance activates only from a fresh use, counts once, and expires without replaying', () => {
-  const { race, players } = ready(['a']);
-  const kart = race.karts[0];
-  kart.power.item = 'dance';
+test('dance targets the racer ahead once, stops their driving, and expires without replaying', () => {
+  const { race, players } = ready(['owner', 'rival']);
+  const [owner, rival] = race.karts;
+  owner.power.item = 'dance';
   players[0].input.accelerate = true;
   stepPowers(race, players, 1 / 60);
-  assert.equal(kart.power.dance, 0);
-  players[0].input.action = 1;
-  stepPowers(race, players, 1 / 60);
-  assert.equal(kart.power.used, 1);
-  assert.equal(kart.power.item, null);
-  assert.equal(kart.power.dance, DANCE_SECONDS);
-  assert.equal(kart.speed, 0);
-  assert.equal(kart.boost, 0);
-  kart.power.item = 'fizz';
-  players[0].input.action = 2;
-  stepPowers(race, players, 1 / 60);
-  assert.equal(kart.power.item, 'fizz', 'presses during dance cannot fire');
-  for (let i = 0; i < 40; i++) stepPowers(race, players, 0.1);
-  assert.equal(kart.power.dance, 0);
-  assert.equal(kart.power.used, 1);
-  assert.equal(kart.power.item, 'fizz', 'old press does not auto-fire after dance');
-  players[0].input.action = 3;
-  stepPowers(race, players, 1 / 60);
-  assert.equal(kart.power.used, 2);
+  assert.equal(rival.power.dance, 0);
+  press(race, players, 0);
+  assert.equal(owner.power.used, 1);
+  assert.equal(owner.power.item, null);
+  assert.equal(owner.power.dance, 0);
+  assert.equal(owner.speed, 30);
+  assert.equal(rival.power.dance, DANCE_SECONDS);
+  assert.equal(rival.speed, 0);
+  assert.equal(rival.boost, 0);
+  assert.equal(rival.power.danceStyle, 'dance');
+  rival.power.item = 'fizz';
+  press(race, players, 1);
+  assert.equal(rival.power.item, 'fizz', 'presses during dance cannot fire');
+  tickPowers(race, players, DANCE_SECONDS + 0.1);
+  assert.equal(rival.power.dance, 0);
+  assert.equal(owner.power.used, 1);
+  assert.equal(rival.power.item, 'fizz', 'old press does not auto-fire after dance');
+  press(race, players, 1);
+  assert.equal(rival.power.used, 1);
 });
 
-test('dance can be collected from deterministic item boxes and cannot start disconnected or after finishing', () => {
-  const { race, players } = ready(['a']);
+test('dance can be collected from deterministic multiplayer boxes and cannot start disconnected or after finishing', () => {
+  const { race, players } = ready(['a', 'b']);
   const kart = race.karts[0];
   const seen = new Set<PowerUp>();
   for (let i = 0; i < 30; i++) {
@@ -491,7 +491,7 @@ test('deterministic pickup pools expose every original item and reserve Jet Keg 
       }
     };
     collectFor(leader, frontSeen, true); collectFor(rear, rearSeen, false);
-    assert.ok(!frontSeen.has('jet') && !frontSeen.has('crown'));
+    assert.ok(!frontSeen.has('jet') && !frontSeen.has('crown') && !frontSeen.has('lightning'));
     assert.deepEqual([...rearSeen].sort(), Object.keys(POWER_UPS).sort(), `${count}-racer rear pool includes all items`);
   }
 });
@@ -530,7 +530,7 @@ test('disconnected coasting racers cannot consume pickups or skew the active cat
     collectPowerups(race, new Map(), new Set([active.id]));
     if (active.power.item) seen.add(active.power.item);
   }
-  assert.ok(!seen.has('jet') && !seen.has('crown'), 'a disconnected leader cannot make solo active racer eligible for catch-up attacks');
+  assert.ok(!seen.has('jet') && !seen.has('crown') && !seen.has('lightning'), 'a disconnected leader cannot make solo active racer eligible for catch-up attacks');
 });
 
 test('Jet Keg can earn first naturally, but never guarantees places or teleports a distant racer', () => {
@@ -717,7 +717,7 @@ test('ten-racer mixed-route attacks remain deterministic without cross-road dupl
       kart.distance = TRACK_LENGTH * (i % 3) + midpoint + i * 0.2;
       kart.onShortcut = i % 2 === 0;
       kart.lane = 0;
-      kart.power.item = (['bolt', 'slick', 'crown', 'prism', 'splat', 'guard', 'flask', 'bolt', 'slick', 'dance'] as PowerUp[])[i];
+      kart.power.item = (['bolt', 'slick', 'crown', 'prism', 'splat', 'guard', 'flask', 'bolt', 'slick', 'twerk'] as PowerUp[])[i];
       players[i].input.action = 1;
     });
   }
@@ -816,4 +816,258 @@ test('branch item spawns and merges remain bounded at entrance and exit seams on
       }
     }
   } finally { selectTrack('sunset'); }
+});
+
+test('adjacent-target selectors agree on absolute laps, shortcut progress, stable ties, and eligibility', () => {
+  const { race, players } = ready(['owner', 'near-wrap', 'ahead', 'behind', 'finished', 'offline']);
+  const [owner, wrapped, ahead, behind, finished, offline] = race.karts;
+  owner.distance = TRACK_LENGTH + 100;
+  wrapped.distance = 101; // Visually near the owner, but one lap behind.
+  ahead.distance = owner.distance + 30; ahead.onShortcut = true;
+  behind.distance = owner.distance - 30;
+  finished.finishTime = 10; finished.distance = owner.distance + 2;
+  offline.distance = owner.distance + 1; players[5].connected = false;
+  const active = new Set(players.filter(player => player.connected !== false).map(player => player.id));
+  assert.equal(racerAhead(owner, race.karts, active)?.id, ahead.id);
+  assert.equal(racerBehind(owner, race.karts, active)?.id, behind.id);
+  assert.equal(racerAhead(ahead, race.karts, active), undefined);
+  assert.equal(racerBehind(wrapped, race.karts, active), undefined);
+  assert.equal(racerAhead(offline, race.karts, active), undefined);
+  const ties = ['z', 'a', 'm'].map(id => ({ id, distance: 42, finishTime: null }));
+  assert.equal(racerAhead(ties[2], ties)?.id, 'a');
+  assert.equal(racerBehind(ties[2], [...ties].reverse())?.id, 'z');
+  assert.equal(racerAhead({ id: 'missing', distance: 40, finishTime: null }, ties), undefined);
+});
+
+test('Dance Break and Twerk Trap target only the immediately adjacent eligible racer on every course', () => {
+  try {
+    for (const track of TRACKS) {
+      selectTrack(track.id);
+      for (const item of ['dance', 'twerk'] as const) {
+        const { race, players } = ready(['owner', 'near', 'far', 'offline', 'finished']);
+        const [owner, near, far, offline, finished] = race.karts;
+        const direction = item === 'dance' ? 1 : -1;
+        owner.distance = TRACK_LENGTH + TRACK_LENGTH * (ACTIVE_SHORTCUT.start + ACTIVE_SHORTCUT.end) / 2;
+        near.distance = owner.distance + direction * 12; near.onShortcut = true;
+        far.distance = owner.distance + direction * 24;
+        offline.distance = owner.distance + direction; players[3].connected = false;
+        finished.distance = owner.distance + direction * 2; finished.finishTime = 10;
+        press(race, players, 0, item);
+        assert.equal(near.power.dance, DANCE_SECONDS, `${track.id}: ${item} reaches the adjacent rival on the branch`);
+        assert.equal(near.power.danceStyle, item);
+        assert.equal(owner.power.dance, 0);
+        assert.equal(far.power.dance, 0);
+        assert.equal(offline.power.dance, 0);
+        assert.equal(finished.power.dance, 0);
+        assert.equal(owner.power.used, 1);
+      }
+    }
+  } finally { selectTrack('sunset'); }
+});
+
+test('no-target dance, twerk, and lightning retain inventory without arming an automatic future use', () => {
+  for (const item of ['dance', 'twerk', 'lightning'] as const) {
+    const { race, players } = ready(['owner', 'offline']);
+    const [owner, rival] = race.karts;
+    players[1].connected = false;
+    press(race, players, 0, item);
+    assert.equal(owner.power.used, 0);
+    assert.equal(owner.power.item, item);
+    assert.match(owner.power.hitLabel, /^No /);
+    players[1].connected = true;
+    rival.distance = owner.distance + (item === 'twerk' ? -20 : 20);
+    stepPowers(race, players, 1 / 60);
+    assert.equal(owner.power.used, 0, 'reconnect cannot replay the blocked press');
+    press(race, players, 0);
+    assert.equal(owner.power.used, 1);
+    assert.equal(owner.power.item, null);
+  }
+});
+
+test('both targeted dances respect shields, transformations and recovery without retargeting or stun chaining', () => {
+  for (const item of ['dance', 'twerk'] as const) {
+    for (const protection of ['shield', 'prism', 'jet', 'hitCooldown'] as const) {
+      const { race, players } = ready(['owner', 'near', 'far', 'leader']);
+      const [owner, near, far, leader] = race.karts;
+      const direction = item === 'dance' ? 1 : -1;
+      owner.distance = 400; near.distance = 400 + direction * 20; far.distance = 400 + direction * 40; leader.distance = 700;
+      near.power[protection] = 5;
+      press(race, players, 0, item);
+      assert.equal(near.power.dance, 0, `${item}: ${protection} protects the immediate target`);
+      assert.equal(far.power.dance, 0, 'protection does not redirect an attack to the next rival');
+      assert.equal(near.speed, 30);
+      assert.equal(owner.power.used, 1, 'a defended attack still consumes its item');
+      if (protection === 'shield') assert.equal(near.power.shield, 0);
+    }
+  }
+  const { race, players } = ready(['owner', 'target']);
+  press(race, players, 0, 'dance');
+  tickPowers(race, players, 1);
+  const remaining = race.karts[1].power.dance;
+  press(race, players, 0, 'dance');
+  assert.ok(race.karts[1].power.dance < remaining, 'a second item cannot extend the same dance');
+  tickPowers(race, players, 2.6);
+  assert.equal(race.karts[1].power.dance, 0);
+  assert.ok(race.karts[1].power.hitCooldown > 0, 'the target gets time to start driving again');
+  press(race, players, 0, 'dance');
+  assert.equal(race.karts[1].power.dance, 0);
+});
+
+test('Storm Spark reaches all nine eligible rivals across laps and routes without self damage or control changes', () => {
+  const { race, players } = ready(Array.from({ length: 10 }, (_, index) => `racer-${index}`));
+  race.karts.forEach((kart, index) => { kart.distance += TRACK_LENGTH * (index % 3); kart.onShortcut = index % 2 === 0; kart.boost = 2; });
+  const inputs = JSON.stringify(players.slice(1));
+  const positions = race.karts.map(kart => kart.distance);
+  press(race, players, 0, 'lightning');
+  const [owner, ...targets] = race.karts;
+  assert.equal(owner.power.lightning, 0);
+  assert.equal(owner.speed, 30);
+  assert.equal(owner.boost, 2);
+  assert.equal(owner.power.lightningStrikes, 1);
+  assert.equal(owner.power.used, 1);
+  for (const target of targets) {
+    assert.equal(target.power.lightning, LIGHTNING_SECONDS);
+    assert.equal(target.power.slow, LIGHTNING_SECONDS);
+    assert.equal(target.speed, 15);
+    assert.equal(target.boost, 0);
+  }
+  assert.deepEqual(race.karts.map(kart => kart.distance), positions, 'global attacks never alter race position');
+  assert.equal(JSON.stringify(players.slice(1)), inputs, 'a lightning strike never changes phone inputs');
+  tickPowers(race, players, LIGHTNING_SECONDS + 0.1);
+  assert.ok(targets.every(target => target.power.lightning === 0 && target.power.slow === 0));
+  assert.equal(owner.power.lightningStrikes, 1, 'heartbeats cannot strike repeatedly');
+});
+
+test('Storm Spark excludes finished and offline racers and obeys every defense and hit-recovery window', () => {
+  const { race, players } = ready(['owner', 'plain', 'guarded', 'prism', 'jet', 'recovering', 'finished', 'offline', 'missing', 'leader']);
+  const [owner, plain, guarded, prism, jet, recovering, finished, offline, missing] = race.karts;
+  guarded.power.shield = 5; prism.power.prism = 5; jet.power.jet = 5;
+  recovering.power.hitCooldown = 1; finished.finishTime = 10; players[7].connected = false; players.splice(8, 1);
+  press(race, players, 0, 'lightning');
+  assert.equal(plain.power.lightning, LIGHTNING_SECONDS);
+  for (const target of [owner, guarded, prism, jet, recovering, finished, offline, missing]) {
+    assert.equal(target.power.lightning, 0, target.id);
+    assert.equal(target.speed, 30, target.id);
+  }
+  assert.equal(guarded.power.shield, 0);
+  assert.ok(prism.power.prism > 0 && jet.power.jet > 0);
+  const speed = plain.speed;
+  press(race, players, 0, 'lightning');
+  assert.equal(plain.speed, speed, 'back-to-back strikes cannot multiply speed penalties');
+  assert.equal(owner.power.lightningStrikes, 2);
+});
+
+test('simultaneous defenses and attacks are deterministic and every eligible fresh attack resolves once', () => {
+  const outcomes = [false, true].map(reverse => {
+    const { race, players } = ready(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']);
+    race.powers.boxes = [];
+    race.karts.forEach((kart, index) => {
+      kart.power.item = (['dance', 'lightning', 'twerk', 'guard', 'prism', 'jet', 'lightning', 'fizz', 'splat', 'twerk'] as PowerUp[])[index];
+      kart.onShortcut = index % 2 === 0;
+      players[index].input.action = 1;
+    });
+    if (reverse) { race.karts.reverse(); players.reverse(); }
+    stepPowers(race, players, 1 / 60);
+    return { ...race, karts: [...race.karts].sort((a, b) => a.id.localeCompare(b.id)) };
+  });
+  assert.deepEqual(outcomes[0], outcomes[1]);
+  assert.ok(outcomes[0].karts.every(kart => kart.power.used === 1), 'an attack during the same tick cannot cancel a fresh queued press');
+  for (const id of ['d', 'e']) {
+    const kart = outcomes[0].karts.find(kart => kart.id === id)!;
+    assert.equal(kart.power.lightning, 0, 'same-frame defenses resolve first');
+    assert.equal(kart.power.dance, 0);
+  }
+});
+
+test('new item timers freeze during countdown, survive serialization, reset for rematches, and never resume stale presses', () => {
+  const { race, players } = ready(['owner', 'target']);
+  press(race, players, 0, 'lightning');
+  const restored = JSON.parse(JSON.stringify(race)) as typeof race;
+  stepPowers(restored, players, 0.1);
+  assert.equal(restored.karts[0].power.lightningStrikes, 1);
+  assert.ok(restored.karts[1].power.lightning < LIGHTNING_SECONDS);
+  restored.countdown = 2;
+  const before = JSON.stringify(restored);
+  stepPowers(restored, players, 0.1);
+  assert.equal(JSON.stringify(restored), before);
+  restored.countdown = 0; restored.complete = true;
+  const complete = JSON.stringify(restored);
+  stepPowers(restored, players, 0.1);
+  assert.equal(JSON.stringify(restored), complete);
+  const rematch = createRace(players); rematch.countdown = 0;
+  rematch.karts[0].power.item = 'lightning';
+  stepPowers(rematch, players, 1 / 60);
+  assert.ok(rematch.karts.every(kart => kart.power.dance === 0 && kart.power.lightning === 0 && kart.power.lightningStrikes === 0));
+  assert.equal(rematch.karts[0].power.item, 'lightning');
+});
+
+test('cleansing speed items clear both lightning slowdown and its authoritative visual timer', () => {
+  for (const item of ['fizz', 'guard', 'prism', 'flask', 'jet'] as const) {
+    const { race, players } = ready(['owner', 'target']);
+    race.karts[0].distance = 300; race.karts[1].distance = 100;
+    press(race, players, 0, 'lightning');
+    press(race, players, 1, item);
+    assert.equal(race.karts[1].power.slow, 0, item);
+    assert.equal(race.karts[1].power.lightning, 0, item);
+  }
+});
+
+test('solo pickup pools on every course only award usable items and cannot lock inventory', () => {
+  const safe = ['fizz', 'guard', 'flask', 'prism'];
+  try {
+    for (const track of TRACKS) {
+      selectTrack(track.id);
+      for (const id of ['id-00', 'solo', 'racer-9']) {
+        const { race, players } = ready([id]);
+        const kart = race.karts[0], seen = new Set<PowerUp>();
+        for (let attempt = 0; attempt < 96; attempt++) {
+          const box = race.powers.boxes[attempt % race.powers.boxes.length];
+          box.cooldown = 0; kart.lane = box.lane; kart.distance = box.distance;
+          collectPowerups(race, new Map());
+          assert.ok(kart.power.item && safe.includes(kart.power.item), `${track.id}: solo receives a usable item, not ${kart.power.item}`);
+          seen.add(kart.power.item!);
+          const used = kart.power.used;
+          press(race, players, 0);
+          assert.equal(kart.power.used, used + 1, 'the fresh solo item can always activate');
+          if (kart.power.item === 'flask') tickPowers(race, players, FLASK_SECONDS + 0.1);
+          assert.equal(kart.power.item, null, 'the inventory slot is freed without needing a rival');
+        }
+        assert.deepEqual([...seen].sort(), [...safe].sort());
+      }
+    }
+  } finally { selectTrack('sunset'); }
+});
+
+test('pickup eligibility adapts to finished/disconnected rivals and restores attacks after a rival returns', () => {
+  const { race, players } = ready(['active', 'finished', 'offline']);
+  const [active, finished, offline] = race.karts;
+  finished.finishTime = 20; players[2].connected = false;
+  race.powers.boxes = [{ id: 0, distance: 50, lane: 0, cooldown: 0 }];
+  const box = race.powers.boxes[0];
+  active.distance = 50; offline.distance = TRACK_LENGTH + 100;
+  const collectMany = (activeIds: Set<string>) => {
+    const seen = new Set<PowerUp>();
+    for (let attempt = 0; attempt < 240; attempt++) {
+      active.power.item = null; box.cooldown = 0;
+      collectPowerups(race, new Map(), activeIds);
+      assert.ok(active.power.item);
+      seen.add(active.power.item!);
+    }
+    return seen;
+  };
+  const alone = collectMany(new Set([active.id, finished.id]));
+  assert.deepEqual([...alone].sort(), ['fizz', 'guard', 'flask', 'prism'].sort(), 'finishers do not make a solo active racer eligible for attacks');
+  players[2].connected = true;
+  const reunited = collectMany(new Set(players.map(player => player.id)));
+  for (const item of ['dance', 'twerk', 'lightning'] as const) assert.ok(reunited.has(item), `${item} returns to the multiplayer pool`);
+  // An already-held multiplayer attack still waits for a target, instead of
+  // silently transforming or firing when the temporarily missing rival returns.
+  players[2].connected = false; active.power.item = 'dance';
+  press(race, players, 0);
+  assert.equal(active.power.item, 'dance'); assert.equal(active.power.used, 0);
+  players[2].connected = true;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(active.power.used, 0);
+  press(race, players, 0);
+  assert.equal(active.power.used, 1); assert.equal(offline.power.dance, DANCE_SECONDS);
 });

@@ -1,45 +1,72 @@
-.game {
-  position: relative;
-  width: 100%;
-  height: 100%;
-  min-height: 360px;
-  overflow: hidden;
-  isolation: isolate;
-  background: #11151f;
-  color: #fff;
-  font-family: Arial, Helvetica, sans-serif;
-}
+.game { position: relative; width: 100%; height: 100%; min-height: 360px; overflow: hidden; isolation: isolate; background: #11151f; color: #fff; font-family: Arial, Helvetica, sans-serif; }
 .canvas { display: block; width: 100%; height: 100%; min-height: 360px; }
 .hudGrid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--game-columns), minmax(0, 1fr)); grid-template-rows: repeat(var(--game-rows), minmax(0, 1fr)); pointer-events: none; }
-.viewport { position: relative; overflow: hidden; border: 1px solid #10131d; text-shadow: 0 2px 8px #10131d80; }
-.topHud { position: absolute; inset: 0 0 auto; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; padding: clamp(8px, 1.35vw, 22px); background: linear-gradient(#10131d70, transparent); }
-.name { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.name strong { font-size: clamp(12px, 1.15vw, 21px); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; letter-spacing: -0.02em; }
-.playerNumber { flex-shrink: 0; font-size: clamp(8px, 0.7vw, 12px); font-weight: 800; letter-spacing: 0.04em; color: #10131d; background: var(--driver-color); padding: 5px 6px; border-radius: 4px; text-shadow: none; }
-.lap { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; font-size: clamp(8px, 0.65vw, 11px); font-weight: 800; letter-spacing: 0.06em; }
-.lap strong { font-size: clamp(16px, 1.7vw, 29px); letter-spacing: -0.05em; }
-.lap strong span { opacity: 0.6; font-size: 0.68em; }
-.bottomHud { position: absolute; inset: auto 0 0; display: flex; align-items: flex-end; justify-content: space-between; padding: clamp(8px, 1.35vw, 22px); background: linear-gradient(transparent, #10131d70); }
-.position { font-size: clamp(32px, 4.1vw, 68px); line-height: 0.9; font-weight: 900; letter-spacing: -0.07em; font-style: italic; }
-.position span { font-size: 0.3em; margin-left: 2px; letter-spacing: 0; }
-.driverStatus { display: flex; align-items: flex-end; flex-direction: column; gap: 5px; }
-.speed { display: flex; align-items: baseline; gap: 5px; }
-.speed strong { font-size: clamp(22px, 2.6vw, 42px); line-height: 1; font-variant-numeric: tabular-nums; font-style: italic; letter-spacing: -0.06em; }
-.speed span { font-size: clamp(8px, 0.7vw, 12px); opacity: 0.8; }
-.boost, .offRoad { font-size: clamp(9px, 0.75vw, 13px); font-weight: 900; letter-spacing: 0.12em; padding: 5px 9px; border-radius: 3px; background: #062f35ba; color: #79fff0; }
-.offRoad { color: #ffe89a; background: #50321ac9; }
-.progress { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: #ffffff19; }
-.progress span { display: block; height: 100%; background: var(--driver-color); transition: width 0.08s linear; }
-.countdown { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; text-shadow: 0 4px 0 #382d32, 0 7px 30px #12131c70; }
-.countdown strong { font-size: clamp(68px, 10vw, 140px); line-height: 0.9; font-style: italic; font-weight: 900; }
-.countdown span { font-size: clamp(9px, 0.8vw, 13px); font-weight: 800; letter-spacing: 0.3em; margin-top: 9px; }
-.go { color: #dbff98; }
-.finished { position: absolute; inset: 40% 10% auto; text-align: center; font-size: clamp(20px, 2.5vw, 44px); font-style: italic; font-weight: 900; color: #fff0c4; }
-.finished span { display: block; margin-top: 6px; font-size: 0.4em; font-style: normal; letter-spacing: 0.1em; text-transform: uppercase; }
-.raceControl { display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 16px; background: radial-gradient(ellipse at top, #212c3b, #121720); gap: 10px; }
-.eyebrow { font-size: 10px; color: #ffa653; font-weight: 800; letter-spacing: 0.22em; }
-.map { width: min(80%, 320px); max-height: 65%; overflow: visible; }
-.controlClock { font-size: clamp(20px, 2vw, 32px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -0.04em; }
+/* Every camera is its own size container. Header, center and footer occupy
+   separate rows, keeping maps/items/names apart at every grid density. */
+.viewport { position: relative; overflow: hidden; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; container-type: size; border: 1px solid #10131d; text-shadow: 0 2px 8px #10131d80; }
+.hudHeader { display: grid; grid-template-columns: minmax(0, 1fr) min(31cqw, 170px); align-items: start; gap: clamp(3px, 2cqw, 16px); padding: clamp(4px, 2cqw, 16px); background: linear-gradient(#10131d91, transparent); z-index: 1; }
+.hudLeft { display: flex; flex-direction: column; align-items: flex-start; gap: clamp(3px, 1.5cqh, 10px); min-width: 0; }
+.topHud { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; max-width: 100%; }
+.name { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.name strong { font-size: clamp(9px, 3cqw, 21px); overflow-wrap: anywhere; line-height: 1.1; letter-spacing: -0.02em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.playerNumber { flex-shrink: 0; font-size: clamp(8px, 2cqw, 12px); font-weight: 800; color: #10131d; background: var(--driver-color); padding: 4px 5px; border-radius: 4px; text-shadow: none; }
+.lap { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; font-size: clamp(8px, 2cqw, 11px); font-weight: 800; letter-spacing: 0.06em; }
+.lap strong { font-size: clamp(13px, 4cqw, 25px); letter-spacing: -0.05em; }
+.lap strong span { opacity: 0.7; font-size: 0.68em; }
+.itemHud { display: flex; align-items: center; gap: 6px; max-width: 100%; min-height: 25px; padding: 4px 7px; border: 1px solid #ffffff40; border-radius: 8px; background: #141c2be8; box-shadow: 0 3px 12px #0004; }
+.itemText { min-width: 0; overflow-wrap: anywhere; }
+.itemHud strong, .itemHud small { display: block; line-height: 1.15; }
+.itemHud strong { font-size: clamp(9px, 2.6cqw, 13px); }
+.itemHud small { margin-top: 2px; font-size: 9px; opacity: 0.8; }
+.itemIcon { font-size: clamp(16px, 5cqw, 25px); font-weight: 900; line-height: 1; }
+.itemEmpty { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; color: #ffffff80; }
+.miniMap { width: 100%; min-width: 0; padding: 4px; border-radius: 8px; background: #101927d9; border: 1px solid #ffffff35; box-sizing: border-box; }
+.map { display: block; width: 100%; height: clamp(27px, 22cqh, 110px); overflow: visible; }
+.mapAhead { display: flex; justify-content: center; align-items: center; gap: 4px; white-space: nowrap; font-size: clamp(6px, 2cqw, 10px); font-weight: 900; line-height: 1.3; margin-top: 3px; letter-spacing: .04em; color: #ffdf83; }
+.mapLegend { display: flex; justify-content: center; align-items: center; gap: 3px; margin-top: 2px; color: #d7e4f5; font-size: clamp(6px, 1.8cqw, 9px); white-space: nowrap; }
+.mapLegend i { width: 5px; height: 5px; flex-shrink: 0; border: 1px solid #fff; border-radius: 50%; }
+.mapLegend span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: #ffdf83; }
+.raceCenter { position: relative; min-height: 0; z-index: 1; }
+.countdown { position: absolute; inset: 0 4%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: clamp(2px, 1cqh, 9px); text-align: center; text-shadow: 0 3px 0 #101827, 0 0 18px #050c1b, 0 3px 35px #050c1b; }
+.countdownIdentity { width: 100%; transition: opacity 80ms linear; }
+.countdownPlayer { display: block; color: var(--driver-color); font-size: clamp(8px, 2.5cqw, 16px); font-weight: 900; letter-spacing: .16em; margin-bottom: 4px; }
+.countdownName { display: block; font-size: clamp(12px, min(var(--name-size, 9cqw), 11cqh), 64px); line-height: 1.04; font-weight: 900; overflow-wrap: anywhere; }
+.countdownNumber { font-size: clamp(22px, min(17cqw, 20cqh), 120px); line-height: .95; font-style: italic; font-weight: 900; }
+.countdownPrompt { font-size: clamp(7px, 2cqw, 12px); font-weight: 900; letter-spacing: .24em; }
+.go .countdownNumber { color: #dbff98; }
+.bottomHud { display: flex; align-items: flex-end; justify-content: space-between; gap: 4px; padding: clamp(4px, 2cqw, 16px); background: linear-gradient(transparent, #10131d91); z-index: 1; }
+.position { font-size: clamp(22px, min(10cqw, 16cqh), 68px); line-height: .9; font-weight: 900; letter-spacing: -.07em; font-style: italic; }
+.position span { font-size: .3em; margin-left: 2px; letter-spacing: 0; }
+.driverStatus { display: flex; align-items: flex-end; flex-direction: column; gap: 4px; min-width: 0; }
+.speed { display: flex; align-items: baseline; gap: 4px; }
+.speed strong { font-size: clamp(16px, min(7cqw, 12cqh), 42px); line-height: 1; font-variant-numeric: tabular-nums; font-style: italic; letter-spacing: -.06em; }
+.speed span { font-size: clamp(6px, 2cqw, 12px); opacity: .8; }
+.boost, .offRoad { font-size: clamp(7px, 2cqw, 13px); font-weight: 900; letter-spacing: .06em; padding: 3px 5px; border-radius: 3px; background: #062f35eb; color: #79fff0; }
+.offRoad { color: #ffe89a; background: #50321aeb; }
+.progress { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: #ffffff19; z-index: 1; }
+.progress span { display: block; height: 100%; background: var(--driver-color); transition: width .08s linear; }
+.finished { position: absolute; inset: 35% 5% auto; text-align: center; font-size: clamp(14px, 7cqw, 44px); font-style: italic; font-weight: 900; color: #fff0c4; }
+.finished span { display: block; margin-top: 6px; font-size: .45em; font-style: normal; letter-spacing: .1em; text-transform: uppercase; }
+.warning, .hitNotice { position: absolute; left: 50%; transform: translateX(-50%); max-width: 90%; width: max-content; text-align: center; border-radius: 6px; padding: 4px 7px; font-weight: 900; font-size: clamp(8px, 2.6cqw, 14px); letter-spacing: .04em; }
+.warning { top: 0; color: #fff2b0; background: #6e1c32eb; border: 1px solid #ffd36c; }
+.hitNotice { top: 30%; color: #fff; background: #302344db; }
+.drift { display: flex; align-items: center; gap: 4px; color: #a1f9ff; font-size: clamp(7px, 2cqw, 11px); font-weight: 900; }
+.driftTrack { width: clamp(22px, 10cqw, 65px); height: 5px; border-radius: 4px; background: #ffffff55; overflow: hidden; }
+.driftTrack i { display: block; height: 100%; background: linear-gradient(90deg, #6be7ff, #ffa657); }
+.raceControl { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 0; padding: 12px; background: radial-gradient(ellipse at top, #212c3b, #121720); gap: 10px; text-align: center; }
+.eyebrow { font-size: 10px; color: #ffa653; font-weight: 800; letter-spacing: .22em; }
+.controlClock { font-size: clamp(20px, 2vw, 32px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -.04em; }
+/* Purple blot now covers most of the edges and shoulder area. The center
+   road window, HUD and local map stay readable, and simulation owns expiry. */
+.splatter { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.splatter i { position: absolute; width: 58%; height: 63%; opacity: .92; background: #8f2478; filter: drop-shadow(0 2px 4px #28112b80); border-radius: 46% 58% 42% 64%; }
+.splatter i::before, .splatter i::after { content: ''; position: absolute; border-radius: 50%; background: #b83b9b; }
+.splatter i::before { width: 35%; height: 35%; left: 68%; top: 25%; }
+.splatter i::after { width: 18%; height: 18%; left: 96%; top: 72%; }
+.splatter i:nth-child(1) { left: -22%; top: -12%; transform: rotate(-22deg); }
+.splatter i:nth-child(2) { right: -22%; top: -10%; transform: rotate(145deg); }
+.splatter i:nth-child(3) { left: -8%; bottom: -27%; transform: rotate(-65deg); }
+.splatter i:nth-child(4) { right: -8%; bottom: -27%; transform: rotate(220deg); }
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #0b1018bc; backdrop-filter: blur(7px); padding: 24px; z-index: 3; }
 .errorCard, .podium { width: min(100%, 480px); padding: 28px; border: 1px solid #ffffff1f; border-radius: 18px; background: #19212c; text-align: center; box-shadow: 0 12px 60px #0005; }
 .errorCard strong { font-size: 23px; }
@@ -53,26 +80,6 @@
 .resultName { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-weight: 700; }
 .podium li strong { font-variant-numeric: tabular-nums; font-size: 13px; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-@media (max-width: 650px) {
-  .topHud, .bottomHud { padding: 7px; }
-  .name { gap: 4px; }
-  .name strong { max-width: 75px; font-size: 10px; }
-  .playerNumber { padding: 4px; font-size: 7px; }
-  .lap { font-size: 7px; gap: 3px; }
-  .lap strong { font-size: 15px; }
-  .position { font-size: 30px; }
-  .speed strong { font-size: 21px; }
-  .speed span { font-size: 7px; }
-}
-@media (prefers-reduced-motion: reduce) { .progress span { transition: none; } }
-
-.itemHud { position: absolute; top: clamp(46px, 5vw, 76px); left: clamp(8px, 1.35vw, 22px); display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 5px 9px; border: 1px solid #ffffff40; border-radius: 8px; background: #141c2bd9; box-shadow: 0 3px 12px #0004; }
-.itemHud strong, .itemHud small { display: block; line-height: 1.2; }
-.itemHud strong { font-size: clamp(9px, 0.8vw, 13px); }
-.itemHud small { margin-top: 2px; font-size: 9px; opacity: 0.75; }
-.itemIcon { font-size: 24px; font-weight: 900; line-height: 1; }
-.itemEmpty { font-size: 9px; font-weight: 800; letter-spacing: 0.12em; color: #ffffff80; }
-
 /* Results remain usable with six entrants and on smaller screens. */
 .podium { max-height: 100%; overflow-y: auto; }
 .resultItems { color: #b7bfcc; font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -90,50 +97,67 @@
   .resultActions { margin-top: 12px; }
 }
 
-/* Keep the road and HUD visible in every affected split-screen viewport. */
-.splatter { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.splatter i { position: absolute; width: 19%; height: 23%; opacity: .76; background: #982c76; filter: drop-shadow(0 2px 4px #28112b80); border-radius: 46% 58% 42% 64%; }
-.splatter i::before, .splatter i::after { content: ''; position: absolute; border-radius: 50%; background: #b9488f; }
-.splatter i::before { width: 35%; height: 35%; left: 76%; top: 25%; }
-.splatter i::after { width: 18%; height: 18%; left: 100%; top: 72%; }
-.splatter i:nth-child(1) { left: -9%; top: 26%; transform: rotate(-22deg); }
-.splatter i:nth-child(2) { right: -9%; top: 22%; transform: rotate(145deg); }
-.splatter i:nth-child(3) { left: 15%; bottom: -14%; transform: rotate(-65deg); }
-.splatter i:nth-child(4) { right: 16%; bottom: -14%; transform: rotate(220deg); }
-.warning, .hitNotice { position: absolute; left: 50%; transform: translateX(-50%); text-align: center; white-space: nowrap; border-radius: 6px; padding: 5px 9px; font-weight: 900; font-size: clamp(9px, .85vw, 14px); letter-spacing: .06em; }
-.warning { top: 15%; color: #fff2b0; background: #6e1c32eb; border: 1px solid #ffd36c; }
-.hitNotice { top: 25%; color: #fff; background: #302344db; }
-.drift { display: flex; align-items: center; gap: 5px; color: #a1f9ff; font-size: clamp(8px, .65vw, 11px); font-weight: 900; letter-spacing: .1em; }
-.driftTrack { width: clamp(38px, 4vw, 65px); height: 6px; border-radius: 4px; background: #ffffff55; overflow: hidden; }
-.driftTrack i { display: block; height: 100%; background: linear-gradient(90deg, #6be7ff, #ffa657); }
-.compact .topHud, .compact .bottomHud { padding: 6px; }
-.compact .name { gap: 3px; }
-.compact .name strong { font-size: 10px; }
-.compact .playerNumber { font-size: 7px; padding: 3px; }
-.compact .lap { font-size: 7px; gap: 2px; }
-.compact .lap strong { font-size: 14px; }
-.compact .itemHud { top: 31px; left: 6px; min-height: 24px; padding: 3px 5px; gap: 4px; }
-.compact .itemIcon { font-size: 16px; }
-.compact .itemHud strong { font-size: 9px; }
-.compact .itemHud small { display: none; }
-.compact .position { font-size: 26px; }
-.compact .speed strong { font-size: 19px; }
-.compact .speed span { font-size: 7px; }
-.compact .boost, .compact .offRoad { font-size: 8px; padding: 3px 4px; }
-.compact .warning, .compact .hitNotice { max-width: 90%; white-space: normal; font-size: 8px; padding: 3px 5px; }
-/* Names wrap instead of being silently shortened, including unbroken names. */
-.name strong { white-space: normal; overflow: visible; overflow-wrap: anywhere; line-height: 1.1; }
-.resultName { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
-.compact .name strong { font-size: clamp(7px, .65vw, 10px); }
-.compact .itemHud { top: 48px; }
 
-/* Small race views keep the driving area clear; the full name remains in the
-   accessible label. Larger TV viewports can show all of it. */
-.compact .viewport { container-type: inline-size; }
-.compact .name strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-@container (min-width: 361px) {
-  .compact .name strong { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.resultName { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+@container (max-width: 360px) {
+  .itemHud small { display: none; }
 }
-/* One shared map remains visible even when every grid cell has a racer. */
-.mapInset { position: absolute; inset: auto auto auto var(--map-x); top: calc(var(--map-y) - 8px); transform: translate(-50%, -100%); width: clamp(76px, 9vw, 132px); height: clamp(58px, 7vw, 96px); padding: 5px; border-radius: 8px; background: #111925c9; border: 1px solid #ffffff30; }
-.mapInset .map { width: 100%; max-height: 100%; }
+@container (max-width: 180px) {
+  .hudHeader { gap: 3px; grid-template-columns: minmax(0, 1fr) 42cqw; padding: 3px; }
+  .topHud { gap: 3px; }
+  .name strong { display: none; }
+  .playerNumber { padding: 2px 3px; }
+  .lap { font-size: 6px; gap: 2px; }
+  .lap strong { font-size: 10px; }
+  .itemHud { padding: 3px; gap: 3px; }
+  .itemText { display: none; }
+  .miniMap { padding: 2px; border-radius: 5px; }
+  .mapAhead { font-size: 6px; letter-spacing: 0; gap: 2px; }
+  .mapLegend span { display: none; }
+  .countdownPlayer { font-size: 7px; letter-spacing: .03em; }
+  .bottomHud { padding: 3px; }
+  .boost, .offRoad { font-size: 6px; padding: 2px; letter-spacing: 0; }
+}
+@container (max-height: 200px) {
+  .hudHeader { padding: 3px; }
+  .hudLeft { gap: 3px; }
+  .name strong { font-size: 8px; -webkit-line-clamp: 1; }
+  .playerNumber { font-size: 7px; padding: 2px 3px; }
+  .lap { font-size: 6px; }
+  .lap strong { font-size: 11px; }
+  .itemHud { padding: 2px 4px; min-height: 18px; }
+  .itemIcon { font-size: 14px; }
+  .itemHud strong { font-size: 8px; }
+  .itemHud small { display: none; }
+  .map { height: 22cqh; }
+  .mapAhead { font-size: 6px; margin-top: 1px; }
+  .mapLegend { display: none; }
+  .countdownPlayer { display: none; }
+  .countdown { gap: 2px; }
+  .countdownName { font-size: clamp(10px, min(var(--name-size, 9cqw), 10cqh), 22px); }
+  .countdownNumber { font-size: clamp(16px, 16cqh, 30px); }
+  .countdownPrompt { display: none; }
+  .bottomHud { padding: 3px; }
+  .position { font-size: 20px; }
+  .speed strong { font-size: 15px; }
+}
+@media (prefers-reduced-motion: reduce) { .progress span, .countdownIdentity { transition: none; } }
+
+/* Low-height split screens place the number beside the full name rather than
+   stacking tall text into the map or speed display. */
+@container (max-height: 400px) {
+  .countdown { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-content: center; column-gap: 8px; }
+  .countdownPlayer, .countdownPrompt { display: none; }
+}
+
+@container (max-width: 180px) and (max-height: 200px) {
+  .hudHeader { padding: 2px; }
+  .topHud { gap: 2px; }
+  .lap, .mapAhead { display: none; }
+  .map { height: 25px; }
+  .itemHud { min-height: 15px; padding: 1px 2px; }
+  .itemIcon { font-size: 11px; }
+  .countdown { column-gap: 3px; }
+  .countdownName { font-size: clamp(7px, var(--name-size, 9cqw), 12px); }
+  .countdownNumber { font-size: 16px; }
+}

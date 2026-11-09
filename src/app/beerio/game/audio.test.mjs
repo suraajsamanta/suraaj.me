@@ -85,7 +85,7 @@ test('idling is silent, speed is bounded, and one or ten players receive the sam
     assert.equal(mix.engine.gain.target, 0, 'No idle buzz');
     const baseline = f.sources.length;
     for (const kart of race.karts) {
-      kart.speed = 999; kart.boost = 1; kart.bump = 1; kart.power.collected++; kart.power.used++; kart.power.dance = 1; kart.power.leaderWarning = 1;
+      kart.speed = 999; kart.boost = 1; kart.bump = 1; kart.power.collected++; kart.power.used++; kart.power.dance = 1; kart.power.leaderWarning = 1; kart.power.lightningStrikes = 1;
     }
     mix.update(race); counts.push(f.sources.length - baseline);
     assert.ok(mix.engine.gain.target <= 0.022);
@@ -181,5 +181,29 @@ test('music failure keeps effects alive, bounded retry succeeds, and stale dispo
   mix.retryMusic(); mix.retryMusic(); mix.retryMusic(); await flush();
   assert.equal(fetches, 2); assert.equal(states.at(-1), 'ready');
   race.countdown = 0; mix.update(race); assert.equal(f.sources.filter(source => source.buffer === musicBuffer).length, 1);
+  mix.dispose();
+});
+
+test('lightning and twerk cues are original bounded one-shots that honor mute and pause', () => {
+  const f = audioContext(), mix = new RaceAudio(f.context, { musicBuffer });
+  const race = createRace(Array.from({ length: 10 }, (_, index) => driver(index))); race.countdown = 0;
+  mix.update(race);
+  const initial = f.sources.length;
+  race.karts.forEach(kart => { kart.power.lightningStrikes++; });
+  mix.update(race);
+  const lightningSources = f.sources.length - initial;
+  assert.ok(lightningSources > 0 && lightningSources <= 6, 'all ten simultaneous strikes use one soft cue');
+  mix.update(race); assert.equal(f.sources.length - initial, lightningSources);
+  f.tick(1);
+  race.karts[1].power.dance = 3.5; race.karts[1].power.danceStyle = 'twerk';
+  mix.update(race);
+  assert.ok(f.sources.length > initial + lightningSources);
+  mix.setPaused(true);
+  assert.ok(f.sources.slice(initial).every(source => source.stopAt <= f.context.currentTime + 0.035), 'pause cancels all effect voices while the silent engine graph is retained');
+  const paused = f.sources.length;
+  race.karts[0].power.lightningStrikes++; mix.update(race);
+  assert.equal(f.sources.length, paused);
+  mix.setPaused(false); mix.setMuted(true); race.karts[0].power.lightningStrikes++; mix.update(race);
+  assert.equal(f.sources.length, paused);
   mix.dispose();
 });

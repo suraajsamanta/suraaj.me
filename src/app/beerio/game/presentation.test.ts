@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { audioSnapshot, noteFrequency, RaceAudio, soundEvents } from './audio';
-import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
+import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, twerkGeometry, lightningGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
 import { createRace, type GamePlayer } from './simulation';
 import { ACTIVE_SHORTCUT, selectTrack, shortcutPose, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACKS, TRACK_LENGTH, TRACK_POINTS, trackPose } from './track';
 
@@ -327,5 +327,70 @@ test('mixed six-player appearances and repeated dance transitions never upload g
     assert.equal(stats.viewports, 42); assert.equal(stats.uploads, uploads); assert.equal(stats.vertices, vertices);
     assert.equal(stats.nonFinite, false); renderer.dispose();
     assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('global lightning cue uses the caster sequence, deduplicates ten racers and ignores snapshots/restarts', () => {
+  const race = createRace(Array.from({ length: 10 }, (_, index) => ({ ...player, id: String(index) })));
+  race.countdown = 0;
+  const before = audioSnapshot(race);
+  race.karts.forEach(kart => { kart.power.lightningStrikes = 1; });
+  const struck = audioSnapshot(race);
+  assert.deepEqual(soundEvents(before, struck), ['lightning'], 'simultaneous casters share one cue');
+  assert.deepEqual(soundEvents(struck, audioSnapshot(race)), [], 'same host event never repeats');
+  assert.deepEqual(soundEvents(null, struck), [], 'restoring an existing snapshot cannot replay its thunder');
+  race.karts.forEach(kart => { kart.power.lightningStrikes = 0; });
+  assert.deepEqual(soundEvents(struck, audioSnapshot(race)), [], 'rematch counter reset is silent');
+  race.karts[0].power.dance = 3.5; race.karts[0].power.danceStyle = 'twerk';
+  assert.deepEqual(soundEvents(struck, audioSnapshot(race)), ['twerk']);
+  assert.deepEqual(soundEvents(audioSnapshot(race), audioSnapshot(race)), []);
+});
+
+test('each character has eight distinct clothed twerk poses different from Dance Break, with bounded static geometry', () => {
+  const identities = new Set<string>();
+  for (const character of characters) {
+    const poses = Array.from({ length: 8 }, (_, frame) => twerkGeometry([0.2, 0.8, 1], frame * Math.PI / 4, character));
+    assert.equal(new Set(poses.map(pose => JSON.stringify(pose.data))).size, 8);
+    assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 <= 4500));
+    identities.add(JSON.stringify(poses[0].data));
+    assert.notDeepEqual(poses[0].data, dancerGeometry([0.2, 0.8, 1], 0, character).data);
+    assert.notDeepEqual(poses[0].data, twerkGeometry([1, 0.2, 0.3], 0, character).data, 'selected outfit color is preserved');
+  }
+  assert.equal(identities.size, 8);
+  const lightning = lightningGeometry();
+  assert.ok(lightning.data.every(Number.isFinite));
+  assert.ok(lightning.data.length / 6 <= 300, 'the global effect is a tiny reused mesh');
+});
+
+test('ten-view lightning and twerk effects remain finite, use cached geometry, expire, and dispose completely', () => {
+  const { gl, stats, buffers, programs } = fakeWebGL();
+  const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1440, height: 900 }) } as unknown as HTMLCanvasElement;
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    const players = Array.from({ length: 10 }, (_, index) => ({ ...player, id: String(index), character: characters[index % characters.length] }));
+    const race = createRace(players), renderer = new RaceRenderer(canvas, players, race);
+    race.powers.boxes = [];
+    const uploads = stats.uploads;
+    renderer.render(race, 1 / 60);
+    const baseline = stats.draws;
+    race.karts.slice(1).forEach(kart => { kart.power.lightning = 2.5; });
+    renderer.render(race, 1 / 60);
+    assert.equal(stats.draws - baseline, baseline + 270, 'nine victims each display three lightning ribbons in every viewport');
+    const late = stats.draws;
+    race.karts.slice(1).forEach(kart => { kart.power.lightning = 0.2; });
+    renderer.render(race, 1 / 60);
+    assert.equal(stats.draws - late, baseline + 180, 'the tall strike fades first, leaving only low arcs');
+    race.karts.forEach((kart, index) => { kart.power.lightning = 0; kart.power.danceStyle = index % 2 ? 'twerk' : 'dance'; });
+    for (const remaining of [3.5, 3.3, 2, 0.15, 0]) {
+      race.karts.forEach(kart => { kart.power.dance = remaining; });
+      renderer.render(race, 1 / 60);
+    }
+    const expired = stats.draws;
+    renderer.render(race, 1 / 60);
+    assert.equal(stats.draws - expired, baseline, 'expired effects return to the normal draw count');
+    assert.equal(stats.uploads, uploads, 'no effects upload geometry during race frames');
+    assert.equal(stats.nonFinite, false);
+    renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
 });

@@ -1,16 +1,17 @@
 import { SPACE_COURSE } from './spaceCourse';
+import { FOUNDRY_COURSE } from './foundryCourse';
 
 /** Original closed circuit. Distances are world metres, not screen coordinates. */
 export type Vec3 = [number, number, number];
 export type TrackPoint = { x: number; y: number; z: number; distance: number };
 export type TrackPose = { position: Vec3; forward: Vec3; right: Vec3; yaw: number };
 
-export type TrackId = 'sunset' | 'canyon' | 'brewery' | 'seattle' | 'space';
+export type TrackId = 'sunset' | 'canyon' | 'brewery' | 'seattle' | 'space' | 'foundry';
 export type TrackObstacle = { fraction: number; lane: number; kind: 'barrel' | 'oil' };
 export type TrackDefinition = {
   id: TrackId; name: string; description: string;
-  controlPoints: [number, number][]; elevations?: number[]; obstacles: TrackObstacle[];
-  shortcut: { start: number; end: number; side: -1 | 1 };
+  controlPoints: [number, number][]; elevations?: number[]; samples?: number; obstacles: TrackObstacle[];
+  shortcut: { start: number; end: number; side: -1 | 1; handle?: number };
 };
 
 /** Hand-authored loops and hazard placements, shared by simulation and renderer. */
@@ -62,6 +63,7 @@ export const TRACKS: TrackDefinition[] = [
     ],
   },
   SPACE_COURSE,
+  FOUNDRY_COURSE,
 ];
 export const ROAD_HALF_WIDTH = 7;
 export const BARRIER_OFFSET = 10.2;
@@ -92,10 +94,11 @@ export let SHORTCUT_LENGTH = 0;
 /** Sample without changing the active race, for previews and minimaps. */
 export function sampleTrack(track: TrackDefinition): TrackPoint[] {
   const sampled: TrackPoint[] = [];
+  const samples = track.samples ?? SAMPLES;
   let distance = 0;
   const elevationPoints: [number, number][] | undefined = track.elevations?.map(value => [value, 0]);
-  for (let i = 0; i <= SAMPLES; i++) {
-    const t = (i % SAMPLES) / SAMPLES;
+  for (let i = 0; i <= samples; i++) {
+    const t = (i % samples) / samples;
     const [x, z] = curve(t, track.controlPoints);
     const y = elevationPoints ? Math.max(0, curve(t, elevationPoints)[0]) : 0;
     const previous = sampled[i - 1];
@@ -162,7 +165,7 @@ export function sampleShortcut(track: TrackDefinition): TrackPoint[] {
   const { start, end } = track.shortcut;
   const a = poseOnTrack(points, length, start * length), b = poseOnTrack(points, length, end * length);
   const chord = Math.hypot(b.position[0] - a.position[0], b.position[2] - a.position[2]);
-  const handle = Math.min(chord * 0.24, 22);
+  const handle = track.shortcut.handle ?? Math.min(chord * 0.24, 22);
   const p0 = a.position, p1 = [p0[0] + a.forward[0] * handle, p0[1] + a.forward[1] * handle, p0[2] + a.forward[2] * handle];
   const p3 = b.position, p2 = [p3[0] - b.forward[0] * handle, p3[1] - b.forward[1] * handle, p3[2] - b.forward[2] * handle];
   const result: TrackPoint[] = [];

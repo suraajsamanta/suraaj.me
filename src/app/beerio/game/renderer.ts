@@ -1,9 +1,11 @@
 import { addSpaceScenery } from './spaceScenery';
 import { SPACE_THEME } from './spaceCourse';
 import { addSeattleScenery } from './seattleScenery';
+import { addFoundryScenery } from './foundryScenery';
+import { FOUNDRY_THEME } from './foundryCourse';
 import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, shortcutPose, trackPose, wrap, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
-import { DANCE_SECONDS } from './powerups';
+import { DANCE_SECONDS, LIGHTNING_SECONDS } from './powerups';
 
 type Color = [number, number, number];
 type Mesh = { buffer: WebGLBuffer; count: number };
@@ -183,16 +185,17 @@ export function barrierIntersectsOtherRoad(from: number, to: number, side: numbe
 }
 function worldGeometry(): Geometry {
   const g = new Geometry();
-  if (ACTIVE_TRACK.id === 'seattle') {
+  if (ACTIVE_TRACK.id === 'seattle' || ACTIVE_TRACK.id === 'foundry') {
     // Short tiles give the interpolated fog meaningful local distances.
     for (let x = -1200; x < 1200; x += 100) for (let z = -1200; z < 1200; z += 100)
-      g.quad([x,-.15,z], [x,-.15,z+100], [x+100,-.15,z+100], [x+100,-.15,z], [0.38,0.55,0.46]);
+      g.quad([x,-.15,z], [x,-.15,z+100], [x+100,-.15,z+100], [x+100,-.15,z], ACTIVE_TRACK.id === 'foundry' ? FOUNDRY_THEME.ground : [0.38,0.55,0.46]);
   } else if (ACTIVE_TRACK.id !== 'space') g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
-  const space = ACTIVE_TRACK.id === 'space';
-  const dark: Color = space ? SPACE_THEME.road : [0.2, 0.25, 0.32], cream: Color = space ? SPACE_THEME.stripe : CREAM, orange: Color = space ? SPACE_THEME.curb : CORAL;
+  const space = ACTIVE_TRACK.id === 'space', foundry = ACTIVE_TRACK.id === 'foundry';
+  const theme = space ? SPACE_THEME : foundry ? FOUNDRY_THEME : null;
+  const dark: Color = theme?.road ?? [0.2, 0.25, 0.32], cream: Color = theme?.stripe ?? CREAM, orange: Color = theme?.curb ?? CORAL;
   for (let i = 0; i < TRACK_POINTS.length - 1; i++) {
     const a = TRACK_POINTS[i].distance, b = TRACK_POINTS[i + 1].distance;
-    const shoulder: Color = space ? SPACE_THEME.shoulder : [0.51, 0.68, 0.42];
+    const shoulder: Color = theme?.shoulder ?? [0.51, 0.68, 0.42];
     // Separate side bands avoid depth-fighting the sloped, curved road mesh.
     g.roadStrip(a, b, -11.2, -ROAD_HALF_WIDTH, shoulder, 0);
     g.roadStrip(a, b, ROAD_HALF_WIDTH, 11.2, shoulder, 0);
@@ -208,7 +211,7 @@ function worldGeometry(): Geometry {
         const mid = (a + next) / 2;
         if ((side === ACTIVE_SHORTCUT.side && Math.min(Math.abs(mid - ACTIVE_SHORTCUT.start * TRACK_LENGTH), Math.abs(mid - ACTIVE_SHORTCUT.end * TRACK_LENGTH)) < 35) || barrierIntersectsShortcut(a, next, side) || barrierIntersectsOtherRoad(a, next, side)) continue;
         g.railStrip(a, next, side * 10.6, .55, .025, 1.075, i % 12 === 0 ? orange : cream);
-        g.railStrip(a, next, side * 10.6, .65, 1.045, 1.195, space ? SPACE_THEME.rail : TEAL);
+        g.railStrip(a, next, side * 10.6, .65, 1.045, 1.195, theme?.rail ?? TEAL);
       }
     }
   }
@@ -269,6 +272,7 @@ function worldGeometry(): Geometry {
   // Course-specific scenery is batched once into the shared world mesh.
   if (ACTIVE_TRACK.id === 'seattle') { addSeattleScenery(g); return g; }
   if (space) { addSpaceScenery(g); return g; }
+  if (foundry) { addFoundryScenery(g); return g; }
 
   // Keep decorative scenery out of the drivable branch corridor.
   const nearShortcut = (point: Vec3, margin = 12) => SHORTCUT_POINTS.some(p => Math.hypot(p.x - point[0], p.z - point[2]) < margin);
@@ -568,6 +572,42 @@ export function dancerGeometry(color: Color, phase: number, character = 'fox'): 
   return g;
 }
 
+/** A separate cartoon squat/hip-wiggle, with the same chosen outfit and identity. */
+export function twerkGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  const g = new Geometry(), id = characterId(character);
+  const wiggle = Math.sin(phase), dip = Math.cos(phase) * 0.12;
+  const hip: Vec3 = [wiggle * 0.25, 1.01 + dip, -0.24 - Math.cos(phase * 2) * 0.13];
+  const chest: Vec3 = [-wiggle * 0.08, 1.54 + dip * 0.6, 0.43];
+  characterTail(g, id, hip);
+  g.beam(hip, chest, 0.27, color);
+  g.box([chest[0], chest[1], chest[2] + 0.27], [0.14, 0.34, 0.04], CREAM);
+  characterHead(g, id, [chest[0], 2.02 + dip * 0.6, 0.62], color);
+  for (const side of [-1, 1]) {
+    const knee: Vec3 = [side * 0.54, 0.57 + dip * 0.4, 0.3];
+    const foot: Vec3 = [side * 0.52, 0.15, 0];
+    g.beam([hip[0] + side * 0.17, hip[1], hip[2]], knee, 0.15, CHARCOAL);
+    g.beam(knee, foot, 0.13, CHARCOAL);
+    g.box([foot[0], 0.14, foot[2] + 0.1], [0.34, 0.25, 0.54], CHARCOAL);
+    const elbow: Vec3 = [side * 0.65, 1.2 + dip * 0.4, 0.58];
+    const hand: Vec3 = [knee[0], knee[1] + 0.19, knee[2] + 0.16];
+    g.beam([chest[0] + side * 0.22, chest[1], chest[2]], elbow, 0.12, color);
+    g.beam(elbow, hand, 0.11, color);
+    g.sphere(hand, 0.14, CREAM, 7, 4);
+  }
+  return g;
+}
+
+/** One small prebuilt lightning ribbon, never generated/uploaded during a frame. */
+export function lightningGeometry(): Geometry {
+  const g = new Geometry();
+  const points: Vec3[] = [[0, 7.5, 0], [-0.45, 5.6, 0.05], [0.4, 4.4, -0.1], [-0.32, 2.8, 0.04], [0.2, 1.8, 0], [0, 0.35, 0]];
+  for (let index = 1; index < points.length; index++) {
+    g.beam(points[index - 1], points[index], 0.07, [0.45, 0.82, 1]);
+    g.beam(points[index - 1], points[index], 0.025, [0.95, 1, 1]);
+  }
+  return g;
+}
+
 function shadowGeometry(): Geometry {
   const g = new Geometry();
   g.disc([0.18, 0, -0.15], 1.18, 1.72, [0.13, 0.18, 0.23]);
@@ -662,9 +702,11 @@ export class RaceRenderer {
   private shield: Mesh;
   private crown: Mesh;
   private prism: Mesh;
+  private lightning: Mesh;
   private karts: Mesh[];
   private emptyKarts: Mesh[];
   private dancers: Mesh[][];
+  private twerkers: Mesh[][];
   private cameras: Camera[];
   private columns: number;
   private rows: number;
@@ -681,10 +723,10 @@ export class RaceRenderer {
       varying vec3 v_color; varying float v_distance; varying float v_height;
       void main() { vec4 world = u_model * vec4(a_position, 1.0); gl_Position = u_view * world; v_color = a_color; v_distance = distance(world.xyz, u_eye); v_height = world.y; }
     `);
-    const isSpace = ACTIVE_TRACK.id === 'space', isSeattle = ACTIVE_TRACK.id === 'seattle';
+    const isSpace = ACTIVE_TRACK.id === 'space', isSeattle = ACTIVE_TRACK.id === 'seattle', isFoundry = ACTIVE_TRACK.id === 'foundry';
     const fragment = this.shader(gl.FRAGMENT_SHADER, `
       precision mediump float; uniform float u_opacity; varying vec3 v_color; varying float v_distance; varying float v_height;
-      void main() { float fog = ${isSpace ? '0.0' : 'smoothstep(145.0, 610.0, v_distance)'}; vec3 haze = ${isSeattle ? 'vec3(0.61, 0.73, 0.75)' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0))'}; gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
+      void main() { float fog = ${isSpace ? '0.0' : 'smoothstep(145.0, 610.0, v_distance)'}; vec3 haze = ${isFoundry ? 'vec3(0.37, 0.30, 0.33)' : isSeattle ? 'vec3(0.61, 0.73, 0.75)' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0))'}; gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
     `);
     const program = gl.createProgram();
     if (!program) throw new Error('Could not initialize the 3D race renderer.');
@@ -704,9 +746,9 @@ export class RaceRenderer {
       void main() {
         vec3 ray = normalize(u_forward + u_right * v_uv.x * u_lens.x + u_up * v_uv.y * u_lens.y);
         float horizon = clamp(ray.y * 1.8, 0.0, 1.0);
-        vec3 sky = ${isSpace ? 'vec3(0.018, 0.024, 0.065)' : isSeattle ? 'mix(vec3(0.61, 0.73, 0.75), vec3(0.32, 0.56, 0.68), pow(horizon, 0.6))' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6))'};
+        vec3 sky = ${isSpace ? 'vec3(0.018, 0.024, 0.065)' : isFoundry ? 'mix(vec3(0.37, 0.30, 0.33), vec3(0.10, 0.17, 0.28), pow(horizon, 0.6))' : isSeattle ? 'mix(vec3(0.61, 0.73, 0.75), vec3(0.32, 0.56, 0.68), pow(horizon, 0.6))' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6))'};
         float sun = dot(ray, normalize(vec3(-0.6, 0.32, 0.65)));
-        ${isSpace || isSeattle ? '' : 'sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0); sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));'}
+        ${isSpace || isSeattle || isFoundry ? '' : 'sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0); sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));'}
         gl_FragColor = vec4(sky, 1.0);
       }`);
     const skyProgram = gl.createProgram(), skyBuffer = gl.createBuffer();
@@ -725,9 +767,11 @@ export class RaceRenderer {
     this.item = this.upload(itemGeometry()); this.slick = this.upload(slickGeometry());
     this.bolt = this.upload(boltGeometry()); this.shield = this.upload(shieldGeometry());
     this.crown = this.upload(crownGeometry()); this.prism = this.upload(prismGeometry());
+    this.lightning = this.upload(lightningGeometry());
     this.karts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle)));
     this.emptyKarts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle, false)));
     this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
+    this.twerkers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(twerkGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
     this.rows = Math.ceil(players.length / this.columns);
     this.cameras = race.karts.map((kart) => ({ eye: racePose(routeOffset(kart.distance, -10, kart.onShortcut), kart.lane * 0.6, 4.5, kart.onShortcut).position, target: racePose(routeOffset(kart.distance, 10, kart.onShortcut), kart.lane * 0.35, 0.9, kart.onShortcut).position }));
@@ -832,10 +876,22 @@ export class RaceRenderer {
           const offset = 2.2 * exit;
           const dancerPosition: Vec3 = [pose.position[0] + Math.cos(yaw) * offset, pose.position[1], pose.position[2] - Math.sin(yaw) * offset];
           const frame = Math.floor(age * 12) % 8;
-          this.draw(this.dancers[j][frame], model(dancerPosition, yaw + Math.sin(age * 3) * 0.25));
+          const twerking = other.power.danceStyle === 'twerk';
+          this.draw((twerking ? this.twerkers : this.dancers)[j][frame], model(dancerPosition, yaw + Math.sin(age * 3) * (twerking ? 0.1 : 0.25)));
           for (let particle = 0; particle < 6; particle++) {
             const angle = particle * Math.PI / 3 + age * 4;
             this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, dancerPosition[1] + 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
+          }
+        }
+        if (other.power.lightning > 0) {
+          const age = LIGHTNING_SECONDS - other.power.lightning;
+          // A single sky-to-kart strike fades into two low arcs. Avoid full-screen
+          // flashing or strobing, especially across ten simultaneous viewports.
+          const fade = Math.min(1, other.power.lightning / 0.45);
+          if (age < 0.65) this.draw(this.lightning, model(pose.position, yaw), Math.max(0.05, 1 - age / 0.65) * fade);
+          for (const side of [-1, 1]) {
+            const point: Vec3 = [pose.position[0] + Math.cos(yaw) * side * 0.85, pose.position[1] + 0.15, pose.position[2] - Math.sin(yaw) * side * 0.85];
+            this.draw(this.lightning, model(point, yaw + Math.sin(age * 3 + side) * 0.2, 0.22), 0.7 * fade);
           }
         }
         if (other.power.prism > 0) this.draw(this.prism, model(pose.position, race.elapsed * 2));
@@ -872,7 +928,7 @@ export class RaceRenderer {
   }
   dispose() {
     const gl = this.gl;
-    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, this.crown, this.prism, ...this.karts, ...this.emptyKarts, ...this.dancers.flat()]) gl.deleteBuffer(mesh.buffer);
+    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, this.crown, this.prism, this.lightning, ...this.karts, ...this.emptyKarts, ...this.dancers.flat(), ...this.twerkers.flat()]) gl.deleteBuffer(mesh.buffer);
     gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }

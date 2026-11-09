@@ -510,39 +510,145 @@ test('ten racers have distinct 4-by-3 HUD views and retain full names', async t 
 });
 
 
-test('small compact race views bound name height, while larger views can show full names', () => {
+test('HUD rows reserve room for maps and countdown names, including reduced motion', () => {
   const css = readFileSync(resolve(directory, 'game.module.css'), 'utf8');
-  assert.match(css, /\.compact \.viewport\s*\{[^}]*container-type:\s*inline-size/);
-  assert.match(css, /\.compact \.name strong\s*\{[^}]*-webkit-line-clamp:\s*2;[^}]*overflow:\s*hidden/);
-  assert.match(css, /@container\s*\(min-width:\s*361px\)\s*\{\s*\.compact \.name strong\s*\{[^}]*-webkit-line-clamp:\s*unset;[^}]*overflow:\s*visible/);
+  assert.match(css, /\.viewport\s*\{[^}]*grid-template-rows:\s*auto minmax\(0, 1fr\) auto;[^}]*container-type:\s*size/);
+  assert.match(css, /\.hudHeader\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(css, /\.countdownName\s*\{[^}]*overflow-wrap:\s*anywhere/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce[^}]*\.countdownIdentity[^}]*transition:\s*none/);
   assert.match(css, /\.resultName\s*\{[^}]*white-space:\s*normal;[^}]*overflow:\s*visible/);
 });
 
-
-test('one shared shortcut map is shown for every player count', async t => {
+test('every viewport has its own all-racer map for one through ten racers', async t => {
   for (let count = 1; count <= 10; count++) await t.test(`${count} racers`, async t => {
-    const players = Array.from({ length: count }, (_, i) => ({ ...player(), id: `map-${i}` }));
+    const players = Array.from({ length: count }, (_, i) => ({ ...player(), id: `map-${i}`, name: `Driver ${i + 1}` }));
     const f = await fixture(t, { players, localKeyboard: false }); await f.frame(100);
-    const maps = findNodes(f.tree(), node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map');
-    assert.equal(maps.length, 1);
-    assert.equal(findNodes(maps[0], node => node.type === 'circle').length, count);
-    assert.equal(findNodes(maps[0], node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut').length, 1);
+    const sections = findNodes(f.tree(), node => node.type === 'section');
+    assert.equal(sections.length, count);
+    sections.forEach((section, index) => {
+      const maps = findNodes(section, node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map');
+      assert.equal(maps.length, 1);
+      assert.equal(findNodes(maps[0], node => node.type === 'circle').length, count);
+      const markers = findNodes(maps[0], node => node.type === 'g' && node.props?.['data-racer-id']);
+      assert.deepEqual(new Set(markers.map(marker => marker.props['data-racer-id'])), new Set(players.map(p => p.id)));
+      assert.equal(markers.at(-1).props['data-racer-id'], players[index].id, 'Local marker renders above the crowd');
+      assert.equal(markers.filter(marker => marker.props['data-self']).length, 1);
+      assert.equal(findNodes(maps[0], node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut').length, 1);
+    });
   });
 });
-test('shortcut map uses each course branch and places a branch kart on the physical route', async t => {
-  for (const trackId of ['sunset', 'canyon', 'brewery']) await t.test(trackId, async t => {
+
+test('every course uses its exact sampled elevation and shortcut geometry for maps and markers', async t => {
+  const registry = await fixture(t);
+  const trackIds = registry.track().TRACKS.map(track => track.id);
+  registry.unmount();
+  for (const trackId of trackIds) await t.test(trackId, async t => {
     const f = await fixture(t, { players: [player()], trackId }); await f.frame(100);
     const track = f.track(), race = f.race(), kart = race.karts[0]; race.countdown = 0;
-    kart.distance = (track.ACTIVE_SHORTCUT.start + track.ACTIVE_SHORTCUT.end) / 2 * track.TRACK_LENGTH;
-    kart.onShortcut = true;
-    await f.frame(200);
-    const map = findNodes(f.tree(), node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map')[0];
-    const branch = findNodes(map, node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut')[0];
-    const expectedPath = track.sampleShortcut(track.ACTIVE_TRACK).filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' ');
-    assert.equal(branch.props.d, expectedPath);
-    const dot = findNodes(map, node => node.type === 'circle')[0], expected = track.shortcutPose(kart.distance, kart.lane).position;
-    assert.ok(Math.abs(dot.props.cx - expected[0]) < 1e-8); assert.ok(Math.abs(dot.props.cy - expected[2]) < 1e-8);
-    const main = track.trackPose(kart.distance, kart.lane).position;
-    assert.ok(Math.hypot(dot.props.cx - main[0], dot.props.cy - main[2]) > 1);
+    const map = () => findNodes(f.tree(), node => node.type === 'svg' && node.props?.['aria-label'] === 'Live circuit map')[0];
+    const branch = findNodes(map(), node => node.type === 'path' && node.props?.['aria-label'] === 'Shortcut')[0];
+    const samples = track.sampleShortcut(track.ACTIVE_TRACK);
+    const expectedPath = samples.map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(2)} ${(point.z - point.y * 0.65).toFixed(2)}`).join(' ');
+    assert.equal(branch.props.d, expectedPath, 'Every branch sample and both junctions are preserved');
+    const bounds = map().props.viewBox.split(' ').map(Number);
+    for (const point of [...samples, ...track.sampleTrack(track.ACTIVE_TRACK)]) {
+      assert.ok(point.x > bounds[0] && point.x < bounds[0] + bounds[2]);
+      assert.ok(point.z - point.y * 0.65 > bounds[1] && point.z - point.y * 0.65 < bounds[1] + bounds[3]);
+    }
+    for (const onShortcut of [false, true]) {
+      kart.distance = (track.ACTIVE_SHORTCUT.start + track.ACTIVE_SHORTCUT.end) / 2 * track.TRACK_LENGTH;
+      kart.onShortcut = onShortcut;
+      await f.frame(onShortcut ? 300 : 200);
+      const dot = findNodes(map(), node => node.type === 'circle')[0];
+      const expected = (onShortcut ? track.shortcutPose : track.trackPose)(kart.distance, kart.lane).position;
+      assert.ok(Math.abs(dot.props.cx - expected[0]) < 1e-8);
+      assert.ok(Math.abs(dot.props.cy - (expected[2] - expected[1] * 0.65)) < 1e-8);
+    }
   });
+});
+
+test('map highlights the next eligible racer in absolute progress, across laps and shortcut routes', async t => {
+  const players = Array.from({ length: 5 }, (_, i) => ({ ...player(), id: `racer-${i}`, name: `Driver ${i}` }));
+  const f = await fixture(t, { players }); await f.frame(100);
+  const race = f.race(), track = f.track(); race.countdown = 0;
+  const start = (track.ACTIVE_SHORTCUT.start + .01) * track.TRACK_LENGTH;
+  race.karts.forEach((kart, i) => { kart.distance = start + i * 10; kart.speed = 0; });
+  race.karts[1].distance = start - track.TRACK_LENGTH + 5; // nearby dot, actually a lap behind
+  race.karts[2].onShortcut = true;
+  race.karts[3].finishTime = 42;
+  await f.frame(200);
+  const firstSection = () => findNodes(f.tree(), node => node.type === 'section')[0];
+  let highlighted = findNodes(firstSection(), node => node.type === 'g' && node.props?.['data-ahead']);
+  assert.equal(highlighted.length, 1); assert.equal(highlighted[0].props['data-racer-id'], 'racer-2');
+  assert.equal(findNodes(firstSection(), node => node.props?.className === 'mapAhead')[0].props.children, 'AHEAD P3');
+  await f.setProps({ players: players.map(p => ({ ...p, connected: p.id !== 'racer-2' })) });
+  await f.frame(300);
+  highlighted = findNodes(firstSection(), node => node.type === 'g' && node.props?.['data-ahead']);
+  assert.equal(highlighted[0].props['data-racer-id'], 'racer-4');
+  await f.setProps({ players }); await f.frame(400);
+  highlighted = findNodes(firstSection(), node => node.type === 'g' && node.props?.['data-ahead']);
+  assert.equal(highlighted[0].props['data-racer-id'], 'racer-2');
+  assert.equal(f.renderers.length, 1, 'Controller reconnect must not reset the race');
+});
+
+test('large full names persist through countdown, fade at GO, and return on a fresh race', async t => {
+  const players = Array.from({ length: 10 }, (_, i) => ({ ...player(), id: `intro-${i}`, name: i % 2 ? `UnbrokenLongPlayerName${i + 1}` : 'W'.repeat(64) }));
+  const f = await fixture(t, { players }); await f.frame(100);
+  const names = () => findNodes(f.tree(), node => node.props?.className === 'countdownName');
+  const identities = () => findNodes(f.tree(), node => node.props?.className === 'countdownIdentity');
+  assert.deepEqual(names().map(node => node.props.children), players.map(p => p.name));
+  assert.equal(names()[0].props.style['--name-size'], '3.5cqw', 'Very long wide names get a compact fitting size');
+  f.race().countdown = 1; await f.frame(200);
+  assert.equal(names().length, 10); assert.ok(identities().every(node => node.props.style.opacity === 1));
+  f.race().countdown = 0; f.race().elapsed = .2; await f.frame(300);
+  assert.ok(identities().every(node => node.props.style.opacity > 0 && node.props.style.opacity < 1));
+  f.race().elapsed = 1; await f.frame(400);
+  assert.equal(names().length, 0, 'No big name overlays remain during the race');
+  await f.setProps({ raceKey: 'rematch' }); await f.frame(500);
+  assert.equal(names().length, 10); assert.ok(identities().every(node => node.props.style.opacity === 1));
+});
+
+test('purple blot covers significantly more area without obscuring the HUD layer', () => {
+  const css = readFileSync(resolve(directory, 'game.module.css'), 'utf8');
+  assert.match(css, /\.splatter i\s*\{[^}]*width:\s*58%;[^}]*height:\s*63%;[^}]*opacity:\s*\.92/);
+  for (const selector of ['hudHeader', 'bottomHud']) assert.match(css, new RegExp(`\\.${selector}\\s*\\{[^}]*z-index:\\s*1`));
+});
+
+
+test('no-target feedback publishes and clears even while the held item is unchanged', async t => {
+  const inventories = [];
+  const f = await fixture(t, { onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  const race = f.race(); race.countdown = 0; race.elapsed = 10;
+  race.karts[0].power.item = 'dance';
+  Object.assign(race.karts[0].power, { flash: .7, hitLabel: 'No racer ahead' });
+  await f.frame(600);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'dance', feedback: 'No racer ahead' }]);
+  race.karts[0].power.flash = 0;
+  await f.frame(1100);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'dance' }]);
+  Object.assign(race.karts[0].power, { flash: .7, hitLabel: 'No racer behind' });
+  await f.frame(1600);
+  assert.equal(inventories.at(-1)[0].feedback, 'No racer behind');
+  Object.assign(race.karts[0].power, { flash: .7, hitLabel: 'No rivals to strike' });
+  await f.frame(2100);
+  assert.equal(inventories.at(-1)[0].feedback, 'No rivals to strike');
+  Object.assign(race.karts[0].power, { flash: .7, hitLabel: 'Other arbitrary message' });
+  await f.frame(2600);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'dance' }], 'Only known non-sensitive feedback leaves the host');
+});
+
+test('no-target feedback respects pause and the inventory rate limit', async t => {
+  const inventories = [];
+  const f = await fixture(t, { onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100);
+  Object.assign(f.race().karts[0].power, { item: 'dance', flash: .7, hitLabel: 'No racer ahead' });
+  await f.frame(300);
+  assert.equal(inventories.length, 1);
+  await f.setProps({ paused: true });
+  await f.frame(1000);
+  assert.equal(inventories.length, 1);
+  await f.setProps({ paused: false });
+  await f.frame(2000);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'dance', feedback: 'No racer ahead' }]);
 });

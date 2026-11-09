@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { RaceRenderer } from './renderer';
 import { useRaceAudio } from './useRaceAudio';
-import { actionSequence, POWER_UPS, type PowerUp } from './powerups';
+import { actionSequence, racerAhead, POWER_UPS, type PowerUp } from './powerups';
 import { mergeControllerAction } from './actionMerge';
 import { createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
-import { sampleShortcut, sampleTrack, selectTrack, shortcutPose, TRACKS, trackPose, type TrackId } from './track';
+import { selectTrack, shortcutPose, TRACKS, trackPose, type TrackId } from './track';
+import { createCircuitMap, mapPoint } from './minimap';
 import styles from './game.module.css';
 
 export type { DriverInput, GamePlayer, RaceResult } from './simulation';
-export type PlayerInventory = { id: string; item: PowerUp | null };
+export type PlayerInventory = { id: string; item: PowerUp | null; feedback?: string };
 export type GameViewProps = {
   players: GamePlayer[];
   laps?: number;
@@ -36,12 +37,14 @@ export type GameViewProps = {
   rematchDisabled?: boolean;
 };
 
-type HudKart = { id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; z: number };
+type HudKart = { id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
+const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike']);
 const EMPTY_HUD: Hud = { countdown: 3, elapsed: 0, complete: false, karts: [], results: [] };
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight']);
 
-function snapshot(race: RaceState): Hud {
+function snapshot(race: RaceState, players: GamePlayer[]): Hud {
+  const activeIds = new Set(players.filter(player => player.connected !== false).map(player => player.id));
   const ranked = rankKarts(race);
   return {
     countdown: race.countdown, elapsed: race.elapsed, complete: race.complete,
@@ -50,7 +53,7 @@ function snapshot(race: RaceState): Hud {
       const { position } = (kart.onShortcut ? shortcutPose : trackPose)(kart.distance, kart.lane);
       return { id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
         lap: currentLap(kart, race.laps), progress: lapProgress(kart), speed: Math.round(kart.speed * 3.6),
-        boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, splatter: kart.power.splatter > 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, x: position[0], z: position[2] };
+        boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts, activeIds)?.id ?? null };
     }),
   };
 }
@@ -74,23 +77,14 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
   const [error, setError] = useState('');
   const [restart, setRestart] = useState(0);
   const selectedTrack = TRACKS.find((track) => track.id === trackId) ?? TRACKS[0];
-  const circuitMap = useMemo(() => {
-    const points = sampleTrack(selectedTrack), branch = sampleShortcut(selectedTrack);
-    const xs = [...points, ...branch].map((point) => point.x), zs = [...points, ...branch].map((point) => point.z);
-    const minX = Math.min(...xs) - 24, minZ = Math.min(...zs) - 24;
-    return {
-      path: points.filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' ') + ' Z',
-      branch: branch.filter((_, i) => i % 4 === 0).map((point, i) => `${i ? 'L' : 'M'} ${point.x.toFixed(1)} ${point.z.toFixed(1)}`).join(' '),
-      viewBox: `${minX} ${minZ} ${Math.max(...xs) - minX + 24} ${Math.max(...zs) - minZ + 24}`,
-    };
-  }, [selectedTrack]);
+  const circuitMap = useMemo(() => createCircuitMap(selectedTrack), [selectedTrack]);
   const roster = players.slice(0, 10);
   const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: paused || Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
   const totalLaps = Number.isFinite(laps) ? Math.max(1, Math.min(9, Math.round(laps))) : 3;
   const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : roster.length <= 6 ? 3 : 4;
   const rows = Math.max(1, Math.ceil(roster.length / columns));
-  const spareMapCell = roster.length > 1 && roster.length % columns !== 0;
+  const spareCells = columns * rows - roster.length;
 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { finishRef.current = onFinish; }, [onFinish]);
@@ -130,7 +124,10 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
       const callback = inventoryRef.current;
       if (!callback || race.complete || now - lastInventoryAt < 500) return;
       // Only small detached snapshots leave the authoritative simulation.
-      const inventory = race.karts.map(kart => ({ id: kart.id, item: kart.power.item }));
+      const inventory = race.karts.map(kart => ({
+        id: kart.id, item: kart.power.item,
+        ...(kart.power.flash > 0 && ITEM_FEEDBACK.has(kart.power.hitLabel) ? { feedback: kart.power.hitLabel } : {}),
+      }));
       const signature = JSON.stringify(inventory);
       if (signature === lastInventorySignature && now - lastInventoryAt < 2000) return;
       lastInventoryAt = now;
@@ -206,7 +203,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
         // on reconnect. Movement, timers, position and inventory stay frozen.
         discardPausedInput();
         if (lastHud === 0) {
-          try { renderer.render(race, 0); setHud(snapshot(race)); lastHud = now; }
+          try { renderer.render(race, 0); setHud(snapshot(race, playersRef.current)); lastHud = now; }
           catch (cause) {
             failed = true; pauseAudio();
             setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted.');
@@ -242,7 +239,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
         }
         updateAudio(race);
         if (now - lastHud > 80 || lastHud === 0 || (race.complete && !didFinish)) {
-          setHud(snapshot(race)); lastHud = now;
+          setHud(snapshot(race, playersRef.current)); lastHud = now;
         }
         // Finish/result publication takes precedence over inventory so the two
         // callbacks cannot contend for the host's room-state send in one frame.
@@ -272,9 +269,9 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
     };
   }, [rosterKey, totalLaps, trackId, raceKey, restart, audioRef, updateAudio]);
 
-  const gridStyle = { '--game-columns': columns, '--game-rows': rows, '--map-x': `${50 / columns}%`, '--map-y': `${100 / rows}%` } as CSSProperties;
+  const gridStyle = { '--game-columns': columns, '--game-rows': rows } as CSSProperties;
   return (
-    <div className={`${styles.game} ${roster.length > 6 ? styles.compact : ''}`} style={gridStyle} aria-label={`${selectedTrack.name}, ${roster.length} racers, ${totalLaps} laps`}>
+    <div className={styles.game} style={gridStyle} aria-label={`${selectedTrack.name}, ${roster.length} racers, ${totalLaps} laps`}>
       <canvas className={styles.canvas} ref={canvasRef} aria-label="3D split-screen race with a behind-the-kart camera for each player" />
       <div className={styles.hudGrid}>
         {roster.map((player, index) => {
@@ -283,22 +280,55 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
           return (
             <section className={styles.viewport} key={player.id} style={{ '--driver-color': player.color } as CSSProperties} aria-label={`${player.name}'s racing view`}>
               {kart?.splatter && <div className={styles.splatter} role="img" aria-label="Berry blot on this view"><i /><i /><i /><i /></div>}
-              <div className={styles.topHud}>
-                <div className={styles.name}><span className={styles.playerNumber}>P{index + 1}</span><strong title={player.name} aria-label={player.name}>{player.name}</strong></div>
-                <div className={styles.lap}>LAP <strong>{kart?.lap || 1}<span>/{totalLaps}</span></strong></div>
+              <div className={styles.hudHeader}>
+                <div className={styles.hudLeft}>
+                  <div className={styles.topHud}>
+                    <div className={styles.name}><span className={styles.playerNumber}>P{index + 1}</span><strong title={player.name} aria-label={player.name}>{player.name}</strong></div>
+                    <div className={styles.lap}>LAP <strong>{kart?.lap || 1}<span>/{totalLaps}</span></strong></div>
+                  </div>
+                  <div className={styles.itemHud} aria-label={kart?.item ? `Item: ${POWER_UPS[kart.item].name}` : 'No item held'}>
+                    {kart?.item ? <><span className={styles.itemIcon} style={{ color: POWER_UPS[kart.item].color }}>{POWER_UPS[kart.item].icon}</span><span className={styles.itemText}><strong>{POWER_UPS[kart.item].name}</strong><small>{kart.item === 'flask' && kart.flask ? (index === 0 && localKeyboard ? 'Tap E again for bursts' : 'Tap ITEM again for bursts') : (index === 0 && localKeyboard ? 'Press E to use' : 'Press ITEM to use')}</small></span></> : <span className={styles.itemEmpty}>ITEM</span>}
+                  </div>
+                </div>
+                <div className={styles.miniMap} aria-label={`Circuit map for ${player.name}`}>
+                  <svg className={styles.map} viewBox={circuitMap.viewBox} role="img" aria-label="Live circuit map">
+                    <title>{selectedTrack.name}. Your marker has a white ring. The racer ahead has a gold ring.</title>
+                    <path d={circuitMap.path} fill="none" stroke="#26374b" strokeWidth="17" strokeLinejoin="round" />
+                    <path d={circuitMap.path} fill="none" stroke="#a5b7cc" strokeWidth="3" strokeLinejoin="round" />
+                    <path d={circuitMap.branch} fill="none" stroke="#efae55" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" aria-label="Shortcut" />
+                    <rect x={circuitMap.start.x - 4} y={circuitMap.start.y - 4} width="8" height="8" fill="white" aria-label="Start and finish line" />
+                    {/* Draw the local player last so a crowded starting grid cannot hide them. */}
+                    {[...hud.karts.filter(entry => entry.id !== player.id), ...hud.karts.filter(entry => entry.id === player.id)].map(entry => {
+                      const self = entry.id === player.id, ahead = entry.id === kart?.aheadId;
+                      const racer = roster.find(racer => racer.id === entry.id);
+                      return <g key={entry.id} data-racer-id={entry.id} data-self={self || undefined} data-ahead={ahead || undefined}>
+                        <title>{racer?.name || 'Racer'}{self ? ' (you)' : ahead ? ' (ahead)' : ''}</title>
+                        <circle cx={entry.x} cy={entry.y} r={circuitMap.markerRadius * (self ? 1.35 : 1)} fill={racer?.color || '#ffbe68'} stroke={self ? '#ffffff' : ahead ? '#ffda68' : '#101923'} strokeWidth={circuitMap.markerRadius * (self || ahead ? 0.65 : 0.3)} />
+                        {(self || ahead) && <text x={entry.x} y={entry.y} fill="#101923" fontSize={circuitMap.markerRadius * 1.5} fontWeight="900" textAnchor="middle" dominantBaseline="central">{roster.findIndex(racer => racer.id === entry.id) + 1}</text>}
+                      </g>;
+                    })}
+                  </svg>
+                  <span className={styles.mapAhead} title={kart?.aheadId ? `Ahead: ${roster.find(racer => racer.id === kart.aheadId)?.name || 'Racer'}` : 'No racer ahead'}>{kart?.aheadId ? `AHEAD P${roster.findIndex(racer => racer.id === kart.aheadId) + 1}` : 'NO TARGET'}</span>
+                  <span className={styles.mapLegend}><i style={{ background: player.color }} />YOU P{index + 1}<span>{kart?.aheadId ? roster.find(racer => racer.id === kart.aheadId)?.name : ''}</span></span>
+                </div>
               </div>
-              {hud.countdown > 0 && !error && <div className={styles.countdown}><strong>{Math.ceil(hud.countdown)}</strong><span>GET READY</span></div>}
-              {hud.countdown === 0 && hud.elapsed < 0.85 && !error && <div className={`${styles.countdown} ${styles.go}`}><strong>GO!</strong></div>}
-              {kart?.leaderWarning && <div className={styles.warning} role="status">CROWN COMET INCOMING!</div>}
-              {kart?.hitLabel && <div className={styles.hitNotice}>{kart.hitLabel}</div>}
-              {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
-              <div className={styles.itemHud} aria-label={kart?.item ? `Item: ${POWER_UPS[kart.item].name}` : 'No item held'}>
-                {kart?.item ? <><span className={styles.itemIcon} style={{ color: POWER_UPS[kart.item].color }}>{POWER_UPS[kart.item].icon}</span><span><strong>{POWER_UPS[kart.item].name}</strong><small>{kart.item === 'flask' && kart.flask ? (index === 0 && localKeyboard ? 'Tap E again for bursts' : 'Tap ITEM again for bursts') : (index === 0 && localKeyboard ? 'Press E to use' : 'Press ITEM to use')}</small></span></> : <span className={styles.itemEmpty}>ITEM</span>}
+              <div className={styles.raceCenter}>
+                {!error && (hud.countdown > 0 || hud.elapsed < 0.85) && <div className={`${styles.countdown} ${hud.countdown === 0 ? styles.go : ''}`}>
+                  <div className={styles.countdownIdentity} style={{ opacity: hud.countdown > 0 ? 1 : Math.max(0, 1 - hud.elapsed / 0.65) }} aria-label={`Player ${index + 1}: ${player.name}`}>
+                    <span className={styles.countdownPlayer}>PLAYER {index + 1}</span>
+                    <strong className={styles.countdownName} style={{ '--name-size': player.name.length > 32 ? '3.5cqw' : player.name.length > 20 ? '6cqw' : '9cqw' } as CSSProperties}>{player.name}</strong>
+                  </div>
+                  <strong className={styles.countdownNumber}>{hud.countdown > 0 ? Math.ceil(hud.countdown) : 'GO!'}</strong>
+                  {hud.countdown > 0 && <span className={styles.countdownPrompt}>GET READY</span>}
+                </div>}
+                {kart?.leaderWarning && <div className={styles.warning} role="status">CROWN COMET INCOMING!</div>}
+                {kart?.hitLabel && <div className={styles.hitNotice}>{kart.hitLabel}</div>}
+                {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
               </div>
               <div className={styles.bottomHud}>
                 <div className={styles.position}>{place}<span>{suffix(place)}</span></div>
                 <div className={styles.driverStatus}>
-                  {kart?.dance ? <span className={styles.boost}>DANCE BREAK!</span> : kart?.prism ? <span className={styles.boost}>PRISM PARTY</span> : kart?.jet ? <span className={styles.boost}>JET KEG</span> : kart?.flask ? <span className={styles.boost}>FIZZ FLASK</span> : kart?.shield ? <span className={styles.boost}>FOAM GUARD</span> : kart?.slow ? <span className={styles.offRoad}>SLOWED</span> : kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>OFF ROAD</span> : null}
+                  {kart?.dance ? <span className={styles.boost}>{kart.danceStyle === 'twerk' ? 'TWERK TRAP!' : 'DANCE BREAK!'}</span> : kart?.prism ? <span className={styles.boost}>PRISM PARTY</span> : kart?.jet ? <span className={styles.boost}>JET KEG</span> : kart?.flask ? <span className={styles.boost}>FIZZ FLASK</span> : kart?.shield ? <span className={styles.boost}>FOAM GUARD</span> : kart?.lightning ? <span className={styles.offRoad}>LIGHTNING!</span> : kart?.slow ? <span className={styles.offRoad}>SLOWED</span> : kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>OFF ROAD</span> : null}
                   {kart?.drifting && <div className={styles.drift} aria-label={`Drift charge ${kart.driftCharge >= 2 ? 3 : kart.driftCharge >= 1.2 ? 2 : kart.driftCharge >= 0.6 ? 1 : 0} of 3`}><span>DRIFT</span><div className={styles.driftTrack}><i style={{ width: `${Math.min(100, kart.driftCharge / 2 * 100)}%` }} /></div></div>}
                   <div className={styles.speed}><strong>{kart?.speed || 0}</strong><span>km/h</span></div>
                 </div>
@@ -307,18 +337,10 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
             </section>
           );
         })}
-        {roster.length > 0 && (
-          <div className={spareMapCell ? styles.raceControl : `${styles.raceControl} ${styles.mapInset}`}>
-            {spareMapCell && <span className={styles.eyebrow}>{selectedTrack.name.toUpperCase()}</span>}
-            <svg className={styles.map} viewBox={circuitMap.viewBox} role="img" aria-label="Live circuit map">
-              <path d={circuitMap.path} fill="none" stroke="#303744" strokeWidth="16" strokeLinejoin="round" />
-              <path d={circuitMap.path} fill="none" stroke="#7c8797" strokeWidth="1.5" />
-              <path d={circuitMap.branch} fill="none" stroke="#efae55" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" aria-label="Shortcut" />
-              {hud.karts.map((kart) => <circle key={kart.id} cx={kart.x} cy={kart.z} r="6" fill={roster.find((player) => player.id === kart.id)?.color || '#ffbe68'} stroke="#fff" strokeWidth="1.8" />)}
-            </svg>
-            {spareMapCell && <div className={styles.controlClock}>{clock(hud.elapsed)}</div>}
-          </div>
-        )}
+        {spareCells > 0 && roster.length > 0 && <div className={styles.raceControl} style={{ gridColumn: `span ${spareCells}` }}>
+          <span className={styles.eyebrow}>{selectedTrack.name.toUpperCase()}</span>
+          <div className={styles.controlClock}>{clock(hud.elapsed)}</div>
+        </div>}
       </div>
       {roster.length === 0 && <div className={styles.overlay}><p>Add a racer to start the engine.</p></div>}
       {error && <div className={styles.overlay} role="alert"><div className={styles.errorCard}><strong>Race display paused</strong><p>{error}</p><button type="button" onClick={() => setRestart((value) => value + 1)}>Try again</button></div></div>}

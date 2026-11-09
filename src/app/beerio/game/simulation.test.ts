@@ -347,8 +347,8 @@ test('dance break holds the kart still through driving and collisions, then resu
   const race = createRace(players); race.countdown = 0;
   const [dancer, rival] = race.karts;
   Object.assign(dancer, { distance: 100, lane: 0, speed: 25, lateral: 4, heading: 0.3, boost: 2 });
-  Object.assign(rival, { distance: 100, lane: 0.2, speed: 20 });
-  dancer.power.item = 'dance'; players[0].input.action = 1;
+  Object.assign(rival, { distance: 99.8, lane: 0.2, speed: 20 });
+  rival.power.item = 'dance'; players[1].input.action = 1;
   stepRace(race, players, 1 / 60, false);
   const stationary = { distance: dancer.distance, lane: dancer.lane, heading: dancer.heading };
   assert.ok(dancer.power.dance > 0);
@@ -360,7 +360,8 @@ test('dance break holds the kart still through driving and collisions, then resu
     stepRace(race, players, 1 / 60, false);
     assert.deepEqual({ distance: dancer.distance, lane: dancer.lane, heading: dancer.heading }, stationary);
   }
-  assert.equal(dancer.power.used, 1);
+  assert.equal(rival.power.used, 1);
+  assert.equal(dancer.power.used, 0);
   // Move the rival away so it cannot interfere with the resumed acceleration.
   rival.distance = 300;
   advance(race, players, 4, false);

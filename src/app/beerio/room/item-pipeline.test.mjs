@@ -201,41 +201,45 @@ test('empty presses, stale traffic and explicit safety resets cannot fire a late
   assert.equal(f.race.karts[0].power.used, 1, 'reset does not replay an old press');
 });
 
-test('Dance Break arrives once through the relay, blocks driving and pickups, then permits fresh item use', async t => {
-  const f = await fixture(t);
-  const [phone] = f.phones;
-  const kart = f.race.karts[0];
-  phone.setInput(DRIVE);
-  await until(() => f.input(0).accelerate, 'held driving reaches host');
+test('Dance Break travels through the relay to the racer ahead without stopping its owner', async t => {
+  const f = await fixture(t, 2);
+  const [ownerPhone, targetPhone] = f.phones;
+  const [owner, target] = f.race.karts;
+  f.phones.forEach(phone => phone.setInput(DRIVE));
+  await until(() => f.input(0).accelerate && f.input(1).accelerate, 'held driving reaches host');
   f.pickup(0, 0, 'dance');
-  phone.useItem();
+  target.distance = owner.distance + 20; target.lane = 0;
+  ownerPhone.useItem();
   await until(() => f.input(0).action === 1, 'dance item press reaches host');
   f.step();
-  assert.equal(kart.power.used, 1);
-  assert.equal(kart.power.item, null);
-  assert.ok(kart.power.dance > 3, 'dance timer starts from the network item action');
-  assert.equal(kart.speed, 0, 'dance intentionally stops the kart despite held GO');
-  assert.deepEqual(f.input(0), { ...DRIVE, action: 1 }, 'input stays held while dance temporarily blocks physics');
+  assert.equal(owner.power.used, 1);
+  assert.equal(owner.power.item, null);
+  assert.equal(owner.power.dance, 0);
+  assert.ok(owner.speed > 0, 'the owner continues driving');
+  assert.ok(target.power.dance > 3, 'the racer ahead receives the host-authoritative dance');
+  assert.equal(target.speed, 0, 'dance stops the target despite held GO');
+  assert.deepEqual(f.input(1), DRIVE, 'the target phone input is never overwritten');
   const box = f.race.powers.boxes[3];
-  kart.distance = box.distance; kart.lane = box.lane;
+  target.distance = box.distance; target.lane = box.lane;
   f.step();
-  assert.equal(kart.power.item, null, 'dancing racers intentionally cannot collect another box');
-  assert.equal(kart.power.collected, 1);
-  kart.distance = 40; kart.lane = 0; // Finish the animation away from a pickup.
-  for (let frame = 0; kart.power.dance > 0 && frame < 240; frame++) f.step();
-  assert.equal(kart.power.dance, 0, 'the real simulation expires the dance');
+  assert.equal(target.power.item, null, 'dancing racers cannot collect another box');
+  assert.equal(target.power.collected, 0);
+  target.distance = 40; target.lane = 0;
+  target.power.item = 'guard'; targetPhone.useItem();
+  await until(() => f.input(1).action === 1, 'target presses while dancing');
+  for (let frame = 0; target.power.dance > 0 && frame < 240; frame++) f.step();
+  assert.equal(target.power.dance, 0);
   f.step();
-  assert.ok(kart.speed > 0, 'the still-held accelerator works after the dance');
-  f.pickup(0, 1, 'guard');
-  await wait(120);
+  assert.ok(target.speed > 0, 'the still-held accelerator works after the dance');
+  await wait(120); f.step();
+  assert.equal(target.power.item, 'guard');
+  assert.equal(target.power.used, 0, 'a blocked press never fires after the dance');
+  assert.equal(owner.power.used, 1, 'heartbeats cannot repeat the attack');
+  targetPhone.useItem();
+  await until(() => f.input(1).action === 2, 'fresh post-dance press reaches host');
   f.step();
-  assert.equal(kart.power.item, 'guard');
-  assert.equal(kart.power.used, 1, 'old action heartbeats do not use a post-dance pickup');
-  phone.useItem();
-  await until(() => f.input(0).action === 2, 'fresh post-dance press reaches host');
-  f.step();
-  assert.equal(kart.power.used, 2);
-  assert.ok(kart.power.shield > 0);
+  assert.equal(target.power.used, 1);
+  assert.ok(target.power.shield > 0);
 });
 
 test('automatic reconnect and a reloaded phone retain item sequence without replay', async t => {
@@ -368,7 +372,7 @@ test('Fizz Flask fresh pulses cross real WebSockets without heartbeat or reconne
 
 test('ten controllers receive all new item names with owner mapping and cannot forge host inventory', async t => {
   const f = await fixture(t, 10);
-  const kinds = ['flask', 'prism', 'splat', 'jet', 'crown'];
+  const kinds = ['flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'twerk', 'dance'];
   const received = f.phones.map(() => []);
   f.phones.forEach((phone, index) => phone.onState(state => received[index].push(state)));
   const inventory = f.race.karts.map((kart, index) => {
@@ -391,4 +395,49 @@ test('ten controllers receive all new item names with owner mapping and cannot f
   assert.equal(f.race.karts[0].power.flask, 7);
   assert.equal(f.race.karts[0].power.used, 1);
   assert.ok(f.race.karts.slice(1).every(kart => kart.power.used === 0), 'one controller never activates a different racer’s item');
+});
+
+test('one Storm Spark phone press strikes all nine rivals exactly once through the authoritative host', async t => {
+  const f = await fixture(t, 10);
+  const [phone] = f.phones;
+  f.pickup(0, 0, 'lightning');
+  f.race.powers.boxes = [];
+  f.race.karts.forEach((kart, index) => { kart.distance = 40 + index * 20; kart.speed = 30; kart.lane = 0; });
+  phone.useItem();
+  await until(() => f.input(0).action === 1, 'lightning action reaches host');
+  f.step();
+  const [owner, ...targets] = f.race.karts;
+  assert.equal(owner.power.used, 1); assert.equal(owner.power.lightningStrikes, 1);
+  assert.equal(owner.power.lightning, 0);
+  assert.ok(targets.every(kart => kart.power.lightning === 2.5 && kart.speed < 16));
+  await wait(240); f.step();
+  assert.equal(owner.power.lightningStrikes, 1, 'heartbeats do not retrigger the global strike');
+  assert.ok(targets.every(kart => kart.power.lightning < 2.5 && kart.power.lightning > 2.4));
+  const incoming = [];
+  f.phones[9].onState(state => incoming.push(state));
+  f.host.publishState({ type: 'race-effect-test', race: f.race });
+  await until(() => incoming.length > 0, 'all ten-racer host effect state fits the relay payload limit');
+  assert.equal(incoming[0].race.karts[0].power.lightningStrikes, 1);
+  assert.equal(incoming[0].race.karts[9].power.lightning, targets[8].power.lightning);
+  for (let frame = 0; frame < 180; frame++) f.step();
+  assert.ok(targets.every(kart => kart.power.lightning === 0));
+  assert.equal(owner.power.used, 1);
+});
+
+test('Twerk Trap reaches only the racer behind through real controller transport', async t => {
+  const f = await fixture(t, 3);
+  const [owner, near, far] = f.race.karts;
+  f.pickup(0, 0, 'twerk');
+  near.distance = owner.distance - 15; far.distance = owner.distance - 30;
+  f.phones[0].useItem();
+  await until(() => f.input(0).action === 1, 'twerk action reaches host');
+  f.step();
+  assert.equal(owner.power.used, 1);
+  assert.equal(owner.power.dance, 0);
+  assert.equal(near.power.danceStyle, 'twerk');
+  assert.equal(near.power.dance, 3.5);
+  assert.equal(far.power.dance, 0);
+  await wait(120); f.step();
+  assert.equal(owner.power.used, 1);
+  assert.ok(near.power.dance < 3.5);
 });

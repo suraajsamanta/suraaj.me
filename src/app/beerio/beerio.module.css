@@ -125,8 +125,28 @@
 .garagePhone .appearancePicker { flex: 0 0 auto; margin-top: 16px; }
 .practiceSetup .primary { width: 100%; margin-top: 20px; }
 
+/* A confirmed ready-up replaces the garage with an unmistakable phone screen. */
+.readyScreen { min-height: min-content; padding: 28px 0; }
+.readyCheck { display: grid; place-items: center; flex-shrink: 0; width: 80px; height: 80px; margin-bottom: 24px; border: 2px solid #77d69e; border-radius: 50%; color: #b6f5cf; background: #77d69e18; font-size: 48px; font-weight: 900; }
+.readyScreen .eyebrow { color: #b6f5cf; margin-bottom: 14px; }
+.readyScreen h1 { max-width: 100%; color: #ffce58; font-size: clamp(68px, 20vw, 140px); line-height: .95; letter-spacing: -.055em; }
+.readyScreen p { margin: 20px 0; }
+.readySelection { display: flex; align-items: center; justify-content: center; gap: 12px; max-width: 100%; margin: 0 0 28px; padding: 10px 18px; border: 1px solid #ffffff26; border-radius: 12px; background: #ffffff08; color: #ddd4e5; font-size: 12px; font-weight: 700; }
+.readySelection > span:first-child { flex-shrink: 0; font-size: 30px; }
+.readyScreen .secondary { width: min(100%, 340px); min-height: 52px; padding: 12px 14px; border-radius: 8px; line-height: 1.5; }
+.readyScreen .secondary:focus-visible { outline: 3px solid white; outline-offset: 4px; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .readyScreen { padding: 18px 0; }
+  .readyCheck { display: none; }
+  .readyScreen h1 { font-size: clamp(56px, 17dvh, 90px); }
+  .readyScreen p { margin: 12px 0; }
+  .readySelection { margin-bottom: 14px; padding: 5px 14px; }
+  .readySelection > span:first-child { font-size: 24px; }
+}
+
 .itemControl { flex-wrap: wrap; }
 .itemControl small { flex-basis: 100%; min-width: 0; font-size: 10px; font-weight: 600; letter-spacing: normal; line-height: 1.15; overflow-wrap: anywhere; text-align: center; }
+.itemControl .itemFeedback { color: #fff1b2; font-weight: 900; }
 @media (orientation: landscape) and (max-height: 600px) { .itemControl { gap: 4px; } .itemControl small { flex-basis: auto; font-size: 9px; } }
 
 /* Drift sits beside the driving buttons, like a shoulder button on a controller. */

@@ -373,7 +373,7 @@ test('each phone can choose before join, edit in lobby, and uses relay selection
   inputs.find(node => node.props.placeholder === 'Your name').props.onChange({ target: { value: 'Sam' } });
   tree = await f.render(); f.nodes(tree, node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
   assert.deepEqual(f.messages.find(message => message.type === 'join').options.appearance, chosen);
-  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...chosen, connected: true, ready: true, inRace: false, input: { ...ZERO } }] });
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...chosen, connected: true, ready: false, inRace: false, input: { ...ZERO } }] });
   tree = await f.render(); picker = f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0];
   assert.deepEqual(picker.props.value, chosen);
   const edited = { character: 'frog', vehicle: 'buggy', color: '#abcdef' };
@@ -409,14 +409,56 @@ test('phone shows only its own valid item and clears stale inventory at boundari
   tree = await f.render(); assert.equal(controller().item, undefined);
 });
 
-test('results event gives phones a finished message while reload fallback stays neutral', async t => {
+test('phone reports only its own valid no-target feedback and clears it at inventory and race boundaries', async t => {
+  const f = await fixture(t, false);
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: true, players: [{ id: 'a', name: 'Sam', color: '#ffffff', connected: true, ready: true, inRace: true, input: { ...ZERO } }] });
+  let tree = await f.render();
+  const controller = () => f.nodes(tree, node => node.type?.name === 'Controller')[0]?.props;
+  const feedback = async (label = 'No racer ahead', item = 'dance') => {
+    f.emit({ type: 'inventory', inventory: [{ id: 'b', item: 'dance', feedback: 'No racer behind' }, { id: 'a', item, feedback: label }] });
+    tree = await f.render();
+  };
+  for (const label of ['No racer ahead', 'No racer behind', 'No rivals to strike']) {
+    await feedback(label);
+    assert.equal(controller().item, 'dance', 'An unavailable target does not consume the held item');
+    assert.equal(controller().itemFeedback, label);
+  }
+  await feedback('arbitrary relay text'); assert.equal(controller().itemFeedback, '');
+  await feedback('No racer ahead', 'unknown'); assert.equal(controller().itemFeedback, '');
+  await feedback('No racer ahead', null); assert.equal(controller().itemFeedback, '');
+  await feedback();
+  f.emit({ type: 'inventory', inventory: [{ id: 'a', item: 'dance' }] }); tree = await f.render();
+  assert.equal(controller().itemFeedback, '', 'Older inventory packets and ended feedback remain compatible');
+  for (const phase of ['racing', 'results', 'lobby']) {
+    await feedback(); f.emit({ phase }); tree = await f.render();
+    assert.equal(controller().itemFeedback, '');
+  }
+  for (const patch of [{ status: 'reconnecting' }, { hostConnected: false }, { recovering: true }]) {
+    await feedback(); Object.assign(f.room, patch); tree = await f.render();
+    assert.equal(controller(), undefined);
+    f.emit({ type: 'inventory', inventory: [{ id: 'a', item: 'dance', feedback: 'No racer ahead' }] });
+    Object.assign(f.room, { status: 'connected', hostConnected: true, recovering: false }); tree = await f.render();
+    assert.equal(controller().itemFeedback, '', 'No stale no-target notice survives reconnection or recovery');
+  }
+  await feedback(); f.unlock(); tree = await f.render(); assert.equal(controller(), undefined);
+  f.lock(); tree = await f.render(); assert.equal(controller().itemFeedback, '');
+});
+
+test('results reopen the garage and the next acknowledged ready-up returns to READY', async t => {
   const f = await fixture(t, false);
   Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', color: '#ffffff', connected: true, ready: true, inRace: false, input: { ...ZERO } }] });
-  let tree = await f.render(); assert.ok(JSON.stringify(tree).includes('You’re ready!'));
-  f.emit({ phase: 'results', results: RESULTS }); tree = await f.render();
+  let tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type === 'h1')[0].props.children, 'READY');
+  f.unlock(); f.emit({ phase: 'results', results: RESULTS }); tree = await f.render();
   assert.ok(JSON.stringify(tree).includes('Race finished!'));
+  assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 1);
+  f.button(tree, 'READY UP ↗').onClick(); tree = await f.render();
+  assert.ok(JSON.stringify(tree).includes('Race finished!'), 'The relay must acknowledge readiness for a rematch too');
+  f.room.players[0].ready = true; tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type === 'h1')[0].props.children, 'READY', 'A new ready-up takes priority over the prior results event');
+  assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 0);
   f.emit({ phase: 'lobby' }); tree = await f.render();
-  assert.ok(JSON.stringify(tree).includes('You’re ready!'));
+  assert.equal(f.nodes(tree, node => node.type === 'h1')[0].props.children, 'READY');
 });
 
 test('result retry survives host send throttling and is cancelled by a later lobby', async t => {
@@ -465,7 +507,7 @@ test('phone requires confirmation before leaving an active race', async t => {
 test('rapid phone choices merge before relay ack and ignore older echoes in either order', async t => {
   for (const newestFirst of [false, true]) {
     const f = await fixture(t, false);
-    Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', character: 'bird', vehicle: 'motorcycle', color: '#123456', connected: true, ready: true, inRace: false, input: { ...ZERO } }] });
+    Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', character: 'bird', vehicle: 'motorcycle', color: '#123456', connected: true, ready: false, inRace: false, input: { ...ZERO } }] });
     let tree = await f.render(); const picker = f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0];
     picker.props.onChange({ character: 'blob' }); picker.props.onChange({ vehicle: 'buggy' });
     const sends = f.messages.filter(message => message.type === 'appearance');
@@ -489,7 +531,7 @@ test('rapid phone choices merge before relay ack and ignore older echoes in eith
 test('phone reconnect discards an unacknowledged draft and restores server selection', async t => {
   const f = await fixture(t, false);
   const server = { character: 'bird', vehicle: 'motorcycle', color: '#123456' };
-  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...server, connected: true, ready: true, inRace: false, input: { ...ZERO } }] });
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...server, connected: true, ready: false, inRace: false, input: { ...ZERO } }] });
   let tree = await f.render(); f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0].props.onChange({ character: 'blob' });
   tree = await f.render(); assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker')[0].props.value.character, 'blob');
   f.room.status = 'reconnecting'; await f.render(); f.room.status = 'connected';
@@ -550,27 +592,82 @@ test('acknowledged frozen participants include a driver who disconnects before R
   assert.deepEqual(game.players.map(player => player.id), ['a', 'b'], 'Late reconnect cannot add a viewport to the race');
 });
 
-test('phone ready toggle waits for server authority, and excluded reconnect never exposes controls', async t => {
+test('phone readiness replaces the garage only after relay acknowledgment and unready restores it', async t => {
   const f = await fixture(t, false);
-  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', color: '#ffffff', connected: true, ready: false, inRace: false, input: { ...ZERO } }] });
+  const appearance = { character: 'fox', vehicle: 'kart', color: '#123456' };
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', ...appearance, connected: true, ready: false, inRace: false, input: { ...ZERO } }] });
   let tree = await f.render();
-  assert.ok(JSON.stringify(tree).includes('Get race ready.'));
-  f.button(tree, 'READY UP ↗').onClick();
-  assert.deepEqual(f.messages.at(-1), { type: 'ready', ready: true });
-  tree = await f.render(); assert.ok(f.button(tree, 'READY UP ↗'), 'Do not invent an acknowledgement');
-  f.room.players[0].ready = true;
-  tree = await f.render(); assert.ok(JSON.stringify(tree).includes('You’re ready!'));
-  f.button(tree, '✓ READY · TAP TO UNREADY').onClick();
-  assert.deepEqual(f.messages.at(-1), { type: 'ready', ready: false });
-  f.room.locked = true;
+  const heading = () => f.nodes(tree, node => node.type === 'h1')[0]?.props.children;
+  const garages = () => f.nodes(tree, node => node.type?.name === 'AppearancePicker');
+  const readyScreens = () => f.nodes(tree, node => node.props?.className?.split(' ').includes('readyScreen'));
+  assert.equal(heading(), 'Get race ready.');
+  assert.equal(garages().length, 1);
+  f.messages.length = 0;
+  f.button(tree, 'READY UP ↗').onClick(); f.button(tree, 'READY UP ↗').onClick();
+  assert.deepEqual(f.messages, [{ type: 'ready', ready: true }, { type: 'ready', ready: true }], 'Repeated taps request the same value, not a local toggle');
   tree = await f.render();
-  assert.ok(JSON.stringify(tree).includes('Race in progress.'));
-  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
-  assert.equal(f.button(tree, 'READY UP ↗'), undefined);
+  assert.equal(heading(), 'Get race ready.', 'Do not invent an acknowledgement');
+  assert.equal(readyScreens().length, 0);
+  f.room.players[0].ready = true; tree = await f.render();
+  assert.equal(heading(), 'READY');
+  assert.equal(readyScreens().length, 1);
+  assert.equal(garages().length, 0);
+  assert.deepEqual(f.nodes(tree, node => node.props?.className === 'readySelection')[0].props.children[1].props.children, ['Fox', ' · ', 'Kart'], 'Ready keeps a compact selection summary');
+  assert.equal(f.button(tree, 'UNREADY & CHANGE SELECTION')['aria-pressed'], true);
+  f.button(tree, 'UNREADY & CHANGE SELECTION').onClick();
+  assert.deepEqual(f.messages.at(-1), { type: 'ready', ready: false });
+  tree = await f.render(); assert.equal(heading(), 'READY', 'Keep ready confirmation until unready is acknowledged');
+  f.room.players[0].ready = false; tree = await f.render();
+  assert.equal(heading(), 'Get race ready.');
+  assert.equal(readyScreens().length, 0);
+  assert.deepEqual(garages()[0].props.value, appearance, 'Unready preserves the selected racer, ride and color');
+  garages()[0].props.onChange({ color: '#abcdef' }); tree = await f.render();
+  assert.equal(garages()[0].props.value.color, '#abcdef');
+  Object.assign(f.room.players[0], { color: '#abcdef', ready: true }); tree = await f.render();
+  assert.equal(heading(), 'READY'); assert.equal(garages().length, 0);
+
+  f.room.locked = true; tree = await f.render();
+  assert.equal(heading(), 'Race in progress.');
+  assert.equal(readyScreens().length, 0);
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0, 'Excluded reconnect never exposes driving controls');
+  assert.equal(f.button(tree, 'UNREADY & CHANGE SELECTION'), undefined);
   f.unlock(); tree = await f.render();
   assert.ok(f.button(tree, 'READY UP ↗'));
-  f.room.players[0].ready = true; f.lock();
-  assert.equal(f.nodes(await f.render(), node => node.type?.name === 'Controller').length, 1);
+  f.room.players[0].ready = true; f.lock(); tree = await f.render();
+  assert.equal(readyScreens().length, 0);
+  assert.equal(garages().length, 0);
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 1);
+});
+
+test('READY yields to interruptions and restores only the relay readiness after reconnect', async t => {
+  const f = await fixture(t, false);
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, locked: false, players: [{ id: 'a', name: 'Sam', color: '#ffffff', connected: true, ready: true, inRace: false, input: { ...ZERO } }] });
+  let tree = await f.render();
+  const heading = () => f.nodes(tree, node => node.type === 'h1')[0]?.props.children;
+  assert.equal(heading(), 'READY');
+  for (const [patch, title] of [
+    [{ status: 'reconnecting' }, 'Reconnecting…'],
+    [{ hostConnected: false }, 'Host reconnecting…'],
+    [{ recovering: true }, 'Waiting for drivers…'],
+    [{ status: 'error', canRetryConnection: true }, 'Connection paused.'],
+    [{ status: 'error', canRetryConnection: false }, 'Room unavailable.'],
+    [{ status: 'closed' }, 'Room closed.'],
+  ]) {
+    Object.assign(f.room, patch); tree = await f.render();
+    assert.equal(heading(), title);
+    assert.equal(f.button(tree, 'UNREADY & CHANGE SELECTION'), undefined);
+    assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 0);
+    assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
+    Object.assign(f.room, { status: 'connected', hostConnected: true, recovering: false, canRetryConnection: false }); tree = await f.render();
+    assert.equal(heading(), 'READY');
+  }
+  f.room.status = 'reconnecting'; await f.render();
+  f.room.status = 'connected'; f.room.players[0].ready = false; tree = await f.render();
+  assert.equal(heading(), 'Get race ready.');
+  assert.equal(f.nodes(tree, node => node.type?.name === 'AppearancePicker').length, 1);
+  f.room.players[0].ready = true; tree = await f.render();
+  f.messages.length = 0; f.setConfirm(false); f.button(tree, 'LEAVE').onClick();
+  assert.ok(f.messages.some(message => message.type === 'leave'), 'Leaving a ready lobby is not an active-race confirmation');
 });
 
 test('ten-entrant finish preserves complete score and item counts through host results and lobby', async t => {

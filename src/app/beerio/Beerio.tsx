@@ -45,7 +45,7 @@ function AppearancePicker({ value, onChange }: { value: Appearance; onChange: (p
   </fieldset>;
 }
 
-function Controller({ send, useItem: activateItem, item }: { send: (input: Input) => void; useItem: () => void; item: PowerUp | null | undefined }) {
+function Controller({ send, useItem: activateItem, item, itemFeedback = "" }: { send: (input: Input) => void; useItem: () => void; item: PowerUp | null | undefined; itemFeedback?: string }) {
   const keys = useRef({ ...releasedControls });
   const pointers = useRef(new Map<number, ControlKey>());
   const steering = useRef(0);
@@ -108,7 +108,7 @@ function Controller({ send, useItem: activateItem, item }: { send: (input: Input
           const pointerType = (event.nativeEvent as PointerEvent).pointerType;
           if (event.detail === 0 && !pointerType) activateItem();
         }}
-        onContextMenu={(event) => event.preventDefault()} aria-label="Use item"><span aria-hidden="true">✦</span><strong>USE ITEM</strong><small aria-live="polite">{item === undefined ? "Waiting for item status" : item === "flask" ? "Fizz Flask · tap again for boosts" : item ? POWER_UPS[item].name : "No item yet"}</small></button>
+        onContextMenu={(event) => event.preventDefault()} aria-label="Use item"><span aria-hidden="true">✦</span><strong>USE ITEM</strong><small aria-live="polite">{item === undefined ? "Waiting for item status" : item === "flask" ? "Fizz Flask · tap again for boosts" : item ? POWER_UPS[item].name : "No item yet"}</small>{itemFeedback && <small className={styles.itemFeedback} role="status" aria-live="polite" aria-atomic="true">{itemFeedback} · item kept</small>}</button>
       <div className={styles.pedals}>{control("brake", "Brake", "BRAKE", styles.brake)}{control("accelerate", "Accelerate", "GO", styles.go)}{control("drift", "Drift", "DRIFT", styles.drift)}</div>
     </div>
   </div>;
@@ -125,6 +125,7 @@ export default function Beerio() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState("");
   const [phoneItem, setPhoneItem] = useState<PowerUp | null | undefined>(undefined);
+  const [phoneItemFeedback, setPhoneItemFeedback] = useState("");
   const [phonePhase, setPhonePhase] = useState<"unknown" | "racing" | "results">("unknown");
   const acceptInventory = useRef(false);
   const resultsRef = useRef<RaceResult[] | null>(null);
@@ -177,18 +178,20 @@ export default function Beerio() {
     return onState((value) => {
       if (!value || typeof value !== "object") return;
       const state = value as { phase?: unknown; type?: unknown; inventory?: unknown };
-      if (state.phase === "results") { setPhoneItem(undefined); setPhonePhase("results"); return; }
-      if (state.phase === "lobby") { setPhoneItem(undefined); setPhonePhase("unknown"); return; }
-      if (state.phase === "racing") { setPhoneItem(undefined); setPhonePhase("racing"); return; }
+      if (state.phase === "results") { setPhoneItem(undefined); setPhoneItemFeedback(""); setPhonePhase("results"); return; }
+      if (state.phase === "lobby") { setPhoneItem(undefined); setPhoneItemFeedback(""); setPhonePhase("unknown"); return; }
+      if (state.phase === "racing") { setPhoneItem(undefined); setPhoneItemFeedback(""); setPhonePhase("racing"); return; }
       if (state.type !== "inventory" || !room.locked || !room.hostConnected || room.recovering || room.status !== "connected" || !Array.isArray(state.inventory)) return;
-      const mine = state.inventory.find((entry: unknown) => entry && typeof entry === "object" && (entry as { id?: unknown }).id === room.playerId) as { item?: unknown } | undefined;
+      const mine = state.inventory.find((entry: unknown) => entry && typeof entry === "object" && (entry as { id?: unknown }).id === room.playerId) as { item?: unknown; feedback?: unknown } | undefined;
       const item = mine?.item;
       setPhoneItem(item === null ? null : typeof item === "string" && Object.prototype.hasOwnProperty.call(POWER_UPS, item) ? item as PowerUp : undefined);
+      const feedback = mine?.feedback;
+      setPhoneItemFeedback(typeof item === "string" && Object.prototype.hasOwnProperty.call(POWER_UPS, item) && typeof feedback === "string" && ["No racer ahead", "No racer behind", "No rivals to strike"].includes(feedback) ? feedback : "");
     });
   }, [onState, roomRole, room.playerId, room.locked, room.status, room.hostConnected, room.recovering]);
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => { if (!cancelled) { setPhoneItem(undefined); if (room.status !== "connected" || room.locked) setPhonePhase("unknown"); } });
+    queueMicrotask(() => { if (!cancelled) { setPhoneItem(undefined); setPhoneItemFeedback(""); if (room.status !== "connected" || room.locked) setPhonePhase("unknown"); } });
     return () => { cancelled = true; };
   }, [room.code, room.playerId, room.status, room.locked, room.hostConnected, room.recovering]);
   const scheduleResults = useCallback(() => {
@@ -339,22 +342,30 @@ export default function Beerio() {
     const canDrive = room.status === "connected" && room.hostConnected && room.locked && !room.recovering && self?.inRace === true;
     const player = room.players.find((driver) => driver.id === room.playerId);
     const canEdit = room.status === "connected" && room.hostConnected && !room.locked && !room.recovering && Boolean(player);
+    // Readiness comes from the relay, not the tap. Interrupted connections and
+    // a locked race always take priority over this full-screen confirmation.
+    const showReady = canEdit && player?.ready === true;
+    const showGarage = canEdit && !showReady;
     const ended = room.status === "closed" || room.status === "error";
-    const waitingTitle = room.status === "closed" ? "Room closed." : ended && room.canRetryConnection ? "Connection paused." : ended ? "Room unavailable." : room.status !== "connected" ? "Reconnecting…" : !room.hostConnected ? "Host reconnecting…" : room.recovering ? "Waiting for drivers…" : room.locked && !player?.inRace ? "Race in progress." : phonePhase === "results" ? "Race finished!" : player?.ready ? "You’re ready!" : "Get race ready.";
-    const waitingDetail = ended && room.canRetryConnection ? "Try reconnecting to return to your racer." : ended ? "Leave this room to join another race." : room.status !== "connected" ? "Your controls are paused. We’ll reconnect you automatically." : !room.hostConnected ? "Keep this screen open. Controls will return when the host reconnects." : room.recovering ? "The race is paused while drivers reconnect. Controls will return when the race resumes." : room.locked && !player?.inRace ? "You reconnected after the start. Get ready for the next race." : phonePhase === "results" ? "Nice race! Change your racer or ride below while the host prepares the next one." : player?.ready ? "Waiting for the other drivers and the host. Change your look to unready." : "Choose your racer and ride, then tap Ready when you’re set.";
+    const waitingTitle = room.status === "closed" ? "Room closed." : ended && room.canRetryConnection ? "Connection paused." : ended ? "Room unavailable." : room.status !== "connected" ? "Reconnecting…" : !room.hostConnected ? "Host reconnecting…" : room.recovering ? "Waiting for drivers…" : room.locked && !player?.inRace ? "Race in progress." : showReady ? "READY" : phonePhase === "results" ? "Race finished!" : "Get race ready.";
+    const waitingDetail = ended && room.canRetryConnection ? "Try reconnecting to return to your racer." : ended ? "Leave this room to join another race." : room.status !== "connected" ? "Your controls are paused. We’ll reconnect you automatically." : !room.hostConnected ? "Keep this screen open. Controls will return when the host reconnects." : room.recovering ? "The race is paused while drivers reconnect. Controls will return when the race resumes." : room.locked && !player?.inRace ? "You reconnected after the start. Get ready for the next race." : showReady ? "Eyes on the big screen. Your controls will appear when the host starts the race." : phonePhase === "results" ? "Nice race! Change your racer or ride below while the host prepares the next one." : "Choose your racer and ride, then tap Ready when you’re set.";
     return <main className={`${styles.shell} ${styles.phoneShell}`}>
-      <section className={`${styles.phone} ${canEdit ? styles.garagePhone : ""}`}>
+      <section className={`${styles.phone} ${showGarage ? styles.garagePhone : ""}`}>
         <header className={styles.phoneHead}>
           <div className={styles.driverIdentity}><span className={styles.avatar} style={{ background: player?.color || "#ffce58" }} /><div><strong>{player?.name || name || "DRIVER"}</strong><p>ROOM {room.code}</p></div></div>
           <button className={styles.phoneLeave} onClick={exit}>{ended ? "EXIT ROOM" : "LEAVE"}</button>
         </header>
-        {canDrive ? <Controller send={room.setInput} useItem={room.useItem} item={phoneItem} /> : <div className={`${styles.phoneWaiting} ${canEdit ? styles.phoneReady : ""}`} role="status" aria-live="polite">
-          {!canEdit && <div className={styles.waitingFlag} aria-hidden="true">{ended ? "!" : "⚑"}</div>}
-          <div className={styles.eyebrow}>{ended ? "RACE PAUSED" : room.status === "connected" && room.hostConnected ? "YOU’RE IN" : "HOLD TIGHT"}</div>
+        {canDrive ? <Controller send={room.setInput} useItem={room.useItem} item={phoneItem} itemFeedback={phoneItemFeedback} /> : <div className={`${styles.phoneWaiting} ${showGarage ? styles.phoneReady : ""} ${showReady ? styles.readyScreen : ""}`} role="status" aria-live="polite">
+          {showReady ? <div className={styles.readyCheck} aria-hidden="true">✓</div> : !canEdit && <div className={styles.waitingFlag} aria-hidden="true">{ended ? "!" : "⚑"}</div>}
+          <div className={styles.eyebrow}>{showReady ? "YOU’RE ALL SET" : ended ? "RACE PAUSED" : room.status === "connected" && room.hostConnected ? "YOU’RE IN" : "HOLD TIGHT"}</div>
           <h1>{waitingTitle}</h1><p>{waitingDetail}</p>
-          {canEdit && <button type="button" className={player?.ready ? styles.secondary : styles.primary} aria-pressed={player?.ready === true} onClick={() => room.setReady(!player?.ready)}>{player?.ready ? "✓ READY · TAP TO UNREADY" : "READY UP ↗"}</button>}
+          {showReady && <div className={styles.readySelection}>
+            <span aria-hidden="true">{CHARACTERS.find((character) => character.id === player.character)?.icon ?? CHARACTERS[0].icon} {VEHICLES.find((vehicle) => vehicle.id === player.vehicle)?.icon ?? VEHICLES[0].icon}</span>
+            <span>{CHARACTERS.find((character) => character.id === player.character)?.name ?? CHARACTERS[0].name} · {VEHICLES.find((vehicle) => vehicle.id === player.vehicle)?.name ?? VEHICLES[0].name}</span>
+          </div>}
+          {canEdit && <button type="button" className={showReady ? styles.secondary : styles.primary} aria-pressed={player?.ready === true} onClick={() => room.setReady(!player?.ready)}>{showReady ? "UNREADY & CHANGE SELECTION" : "READY UP ↗"}</button>}
         </div>}
-        {canEdit && player && <AppearancePicker value={phoneDraft ?? { character: player.character ?? "fox", vehicle: player.vehicle ?? "kart", color: player.color }} onChange={(patch) => {
+        {showGarage && player && <AppearancePicker value={phoneDraft ?? { character: player.character ?? "fox", vehicle: player.vehicle ?? "kart", color: player.color }} onChange={(patch) => {
           const next = { ...(phoneDraftRef.current ?? { character: player.character ?? "fox", vehicle: player.vehicle ?? "kart", color: player.color }), ...patch };
           if (pendingAppearance.current) olderAppearances.current = [...olderAppearances.current.slice(-15), { value: pendingAppearance.current, expires: Date.now() + 5000 }];
           phoneDraftRef.current = next; pendingAppearance.current = next; setPhoneDraft(next);

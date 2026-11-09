@@ -16,12 +16,12 @@ export function unlockRaceAudio(): Promise<boolean> {
 export function getRaceAudioContext(): AudioContext | null { return sharedContext; }
 export const noteFrequency = (note: number) => 440 * 2 ** ((note - 69) / 12);
 
-export type AudioSnapshot = { countdown: number; elapsed: number; complete: boolean; karts: { id: string; boost: boolean; bump: boolean; lap: number; finished: boolean; collected: number; used: number; shield: number; flash: number; dance?: number; leaderWarning?: number }[] };
-export type RaceSoundEvent = 'countdown' | 'go' | 'boost' | 'bump' | 'lap' | 'finish' | 'pickup' | 'item' | 'shield' | 'dance' | 'warning';
+export type AudioSnapshot = { countdown: number; elapsed: number; complete: boolean; karts: { id: string; boost: boolean; bump: boolean; lap: number; finished: boolean; collected: number; used: number; shield: number; flash: number; dance?: number; danceStyle?: 'dance' | 'twerk'; lightningStrikes?: number; leaderWarning?: number }[] };
+export type RaceSoundEvent = 'countdown' | 'go' | 'boost' | 'bump' | 'lap' | 'finish' | 'pickup' | 'item' | 'shield' | 'dance' | 'twerk' | 'lightning' | 'warning';
 export function audioSnapshot(race: RaceState): AudioSnapshot {
   return { countdown: Math.ceil(race.countdown), elapsed: race.elapsed, complete: race.complete,
     karts: race.karts.map(kart => ({ id: kart.id, boost: kart.boost > 0, bump: kart.bump > 0,
-      lap: Math.max(0, Math.floor(kart.distance / TRACK_LENGTH)), finished: kart.finishTime !== null, collected: kart.power?.collected ?? 0, used: kart.power?.used ?? 0, shield: kart.power?.shield ?? 0, flash: kart.power?.flash ?? 0, dance: kart.power?.dance ?? 0, leaderWarning: kart.power?.leaderWarning ?? 0 })) };
+      lap: Math.max(0, Math.floor(kart.distance / TRACK_LENGTH)), finished: kart.finishTime !== null, collected: kart.power?.collected ?? 0, used: kart.power?.used ?? 0, shield: kart.power?.shield ?? 0, flash: kart.power?.flash ?? 0, dance: kart.power?.dance ?? 0, danceStyle: kart.power?.danceStyle ?? 'dance', lightningStrikes: kart.power?.lightningStrikes ?? 0, leaderWarning: kart.power?.leaderWarning ?? 0 })) };
 }
 export function soundEvents(previous: AudioSnapshot | null, next: AudioSnapshot): RaceSoundEvent[] {
   const events = new Set<RaceSoundEvent>();
@@ -37,7 +37,8 @@ export function soundEvents(previous: AudioSnapshot | null, next: AudioSnapshot)
     if (kart.collected > old.collected) events.add('pickup');
     if (kart.used > old.used) events.add('item');
     if ((kart.leaderWarning ?? 0) > 0 && (old.leaderWarning ?? 0) <= 0) events.add('warning');
-    if ((kart.dance ?? 0) > 0 && (old.dance ?? 0) <= 0) events.add('dance');
+    if ((kart.dance ?? 0) > 0 && (old.dance ?? 0) <= 0) events.add(kart.danceStyle === 'twerk' ? 'twerk' : 'dance');
+    if ((kart.lightningStrikes ?? 0) > (old.lightningStrikes ?? 0)) events.add('lightning');
     if (old.shield > 0 && kart.shield <= 0 && kart.flash > 0) events.add('shield');
   }
   if (next.complete && !previous?.complete) events.add('finish');
@@ -64,7 +65,7 @@ type Source = OscillatorNode | AudioBufferSourceNode;
 type Voice = { source: Source; gain: GainNode; nodes: AudioNode[] };
 const COOLDOWN: Record<RaceSoundEvent, number> = {
   countdown: 0.25, go: 1, boost: 0.35, bump: 0.28, lap: 1, finish: 1.5,
-  pickup: 0.16, item: 0.2, shield: 0.3, dance: 0.8, warning: 0.7,
+  pickup: 0.16, item: 0.2, shield: 0.3, dance: 0.8, twerk: 0.8, lightning: 0.7, warning: 0.7,
 };
 
 /** One quiet vehicle layer and one original score for the whole host screen.
@@ -186,13 +187,23 @@ export class RaceAudio {
     if (event === 'item') { this.tone(420, time, 0.18, 0.085, 'sine', 980); this.tone(1175, time + 0.08, 0.15, 0.045, 'sine', 590); }
     if (event === 'warning') [81, 84].forEach((note, i) => this.chime(note, time + i * 0.18, 0.16, 0.085));
     if (event === 'dance') [77, 84, 81, 86, 84, 89].forEach((note, i) => this.chime(note, time + i * 0.12, 0.17, 0.065));
+    if (event === 'twerk') [60, 67, 63, 70].forEach((note, i) => {
+      this.tone(noteFrequency(note), time + i * 0.14, 0.16, 0.075, 'sine', noteFrequency(note + 3));
+      this.chime(note + 24, time + i * 0.14 + 0.04, 0.1, 0.035);
+    });
+    if (event === 'lightning') {
+      this.whoosh(time, 0.34, 0.12);
+      this.tone(970, time, 0.22, 0.065, 'sine', 190);
+      this.tone(110, time + 0.06, 0.5, 0.11, 'sine', 42);
+      this.chime(88, time + 0.04, 0.24, 0.045);
+    }
     if (event === 'shield') [96, 91, 84].forEach((note, i) => this.chime(note, time + i * 0.05, 0.2, 0.065));
     if (event === 'finish') {
       [77, 81, 84, 89, 88, 84, 89].forEach((note, i) => this.chime(note, time + i * 0.14, i === 6 ? 0.9 : 0.23, 0.105));
       [53, 60, 65].forEach(note => this.tone(noteFrequency(note), time + 0.84, 0.95, 0.055));
     }
     // Important cues sit clearly above the tune without becoming piercing.
-    if (event === 'go' || event === 'lap' || event === 'finish' || event === 'warning') {
+    if (event === 'go' || event === 'lap' || event === 'finish' || event === 'warning' || event === 'lightning') {
       this.music.gain.cancelScheduledValues(time);
       this.music.gain.setTargetAtTime(0.48, time, 0.025);
       this.music.gain.setTargetAtTime(0.82, time + (event === 'finish' ? 1.4 : 0.45), 0.18);
