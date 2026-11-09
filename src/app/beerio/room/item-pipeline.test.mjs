@@ -55,6 +55,8 @@ async function fixture(t, count = 1) {
     }
   }
   const relay = createRelay({ allowedOrigins: [ORIGIN] });
+  let clockOffset = 0;
+  relay.rooms.now = () => Date.now() + clockOffset;
   const clients = [];
   const storageByClient = new WeakMap();
   t.after(async () => {
@@ -90,10 +92,16 @@ async function fixture(t, count = 1) {
     await until(() => phone.getSnapshot().status === 'connected', 'phone welcome');
     phones.push(phone);
   }
-  phones.forEach(phone => phone.setReady(true));
-  await until(() => host.getSnapshot().players.every(player => player.ready), 'every driver ready');
-  host.setLocked(true);
-  await until(() => phones.every(phone => phone.getSnapshot().locked), 'race started on every phone');
+  const startRace = async () => {
+    host.beginCharacterSelection();
+    await until(() => phones.every(phone => phone.getSnapshot().selectionPhase === 'selecting'), 'character selection open on every phone');
+    phones.forEach(phone => phone.chooseCharacter({ confirm: true }));
+    await until(() => host.getSnapshot().selectionPhase === 'countdown', 'every character selected');
+    assert.equal(host.getSnapshot().locked, false, 'Driving remains locked out during the five-second countdown');
+    clockOffset += 5001; relay.rooms.sweep();
+    await until(() => host.getSnapshot().locked && phones.every(phone => phone.getSnapshot().locked), 'race started on every phone');
+  };
+  await startRace();
   const race = createRace(host.getSnapshot().players);
   race.countdown = 0;
   let actions = { lastControllerAction: 0, localAction: 0 };
@@ -118,7 +126,7 @@ async function fixture(t, count = 1) {
     // consistent effect; Dance Break's intentional stop is tested separately.
     kart.power.item = item;
   };
-  return { host, phones, race, input, step, pickup, sockets, storageFor, savedSession, newClient };
+  return { host, phones, race, input, step, pickup, sockets, storageFor, savedSession, newClient, startRace };
 }
 
 test('held accelerator and steering carry ITEM through both clients, relay, host merge and simulation', async t => {
@@ -302,10 +310,7 @@ test('finishing while holding GO, steer and ITEM leaves the same controller neut
   phone.setInput(DRIVE); // Late held-control callbacks cannot move a results-screen kart.
   await wait(120);
   assert.deepEqual(f.input(0), ZERO);
-  phone.setReady(true);
-  await until(() => f.host.getSnapshot().players.every(player => player.ready), 'rematch driver ready');
-  f.host.setLocked(true);
-  await until(() => phone.getSnapshot().locked && f.host.getSnapshot().locked, 'rematch boundary reaches controller');
+  await f.startRace();
   await wait(120);
   assert.deepEqual(f.input(0), ZERO, 'rematch heartbeat remains neutral until a fresh gesture');
   assert.equal(phone.getSnapshot().playerId, id);

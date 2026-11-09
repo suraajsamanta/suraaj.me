@@ -77,14 +77,26 @@ room.joinRoom({ code: 'ABC234', name: 'Avery' });
 room.setInput({ steer: -0.3, accelerate: true, brake: false });
 room.useItem();            // one press; the relay and host reject replayed sequences
 room.resetInput();
-room.setReady(true);        // player only, after choosing racer and ride
-room.setLocked(true);       // host only; requires connected racers to be ready
+room.beginCharacterSelection(); // host only, once everyone has joined
+room.chooseCharacter({ direction: 'right' }); // player joystick: up/down/left/right
+room.chooseCharacter({ confirm: true }); // player SELECT; last pick starts five seconds
+room.chooseCharacter({ confirm: false }); // change pick; cancels an active countdown
+room.skipOfflineDrivers(); // explicit host choice before a race
+room.setLocked(false);     // host returns to joining/rematch; no manual start lock
 room.publishState(state);  // host only, JSON-compatible state, capped to 20 Hz
 const unsubscribe = room.onState(state => { /* controller HUD */ });
 room.leaveRoom();
 ```
 
-`createRoom` and `joinRoom` accept optional `relayUrl` for a deliberate operator override. State fields are `status`, `role`, `code`, `playerId`, `players`, `maxPlayers`, `locked`, `hostConnected`, `error`, and `relayUrl`. `players` include `{ id, name, color, character, vehicle, connected, ready, inRace, input }`. The relay atomically freezes `inRace` at the start, excluding disconnected or unconfirmed seats. In an unlocked lobby, changing appearance or reconnecting clears readiness; unlocking after a race and restoring an unlocked room require everyone to ready up again. A locked race can recover without a new ready-up.
+`createRoom` and `joinRoom` accept optional `relayUrl` for an operator override. New hosts negotiate `characterSelectionVersion: 2`; deploy this relay before deploying the matching site, and create a new room. The new UI explains an older relay instead of silently falling back to ready-up. Version 1 selection rooms and recovered checkpoints keep their original 24-character navigation. Version 2 rooms expose 30 characters and require current phone clients; outdated clients receive a refresh-required message rather than an unseen selection. Resume capability errors preserve existing credentials and cannot allocate a recovered room. Legacy rooms without character selection retain the earlier ready protocol.
+
+Public room state includes `characterSelection`, `characterSelectionVersion`, `selectionPhase` (`gathering`, `selecting`, `countdown`, `racing`), `countdownEndsAt`, and `serverTime`. Clients normalize the deadline to their own clock when receiving a snapshot. Players include `characterConfirmed` alongside identity, appearance, connection, and `inRace`.
+
+The host opens character selection once everyone has joined with a name and color. The 6×5 grid uses the supplied 24 animal portraits at `public/beerio/characters.jpg` with Indian first names, plus six original vector portraits at `public/beerio/portraits/`: Bezos, Trump, Musk, Zuckerberg, Ye and Huang. Their requested outfits and accessories are cosmetic and grant no gameplay advantage. The portraits reflect each individual’s skin tone, hair, face, requested costume and accessories. Direction wrapping derives its row count from the negotiated roster. Phone joystick messages change the authenticated player's cursor in four directions. SELECT confirms that character, with no separate ready-up. Shared characters are allowed and every driver's name stays visible above their chosen card. Once all joined players have confirmed, the relay begins a full five-second countdown. The relay sweeper atomically locks the race and freezes the roster at the end, after rechecking every player is connected, confirmed and acknowledged. The host starts only from that lock acknowledgment, and uses an initial simulation countdown of zero, so no extra three seconds are added.
+
+New arrivals, an unconfirmed choice, disconnected phones, pending checkpoint acknowledgments or a disconnected host cancel the countdown. After resolution, a fresh five seconds starts. Missing drivers can reconnect with the same identity and pick, leave explicitly, expire after the existing grace period, or be omitted by the host's explicit Continue without disconnected drivers action. New joins after the race lock are refused. A non-participating returning controller cannot drive in an already-started race. Host Back to joining and post-race unlock clear picks for the next selection.
+
+Relay restart checkpoints preserve character picks, but a recovered countdown always restarts with a full five seconds once everyone returns. Reloading the host page intentionally reopens joining because the browser's race simulation cannot be recovered. Disconnect/reconnect without reload preserves the active selection/race and neutralizes controls. Finish or Back to lobby while offline is reconciled on reconnect, so the relay cannot stay stuck locked.
 
 Status is `idle`, `connecting`, `connected`, `reconnecting`, `error`, or `closed`. `recovering` pauses a restored race while the IDs in `recoveryWaitingFor` return; host-only `resumeRace()` explicitly continues without them. `canRetryConnection` identifies errors where `retryConnection()` can preserve the race. `onState` returns an unsubscribe callback. `leaveRoom` discards the saved session; unmount/reload preserves it to allow resume. A saved host session restores the lobby and a saved player session restores the controller. A join link targeting a different room skips restoration. Do not start authoritative simulation from a player session, a disconnected host, or a room with `recovering: true`.
 

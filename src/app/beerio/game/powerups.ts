@@ -16,7 +16,10 @@ export const POWER_UPS: Record<PowerUp, { name: string; icon: string; color: str
   lightning: { name: 'Storm Spark', icon: 'ϟ', color: '#a8dfff', description: 'Strike every other racer with lightning and slow them for 2.5 seconds. Guards and protection block it.' },
   twerk: { name: 'Twerk Trap', icon: '♫', color: '#f7a7d8', description: 'Make the racer immediately behind in race order hop out and twerk. A guard can block it.' },
 };
+export type ItemNotice = { kind: 'pickup' | 'activate' | 'full'; item: PowerUp; remaining: number };
 export type KartPowerState = {
+  /** A readable item confirmation, independent of short collision flashes. */
+  notice: ItemNotice | null;
   item: PowerUp | null;
   shield: number;
   slow: number;
@@ -61,6 +64,11 @@ type PowerKart = {
 type PowerRace = { karts: PowerKart[]; powers: PowerWorld; countdown?: number; complete?: boolean; laps?: number };
 type PowerPlayer = { id: string; connected?: boolean; input: { action?: number; brake?: boolean } };
 export const ITEM_RESPAWN_SECONDS = 4.5;
+export const ITEM_NOTICE_SECONDS = 2;
+export const ITEM_BURST_SECONDS = 0.5;
+// Combined kart/rotating-box footprint. Adjacent lanes remain separate at 4.2m.
+export const ITEM_PICKUP_HALF_WIDTH = 1.95;
+export const ITEM_PICKUP_HALF_LENGTH = 2.2;
 export const DANCE_SECONDS = 3.5;
 export const LIGHTNING_SECONDS = 2.5;
 export const FLASK_SECONDS = 7;
@@ -79,7 +87,7 @@ export function actionSequence(value: unknown): number {
 }
 export function createPowerState(initialAction = 0): KartPowerState {
   return {
-    item: null, shield: 0, slow: 0, flash: 0, hitCooldown: 0, dance: 0, danceStyle: 'dance', lightning: 0, lightningStrikes: 0,
+    notice: null, item: null, shield: 0, slow: 0, flash: 0, hitCooldown: 0, dance: 0, danceStyle: 'dance', lightning: 0, lightningStrikes: 0,
     flask: 0, flaskCooldown: 0, prism: 0, splatter: 0, jet: 0, leaderWarning: 0, hitLabel: '',
     lastAction: actionSequence(initialAction), collected: 0, used: 0,
   };
@@ -89,6 +97,16 @@ export function createPowerWorld(): PowerWorld {
     boxes: ITEM_BOX_FRACTIONS.flatMap((fraction, row) => ITEM_BOX_LANES.map((lane, column) => ({ id: row * 3 + column, distance: TRACK_LENGTH * fraction, lane, cooldown: 0 }))),
     hazards: [], projectiles: [], nextId: 1,
   };
+}
+
+export function itemNoticeText(notice: ItemNotice): string {
+  return notice.kind === 'full' ? 'Use your held item first' : `${POWER_UPS[notice.item].name} ${notice.kind === 'pickup' ? 'collected!' : 'activated!'}`;
+}
+function itemNotice(kart: PowerKart, item: PowerUp, kind: ItemNotice['kind']): void {
+  // Using an item at a box may collect the next one in the very same tick.
+  // Keep the fresh activation readable; inventory and the box burst show pickup.
+  if (kind === 'pickup' && kart.power.notice?.kind === 'activate' && kart.power.notice.remaining > ITEM_NOTICE_SECONDS - 0.35) return;
+  kart.power.notice = { kind, item, remaining: ITEM_NOTICE_SECONDS };
 }
 
 /** Driving code consumes these host-owned effects without inventing a second timer. */
@@ -232,7 +250,7 @@ function activateItem(race: PowerRace, kart: PowerKart, activeIds: ReadonlySet<s
   if (item === 'crown' && (!leader || leader.id === kart.id)) item = 'guard';
   kart.power.item = item === 'flask' ? 'flask' : null;
   kart.power.used++;
-  feedback(kart, POWER_UPS[item].name, 0.45);
+  itemNotice(kart, item, 'activate');
   if (item === 'fizz') {
     kart.boost = Math.max(kart.boost, 2.6);
     kart.power.slow = 0;
@@ -293,6 +311,10 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
   const pending: { kart: PowerKart; player: PowerPlayer }[] = [];
   for (const box of race.powers.boxes) box.cooldown = Math.max(0, box.cooldown - step);
   for (const kart of race.karts) {
+    if (kart.power.notice) {
+      kart.power.notice.remaining = Math.max(0, kart.power.notice.remaining - step);
+      if (kart.power.notice.remaining === 0) kart.power.notice = null;
+    }
     kart.power.shield = Math.max(0, kart.power.shield - step);
     kart.power.slow = Math.max(0, kart.power.slow - step);
     kart.power.flash = Math.max(0, kart.power.flash - step);
@@ -394,26 +416,47 @@ function itemFor(kart: PowerKart, box: ItemBox, karts: PowerKart[]): PowerUp {
   seed = (seed ^ (seed >>> 16)) >>> 0;
   return choices[seed % choices.length];
 }
-function crossesBox(from: number, to: number, box: ItemBox): boolean {
-  const travel = to - from;
-  return Math.abs(circularDistance(to, box.distance)) <= 2.2 ||
-    (travel > 0 && wrap(box.distance - from) <= travel + 0.5);
+/** Contact time for the entire 2D driving segment, not just the final lane.
+ * Intersect both axis intervals so a diagonal near-miss cannot collect remotely.
+ */
+function boxContact(from: number, to: number, fromLane: number, toLane: number, box: ItemBox): number | null {
+  const target = circularDistance(box.distance, from);
+  let enter = 0, exit = 1;
+  for (const [offset, travel, radius] of [[target, to - from, ITEM_PICKUP_HALF_LENGTH], [box.lane - fromLane, toLane - fromLane, ITEM_PICKUP_HALF_WIDTH]]) {
+    if (Math.abs(travel) < 1e-9) {
+      if (Math.abs(offset) > radius) return null;
+      continue;
+    }
+    const a = (offset - radius) / travel, b = (offset + radius) / travel;
+    enter = Math.max(enter, Math.min(a, b));
+    exit = Math.min(exit, Math.max(a, b));
+    if (enter > exit) return null;
+  }
+  return enter;
 }
 
 /** Run after driving physics; swept collection also works across the lap boundary. */
-export function collectPowerups(race: PowerRace, previousDistances: ReadonlyMap<string, number>, activeIds?: ReadonlySet<string>, previousRoutes?: ReadonlyMap<string, boolean>): void {
+export function collectPowerups(race: PowerRace, previousDistances: ReadonlyMap<string, number>, activeIds?: ReadonlySet<string>, previousRoutes?: ReadonlyMap<string, boolean>, previousLanes?: ReadonlyMap<string, number>): void {
   if (race.complete || (race.countdown ?? 0) > 0) return;
   const activeKarts = activeIds ? race.karts.filter(kart => activeIds.has(kart.id)) : race.karts;
   for (const box of race.powers.boxes) {
     if (box.cooldown > 0) continue;
-    const candidates = activeKarts.filter(kart => !kart.onShortcut && !previousRoutes?.get(kart.id) && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0 && kart.power.item === null && Math.abs(kart.lane - box.lane) < 1.55 && crossesBox(previousDistances.get(kart.id) ?? kart.distance, kart.distance, box));
-    // Resolve shared pickups by proximity, then stable ID, never roster iteration order.
-    candidates.sort((a, b) => Math.abs(circularDistance(a.distance, box.distance)) - Math.abs(circularDistance(b.distance, box.distance)) || a.id.localeCompare(b.id));
-    const kart = candidates[0];
+    const contacts = activeKarts.filter(kart => !kart.onShortcut && !previousRoutes?.get(kart.id) && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0)
+      .map(kart => ({ kart, contact: boxContact(previousDistances.get(kart.id) ?? kart.distance, kart.distance, previousLanes?.get(kart.id) ?? kart.lane, kart.lane, box) }))
+      .filter((entry): entry is { kart: PowerKart; contact: number } => entry.contact !== null);
+    for (const { kart, contact } of contacts) {
+      // A full slot never replaces an item or consumes another driver's box.
+      // Explain a new crossing, without renewing a notice while parked inside it.
+      if (kart.power.item && contact > 0 && !kart.power.notice) itemNotice(kart, kart.power.item, 'full');
+    }
+    const candidates = contacts.filter(({ kart }) => kart.power.item === null);
+    // Earliest actual contact wins; proximity and stable ID break simultaneous ties.
+    candidates.sort((a, b) => a.contact - b.contact || Math.abs(circularDistance(a.kart.distance, box.distance)) - Math.abs(circularDistance(b.kart.distance, box.distance)) || a.kart.id.localeCompare(b.kart.id));
+    const kart = candidates[0]?.kart;
     if (!kart) continue;
     kart.power.item = itemFor(kart, box, activeKarts);
     kart.power.collected++;
-    feedback(kart, `${POWER_UPS[kart.power.item].name} ready`, 0.55);
+    itemNotice(kart, kart.power.item, 'pickup');
     box.cooldown = ITEM_RESPAWN_SECONDS;
   }
 }

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Huang — The Silicon Maestro</title><desc id="desc">Original stylized portrait of Jensen Huang with warm complexion, short silver-streaked hair, rimless rectangular glasses, broad smile and black leather jacket, holding a silver chip amid green GPU light trails.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#8bdf3c" stop-opacity=".48"/><stop offset="1" stop-color="#121826"/></radialGradient><linearGradient id="silver" x2=".85" y2="1"><stop stop-color="#fbfdff"/><stop offset=".35" stop-color="#8b9dad"/><stop offset=".6" stop-color="#e4eef5"/><stop offset="1" stop-color="#526777"/></linearGradient><linearGradient id="leather" x2="1" y2="1"><stop stop-color="#424954"/><stop offset=".45" stop-color="#1d222b"/><stop offset="1" stop-color="#080d15"/></linearGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#fff0ab"/><stop offset=".45" stop-color="#fbc34d"/><stop offset="1" stop-color="#b77918"/></linearGradient></defs>
+<rect width="256" height="256" rx="24" fill="url(#bg)"/>
+<circle cx="128" cy="116" r="94" fill="none" stroke="#8bdf3c" stroke-opacity=".18"/>
+<path d="M25 216h206M37 225h182" stroke="#8bdf3c" stroke-opacity=".25"/>
+
+<g fill="none" stroke="#a6f35f" stroke-width="2" opacity=".75"><path d="M25 139q-7-49 38-74M193 65q42 24 38 72M38 168q9 20 26 23M214 168q-9 20-24 23"/></g>
+<g fill="#1e402c" stroke="#a2e875" stroke-width="2"><rect x="18" y="99" width="38" height="24" rx="3"/><rect x="203" y="111" width="35" height="24" rx="3"/></g><g fill="none" stroke="#7ce44a" stroke-width="2"><circle cx="31" cy="111" r="7"/><circle cx="44" cy="111" r="5"/><circle cx="216" cy="123" r="7"/><path d="M23 96v-5M32 96v-5M41 96v-5M50 96v-5M208 138v5M217 138v5M226 138v5M235 138v5"/></g>
+<path d="M61 235l8-60q4-22 34-29h48q30 7 34 29l9 60" fill="url(#leather)" stroke="#060c15" stroke-width="4"/>
+<path d="M106 146l21 15 23-15 7 88h-57z" fill="#1b2029"/><path d="M101 146l26 16-28 25-15-26M153 146l-26 16 29 25 15-26" fill="#343d49" stroke="#717a83" stroke-width="2"/>
+<path d="M128 162v73M77 194l27-6M151 188l27 6" stroke="#8c979d" stroke-width="2"/><path d="M77 207l24-6M154 201l25 6" stroke="#090e15" stroke-width="4"/>
+<path d="M114 130v22q13 12 28 0v-22" fill="#c19577"/>
+<ellipse cx="86" cy="98" rx="8" ry="14" fill="#d2aa88"/><ellipse cx="170" cy="98" rx="8" ry="14" fill="#d2aa88"/>
+<path d="M88 73q7-31 40-31 33 0 41 31v39q-7 31-40 37-31-4-41-34z" fill="#dcba98" stroke="#ac866a" stroke-width="2.5"/>
+<path d="M87 82l-3-22q8-29 44-30 38 3 44 30l-3 23-9-20-10-7-22 3-26-4-7 10z" fill="#65717b" stroke="#3d4851" stroke-width="2"/>
+<path d="M94 57q6-20 29-22M101 55q7-18 28-21M109 54q8-15 25-18M118 54q10-13 22-15M128 54q10-10 17-12M138 55q9-8 13-9M149 57l9-6" fill="none" stroke="#d7dedd" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M98 88q12-4 22 0M138 88q10-4 21 0" stroke="#6b675d" stroke-width="3" stroke-linecap="round"/>
+<g><ellipse cx="109" cy="99" rx="9" ry="5" fill="#fff7ec"/><ellipse cx="146" cy="99" rx="9" ry="5" fill="#fff7ec"/><circle cx="110" cy="99" r="4" fill="#382d27"/><circle cx="145" cy="99" r="4" fill="#382d27"/><circle cx="111" cy="98" r="1.3" fill="white"/><circle cx="146" cy="98" r="1.3" fill="white"/></g>
+<g fill="none" stroke="#d8e1e3" stroke-width="2"><rect x="94" y="91" width="29" height="19" rx="5"/><rect x="134" y="91" width="29" height="19" rx="5"/><path d="M123 99h11M86 96l8 2M163 98l8-2"/></g>
+<path d="M128 102l-5 15 11 1M97 118l10 4M149 122l9-4" fill="none" stroke="#b79272" stroke-width="2" stroke-linecap="round"/>
+<path d="M108 126q20 8 41-1-6 16-20 16-14 0-21-15" fill="#865345"/><path d="M113 128q16 5 30-1l-4 6h-22z" fill="#fff6e7"/>
+<path d="M181 209l5-23q0-8 8-7l9 2-2 10 6-9q5-6 10-2 4 4-1 10l-10 21q-4 7-13 5z" fill="#d9b18d" stroke="#a48064" stroke-width="2"/>
+<g transform="translate(205 172) rotate(16)"><rect x="-11" y="-11" width="22" height="22" rx="2" fill="url(#silver)" stroke="#daffb7" stroke-width="2"/><rect x="-6" y="-6" width="12" height="12" fill="#92d854"/><path d="M-6-15v4M0-15v4M6-15v4M-6 11v4M0 11v4M6 11v4M-15-6h4M-15 0h4M-15 6h4M11-6h4M11 0h4M11 6h4" stroke="#e0efe7" stroke-width="2"/></g><path d="M228 160l3 5 5 2-5 2-3 5-2-5-5-2 5-2z" fill="#dfffbe"/>
+
+<path d="M24 242h208" stroke="#8bdf3c" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>

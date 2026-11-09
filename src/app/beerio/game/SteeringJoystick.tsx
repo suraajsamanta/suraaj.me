@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import styles from "./steering-joystick.module.css";
 
 const DEAD_ZONE = 0.08;
-const KNOB_DIAMETER = 68;
+const KNOB_DIAMETER = 96;
 
 /** A spring-centered, horizontal analog stick. Only the owning finger can move it. */
 export default function SteeringJoystick({ onSteer }: { onSteer: (value: number) => void }) {
@@ -46,7 +46,8 @@ export default function SteeringJoystick({ onSteer }: { onSteer: (value: number)
     const box = element.getBoundingClientRect();
     const radius = Math.max(1, (box.width - KNOB_DIAMETER) / 2);
     const raw = Math.max(-1, Math.min(1, (clientX - (box.left + box.width / 2)) / radius));
-    const magnitude = Math.max(0, (Math.abs(raw) - DEAD_ZONE) / (1 - DEAD_ZONE));
+    const deadZone = Math.min(0.35, Math.max(DEAD_ZONE, 8 / radius));
+    const magnitude = Math.max(0, (Math.abs(raw) - deadZone) / (1 - deadZone));
     change(Math.sign(raw) * magnitude || 0);
   };
   const release = (id: number) => {
@@ -61,7 +62,7 @@ export default function SteeringJoystick({ onSteer }: { onSteer: (value: number)
     aria-valuenow={Math.round(value * 100)}
     aria-valuetext={value === 0 ? "Centered" : `${Math.round(Math.abs(value) * 100)}% ${value < 0 ? "left" : "right"}`}
     aria-describedby="steering-joystick-help"
-    style={{ "--steer": value } as CSSProperties}
+    style={{ "--steer": value, "--knob-size": `${KNOB_DIAMETER}px` } as CSSProperties}
     onPointerDown={(event) => {
       if (pointer.current !== null || event.button !== 0) return;
       event.preventDefault();

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Musk — The Cybernetic Maverick</title><desc id="desc">Original stylized portrait with windswept brown hair, mischievous smirk, bomber jacket and neon circuit shirt, wrench, electric vehicle hologram and sparking jet boots.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#42b9ef" stop-opacity=".48"/><stop offset="1" stop-color="#121826"/></radialGradient><linearGradient id="silver" x2=".85" y2="1"><stop stop-color="#fbfdff"/><stop offset=".35" stop-color="#8b9dad"/><stop offset=".6" stop-color="#e4eef5"/><stop offset="1" stop-color="#526777"/></linearGradient><linearGradient id="leather" x2="1" y2="1"><stop stop-color="#424954"/><stop offset=".45" stop-color="#1d222b"/><stop offset="1" stop-color="#080d15"/></linearGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#fff0ab"/><stop offset=".45" stop-color="#fbc34d"/><stop offset="1" stop-color="#b77918"/></linearGradient></defs>
+<rect width="256" height="256" rx="24" fill="url(#bg)"/>
+<circle cx="128" cy="116" r="94" fill="none" stroke="#42b9ef" stroke-opacity=".18"/>
+<path d="M25 216h206M37 225h182" stroke="#42b9ef" stroke-opacity=".25"/>
+
+<g fill="none" stroke="#4bdaff" stroke-width="2" opacity=".8"><path d="M12 113h54v40H12zM19 142l6-13h23l10 13zM27 129l5-8h13l6 8"/><circle cx="27" cy="144" r="4"/><circle cx="50" cy="144" r="4"/><path d="M202 43l12 13-12 13-12-13zM214 56h23M190 56h-15M214 46h18v20h-18M175 46h15v20h-15"/></g>
+<path d="M72 232l4-60q2-18 24-25h56q25 7 28 25l6 60" fill="#514948" stroke="#20212a" stroke-width="4"/>
+<path d="M109 151l18 9 19-9 10 79h-56z" fill="#111d2a"/><path d="M100 151l13 9-10 68H81l4-58zM155 151l-12 9 11 68h21l-5-58z" fill="#6b6058"/><path d="M88 180h15M154 180h14" stroke="#a39883" stroke-width="3"/>
+<path d="M117 180v12h17v15h-17M126 174v12h16v24M113 213h31" fill="none" stroke="#59e7d9" stroke-width="2"/><circle cx="117" cy="180" r="3" fill="#aafbe4"/><circle cx="134" cy="207" r="3" fill="#72dbff"/>
+<path d="M114 132v20q13 13 27 0v-20" fill="#d59b82"/>
+<ellipse cx="89" cy="101" rx="8" ry="14" fill="#e7b39b"/><ellipse cx="166" cy="101" rx="8" ry="14" fill="#e7b39b"/>
+<path d="M89 76q5-33 39-32 33 1 39 32v39q-7 29-39 34-28-3-37-28z" fill="#eec2a9" stroke="#bc8f77" stroke-width="2.5"/>
+<path d="M88 89l-5-24 10-18-3-10 22 3 8-13 14 11 18-11 4 15 16 1-3 18 7 14-11 14-6-23-14-6-16 4-16-7-16 12z" fill="#51413a" stroke="#2f2b2c" stroke-width="2"/>
+<path d="M100 53l15-4M129 48l14-4M147 54l13 5" stroke="#8a6d55" stroke-width="3" stroke-linecap="round"/>
+<path d="M99 94l21-3M137 92l19 4" stroke="#55433a" stroke-width="4" stroke-linecap="round"/>
+<g><ellipse cx="109" cy="103" rx="9" ry="5" fill="#fff7ec"/><ellipse cx="146" cy="103" rx="9" ry="5" fill="#fff7ec"/><circle cx="110" cy="103" r="4" fill="#6c8584"/><circle cx="145" cy="103" r="4" fill="#6c8584"/><circle cx="111" cy="102" r="1.3" fill="white"/><circle cx="146" cy="102" r="1.3" fill="white"/></g>
+<path d="M128 104l-5 16 10 1" fill="none" stroke="#c18d76" stroke-width="2"/>
+<path d="M111 132q17 6 35-5" fill="none" stroke="#85514c" stroke-width="3" stroke-linecap="round"/><path d="M137 129l7-2" stroke="#fff5ee" stroke-width="3"/>
+<g transform="translate(194 174) rotate(22)"><path d="M-5 42V5q-16-10-8-25l8 10h10l8-10Q21-4 5 5v37z" fill="url(#silver)" stroke="#b3c8d9" stroke-width="2"/><circle cx="0" cy="36" r="3" fill="#303e4b"/></g>
+<path d="M91 222h24l-2 11H86zM143 222h24l8 11h-32z" fill="#303d50" stroke="#9bb0c4" stroke-width="2"/><path d="M95 235l5 10 5-10M151 235l5 10 5-10M79 229l-6 7M181 228l6 6" stroke="#66e5ff" stroke-width="3" fill="none"/>
+
+<path d="M24 242h208" stroke="#42b9ef" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>

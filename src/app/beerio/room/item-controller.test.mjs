@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { RoomService } from '../../../../beerio-server/core.mjs';
+import { RoomService, SELECTION_COUNTDOWN_MS } from '../../../../beerio-server/core.mjs';
 
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const modules = new Map();
@@ -80,9 +80,9 @@ function controllerButtons(props, effects) {
   return buttons;
 }
 
-function pointer(pointerId, { isPrimary = false, pointerType = 'touch', button = 0, detail = 1 } = {}) {
+function pointer(pointerId, { isPrimary = false, pointerType = 'touch', button = 0, detail = 1, timeStamp = 1000 } = {}) {
   return {
-    pointerId, isPrimary, pointerType, button, detail, clientX: 244,
+    pointerId, isPrimary, pointerType, button, detail, timeStamp, clientX: 244,
     nativeEvent: { pointerId, isPrimary, pointerType, button, detail },
     preventDefault() { this.defaultPrevented = true; },
     currentTarget: { setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => true, getBoundingClientRect: () => ({ left: 10, width: 268 }) },
@@ -98,10 +98,11 @@ async function fixture(t) {
   const handlers = new Map();
   const addHandler = (name, callback) => { const previous = handlers.get(name); handlers.set(name, () => { previous?.(); callback(); }); };
   const hostMessages = [];
-  const service = new RoomService();
+  let now = Date.now();
+  const service = new RoomService({ now: () => now });
   const host = { send: message => hostMessages.push(structuredClone(message)), close() {} };
   service.connect(host);
-  service.receive(host, { type: 'create', maxPlayers: 6 });
+  service.receive(host, { type: 'create', maxPlayers: 6, characterSelectionVersion: 1 });
   const code = hostMessages.find(message => message.type === 'welcome').room.code;
   globalThis.sessionStorage = { getItem: () => null, setItem() {}, removeItem() {} };
   globalThis.document = {
@@ -142,8 +143,14 @@ async function fixture(t) {
   await new Promise(resolve => setImmediate(resolve));
   const id = client.getSnapshot().playerId;
   assert.ok(id);
-  client.setReady(true);
-  service.receive(host, { type: 'lock', locked: true });
+  assert.equal(client.getSnapshot().characterSelection, true);
+  service.receive(host, { type: 'select_characters' });
+  client.chooseCharacter({ confirm: true });
+  assert.equal(client.getSnapshot().selectionPhase, 'countdown');
+  assert.equal(client.getSnapshot().locked, false);
+  now += SELECTION_COUNTDOWN_MS;
+  service.sweep();
+  assert.equal(client.getSnapshot().selectionPhase, 'racing');
   assert.equal(client.getSnapshot().locked, true);
   assert.equal(client.getSnapshot().players.find(player => player.id === id)?.inRace, true);
   const player = { id, name: 'Controller test', color: '#ffffff', input: { steer: 0, accelerate: false, brake: false } };
@@ -152,8 +159,9 @@ async function fixture(t) {
   race.karts[0].distance = 20;
   let action = { lastControllerAction: 0, localAction: 0 };
   let taps = 0;
+  let controllerInput = null;
   const buttons = controllerButtons({
-    send: client.setInput,
+    send: input => { controllerInput = input; client.setInput(input); },
     useItem: () => { taps++; return client.useItem(); },
   }, effects);
   const step = () => {
@@ -165,7 +173,7 @@ async function fixture(t) {
     stepRace(race, [player], 1 / 60);
     return message?.input;
   };
-  return { buttons, handlers, step, player, kart: race.karts[0], taps: () => taps };
+  return { buttons, handlers, step, player, kart: race.karts[0], taps: () => taps, input: () => controllerInput };
 }
 
 test('third-finger item press reaches the race while GO and steering stay held', async t => {
@@ -223,6 +231,93 @@ test('item mouse, keyboard and assistive activation stay single-shot', async t =
   f.step();
   assert.equal(f.taps(), 2, 'Keyboard and assistive click-only activation must stay usable');
   assert.equal(f.kart.power.used, 2);
+});
+
+test('double-tap GO fires once on the second press and keeps driving while held', async t => {
+  const f = await fixture(t), go = f.buttons.get('Accelerate'), stick = f.buttons.get('Steering joystick');
+  stick.onPointerDown(pointer(1));
+  f.kart.power.item = 'guard';
+  go.onPointerDown(pointer(2, { timeStamp: 1000 }));
+  assert.equal(f.input().accelerate, true, 'the first press accelerates without a gesture delay');
+  go.onPointerUp(pointer(2, { timeStamp: 1080 }));
+  go.onLostPointerCapture(pointer(2, { timeStamp: 1080 }));
+  assert.equal(f.input().accelerate, false);
+  go.onPointerDown(pointer(3, { timeStamp: 1220 }));
+  const input = f.step();
+  assert.equal(f.taps(), 1);
+  assert.equal(input.accelerate, true);
+  assert.equal(input.steer, 1);
+  assert.equal(f.kart.power.used, 1);
+  assert.equal(f.kart.power.item, null);
+  assert.equal(f.step().accelerate, true, 'holding the second press keeps accelerating');
+  go.onClick?.(pointer(3, { timeStamp: 1220, detail: 2 }));
+  go.onPointerUp(pointer(3, { timeStamp: 1280 }));
+  f.kart.power.item = 'fizz';
+  go.onPointerDown(pointer(4, { timeStamp: 1320 }));
+  f.step();
+  assert.equal(f.taps(), 1, 'a third tap is not a second overlapping double-tap');
+  assert.equal(f.kart.power.item, 'fizz');
+  go.onPointerUp(pointer(4, { timeStamp: 1360 }));
+  go.onPointerDown(pointer(5, { timeStamp: 1450 }));
+  f.step();
+  assert.equal(f.taps(), 2, 'a deliberate new tap pair can use the next item');
+  assert.equal(f.kart.power.item, null);
+});
+
+test('slow taps, long holds, non-primary buttons and simultaneous GO touches do not fire items', async t => {
+  const f = await fixture(t), go = f.buttons.get('Accelerate');
+  go.onPointerDown(pointer(1, { timeStamp: 1000 }));
+  go.onPointerUp(pointer(1, { timeStamp: 1350 }));
+  go.onPointerDown(pointer(2, { timeStamp: 1450 }));
+  assert.equal(f.taps(), 0, 'a long hold is not the first tap');
+  go.onPointerUp(pointer(2, { timeStamp: 1500 }));
+  go.onPointerDown(pointer(3, { timeStamp: 1900 }));
+  assert.equal(f.taps(), 0, 'taps outside the window do not fire');
+  go.onPointerDown(pointer(4, { timeStamp: 1950 }));
+  go.onPointerUp(pointer(4, { timeStamp: 1980 }));
+  assert.equal(f.input().accelerate, true, 'another GO touch cannot release the owning finger');
+  assert.equal(f.taps(), 0, 'two fingers at once are not a double-tap');
+  go.onPointerCancel(pointer(3, { timeStamp: 2000 }));
+  for (const button of [1, 2]) {
+    go.onPointerDown(pointer(5, { pointerType: 'mouse', button, timeStamp: 2100 }));
+    go.onPointerUp(pointer(5, { pointerType: 'mouse', button, timeStamp: 2150 }));
+  }
+  go.onPointerDown(pointer(6, { timeStamp: 2200 }));
+  assert.equal(f.taps(), 0, 'middle and right clicks cannot arm the shortcut');
+});
+
+test('cancelled GO touches and lifecycle interruptions discard the pending double-tap', async t => {
+  const f = await fixture(t), go = f.buttons.get('Accelerate');
+  for (const event of ['onPointerCancel', 'onLostPointerCapture']) {
+    go.onPointerDown(pointer(1, { timeStamp: 1000 }));
+    go[event](pointer(1, { timeStamp: 1050 }));
+    go.onPointerDown(pointer(2, { timeStamp: 1100 }));
+    assert.equal(f.taps(), 0, `${event}: a cancelled touch cannot arm an item`);
+    go.onPointerCancel(pointer(2, { timeStamp: 1150 }));
+  }
+  for (const event of ['blur', 'pagehide', 'orientationchange', 'document:visibilitychange']) {
+    go.onPointerDown(pointer(1, { timeStamp: 2000 }));
+    go.onPointerUp(pointer(1, { timeStamp: 2050 }));
+    f.handlers.get(event)();
+    go.onPointerDown(pointer(2, { timeStamp: 2100 }));
+    assert.equal(f.taps(), 0, `${event}: stale tap memory must not fire an item`);
+    go.onPointerCancel(pointer(2, { timeStamp: 2150 }));
+  }
+});
+
+test('keyboard GO supports a deliberate double-tap without repeat or blur retriggers', async t => {
+  const f = await fixture(t), go = f.buttons.get('Accelerate');
+  const key = (timeStamp, repeat = false) => ({ key: ' ', timeStamp, repeat, preventDefault() {} });
+  f.kart.power.item = 'guard';
+  go.onKeyDown(key(1000)); go.onKeyDown(key(1040, true)); go.onKeyUp(key(1080));
+  go.onKeyDown(key(1200));
+  assert.equal(f.taps(), 1);
+  assert.equal(f.step().accelerate, true);
+  assert.equal(f.kart.power.used, 1);
+  go.onKeyDown(key(1250, true)); go.onKeyUp(key(1280));
+  assert.equal(f.taps(), 1);
+  go.onKeyDown(key(2000)); go.onKeyUp(key(2050)); go.onBlur(); go.onKeyDown(key(2100));
+  assert.equal(f.taps(), 1, 'leaving the GO button cancels its tap memory');
 });
 
 

@@ -43,5 +43,8 @@ export function useBeerioRoom({ autoResume = true }: { autoResume?: boolean } = 
     setLocked: client.setLocked,
     setAppearance: client.setAppearance,
     setReady: client.setReady,
+    beginCharacterSelection: client.beginCharacterSelection,
+    chooseCharacter: client.chooseCharacter,
+    skipOfflineDrivers: client.skipOfflineDrivers,
   };
 }

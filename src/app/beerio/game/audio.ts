@@ -183,8 +183,15 @@ export class RaceAudio {
     if (event === 'boost') { this.whoosh(time, 0.45, 0.11); this.tone(260, time, 0.32, 0.06, 'sine', 740); }
     if (event === 'bump') { this.tone(130, time, 0.13, 0.15, 'sine', 44); }
     if (event === 'lap') [84, 88, 91, 96].forEach((note, i) => this.chime(note, time + i * 0.085, 0.28, 0.085));
-    if (event === 'pickup') [84, 91, 96].forEach((note, i) => this.chime(note, time + i * 0.045, 0.19, 0.075));
-    if (event === 'item') { this.tone(420, time, 0.18, 0.085, 'sine', 980); this.tone(1175, time + 0.08, 0.15, 0.045, 'sine', 590); }
+    if (event === 'pickup') {
+      this.tone(220, time, 0.12, 0.09, 'sine', 520);
+      [79, 86, 91, 98].forEach((note, i) => this.chime(note, time + i * 0.055, 0.3, 0.105));
+    }
+    if (event === 'item') {
+      this.whoosh(time, 0.28, 0.12);
+      this.tone(180, time, 0.22, 0.11, 'sine', 720);
+      [72, 79, 84].forEach((note, i) => this.chime(note, time + 0.06 + i * 0.06, 0.36, 0.1));
+    }
     if (event === 'warning') [81, 84].forEach((note, i) => this.chime(note, time + i * 0.18, 0.16, 0.085));
     if (event === 'dance') [77, 84, 81, 86, 84, 89].forEach((note, i) => this.chime(note, time + i * 0.12, 0.17, 0.065));
     if (event === 'twerk') [60, 67, 63, 70].forEach((note, i) => {
@@ -203,7 +210,7 @@ export class RaceAudio {
       [53, 60, 65].forEach(note => this.tone(noteFrequency(note), time + 0.84, 0.95, 0.055));
     }
     // Important cues sit clearly above the tune without becoming piercing.
-    if (event === 'go' || event === 'lap' || event === 'finish' || event === 'warning' || event === 'lightning') {
+    if (event === 'go' || event === 'lap' || event === 'finish' || event === 'warning' || event === 'lightning' || event === 'pickup' || event === 'item') {
       this.music.gain.cancelScheduledValues(time);
       this.music.gain.setTargetAtTime(0.48, time, 0.025);
       this.music.gain.setTargetAtTime(0.82, time + (event === 'finish' ? 1.4 : 0.45), 0.18);

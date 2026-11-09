@@ -652,3 +652,45 @@ test('no-target feedback respects pause and the inventory rate limit', async t =
   await f.frame(2000);
   assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'dance', feedback: 'No racer ahead' }]);
 });
+
+test('pickup and activation notices publish to phones even after the item was consumed', async t => {
+  const inventories = [];
+  const f = await fixture(t, { onInventoryChange: inventory => inventories.push(inventory) });
+  await f.frame(100); const race = f.race(); race.countdown = 0; race.elapsed = 10;
+  Object.assign(race.karts[0].power, { item: 'guard', notice: { kind: 'pickup', item: 'guard', remaining: 2 } });
+  await f.frame(600);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: 'guard', feedback: 'Foam Guard collected!' }]);
+  Object.assign(race.karts[0].power, { item: null, notice: { kind: 'activate', item: 'guard', remaining: 2 } });
+  await f.frame(1100);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: null, feedback: 'Foam Guard activated!' }]);
+  race.karts[0].power.notice = null;
+  await f.frame(1600);
+  assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: null }]);
+});
+
+test('host can skip an already completed room countdown while solo retains its countdown', async t => {
+  const f = await fixture(t, { initialCountdown: 0 });
+  await f.frame(100);
+  assert.equal(f.race().countdown, 0);
+  await f.setProps({ raceKey: 'solo', initialCountdown: 3 });
+  await f.frame(200);
+  assert.equal(f.renderers.at(-1).race.countdown, 3);
+  await f.setProps({ raceKey: 'invalid', initialCountdown: Number.NaN });
+  await f.frame(300);
+  assert.equal(f.renderers.at(-1).race.countdown, 3);
+});
+
+test('each racer gets a bounded item confirmation with the correct item and accessible status', async t => {
+  const f = await fixture(t, { localKeyboard: false });
+  await f.frame(100); const race = f.race(); race.countdown = 0; race.elapsed = 10;
+  race.karts[0].power.notice = { kind: 'activate', item: 'fizz', remaining: 2 };
+  await f.frame(200);
+  const notices = () => findNodes(f.tree(), node => node.props?.className === 'itemNotice');
+  const text = node => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join(' ') : text(node?.props?.children ?? []);
+  assert.equal(notices().length, 1); assert.equal(notices()[0].props.role, 'status');
+  assert.match(text(notices()[0]), /POWER-UP ACTIVATED!/); assert.match(text(notices()[0]), /Fizz Boost/);
+  race.karts[0].power.notice = null; await f.frame(300);
+  assert.equal(notices().length, 0, 'Expired notices do not hang over the driving view');
+  race.karts[0].power.notice = { kind: 'pickup', item: 'guard', remaining: 2 }; await f.frame(400);
+  assert.match(text(notices()[0]), /POWER-UP COLLECTED!/); assert.match(text(notices()[0]), /Double-tap GO to use/);
+});

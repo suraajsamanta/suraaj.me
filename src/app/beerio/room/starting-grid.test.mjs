@@ -25,10 +25,10 @@ test('ten grid cards show real character, vehicle, color, complete names and sta
   const html = renderToStaticMarkup(React.createElement(grid.exports.default, { players, maxPlayers: 10 }));
   assert.equal((html.match(/<article/g) || []).length, 10);
   assert.match(html, new RegExp(name));
-  assert.match(html, /Hops the Frog/); assert.match(html, /Motorcycle/);
+  assert.match(html, /Varun/); assert.match(html, /Motorcycle/);
   assert.match(html, /🐸/); assert.match(html, /🏍️/); assert.match(html, /--driver-color:#123456/);
   assert.match(html, /VEHICLE COLOR #123456/);
-  assert.match(html, />READY</); assert.match(html, />NOT READY</); assert.match(html, />DISCONNECTED</);
+  assert.match(html, />JOINED</); assert.doesNotMatch(html, />READY</); assert.match(html, />DISCONNECTED</);
 });
 
 test('empty slots and responsive, wrapping layout are represented', () => {

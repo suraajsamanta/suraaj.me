@@ -66,7 +66,7 @@ test('client creates a room and handles host state permissions', async (t) => {
   const f = fixture(t);
   f.client.createRoom({ maxPlayers: 4 });
   await flush();
-  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4, recoveryVersion: 1 });
+  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4, recoveryVersion: 1, characterSelectionVersion: 2 });
   welcome(f.socket(), 'host');
   assert.equal(f.client.getSnapshot().status, 'connected');
   f.client.setLocked(true);
@@ -139,7 +139,7 @@ test('resume honors explicit room links, restores same-room identity and keeps t
   f.client.restoreSession('ABC234');
   await flush();
   assert.equal(FakeWebSocket.instances.length, count + 1);
-  assert.deepEqual(f.socket().sent[0], { type: 'resume', code: 'ABC234', token: 'a'.repeat(48) });
+  assert.deepEqual(f.socket().sent[0], { type: 'resume', code: 'ABC234', token: 'a'.repeat(48), characterSelectionVersion: 2 });
   assert.ok(!f.socket().url.includes('a'.repeat(48)));
 });
 
@@ -425,8 +425,26 @@ test('replacing an older host room leaves it and requests a new ten-player room 
   assert.equal(oldSocket.readyState, 3);
   const newSocket = f.socket(); assert.notEqual(newSocket, oldSocket);
   assert.equal(newSocket.url, oldSocket.url);
-  assert.deepEqual(newSocket.sent[0], { type: 'create', maxPlayers: 10, recoveryVersion: 1 });
+  assert.deepEqual(newSocket.sent[0], { type: 'create', maxPlayers: 10, recoveryVersion: 1, characterSelectionVersion: 2 });
   welcome(newSocket, 'host', { code: 'DEF345', maxPlayers: 10, players: [] });
   assert.equal(f.client.getSnapshot().code, 'DEF345');
   assert.equal(f.client.getSnapshot().maxPlayers, 10);
+});
+
+
+test('selection deadline uses the relay clock rather than a skewed phone clock', async (t) => {
+  const f = fixture(t); f.client.joinRoom({ code: 'ABC234', name: 'Phone' }); await flush();
+  const before = Date.now();
+  welcome(f.socket(), 'player', { characterSelection: true, selectionPhase: 'countdown', serverTime: 1000, countdownEndsAt: 6000 });
+  assert.ok(f.client.getSnapshot().countdownEndsAt >= before + 5000);
+  assert.ok(f.client.getSnapshot().countdownEndsAt <= Date.now() + 5000);
+  f.client.chooseCharacter({ confirm: false });
+  assert.deepEqual(f.socket().sent.at(-1), { type: 'character', confirm: false });
+});
+
+test('new hosts negotiate selection support and cannot silently use an older relay', async (t) => {
+  const f = fixture(t); f.client.createRoom(); await flush(); welcome(f.socket(), 'host');
+  f.client.beginCharacterSelection(); assert.match(f.client.getSnapshot().error, /older relay/);
+  f.socket().receive({ type: 'room', room: { ...f.client.getSnapshot(), characterSelection: true, selectionPhase: 'gathering' } });
+  f.client.beginCharacterSelection(); assert.deepEqual(f.socket().sent.at(-1), { type: 'select_characters' });
 });

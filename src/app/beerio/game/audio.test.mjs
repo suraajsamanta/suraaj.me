@@ -207,3 +207,23 @@ test('lightning and twerk cues are original bounded one-shots that honor mute an
   assert.equal(f.sources.length, paused);
   mix.dispose();
 });
+
+test('pickup and activation each get distinct audible cues above a briefly ducked score', () => {
+  const f = audioContext(), mix = new RaceAudio(f.context, { musicBuffer }), race = createRace([driver(0)]);
+  race.countdown = 0; mix.update(race);
+  const start = f.sources.length;
+  race.karts[0].power.collected++; mix.update(race);
+  const pickupSources = f.sources.slice(start);
+  assert.equal(pickupSources.length, 9, 'A pickup has a low pop and four bright two-voice notes');
+  assert.ok(mix.music.gain.events.some(event => event.value === .48 && event.at === 0), 'Pickup ducks the music');
+  assert.ok(mix.music.gain.events.some(event => event.value === .82 && event.at === .45), 'Score returns after the cue');
+  mix.update(race); assert.equal(f.sources.length, start + 9, 'Held inventory does not repeatedly play pickup');
+  f.tick(.6); race.elapsed = .6; const beforeActivation = f.sources.length;
+  race.karts[0].power.used++; mix.update(race);
+  const activationSources = f.sources.slice(beforeActivation);
+  assert.equal(activationSources.length, 8, 'Activation has a whoosh, sweep and three two-voice notes');
+  assert.equal(activationSources[0].kind, 'buffer', 'Activation starts with a clearly different sound');
+  assert.ok(mix.music.gain.events.some(event => event.value === .48 && event.at === .6), 'Activation also ducks the music');
+  mix.update(race); assert.equal(f.sources.length, beforeActivation + 8);
+  mix.dispose(); assert.ok(f.sources.every(source => source.stopped && source.disconnected));
+});

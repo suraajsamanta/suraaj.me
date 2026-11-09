@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { RaceRenderer } from './renderer';
 import { useRaceAudio } from './useRaceAudio';
-import { actionSequence, racerAhead, POWER_UPS, type PowerUp } from './powerups';
+import { actionSequence, itemNoticeText, racerAhead, POWER_UPS, type ItemNotice, type PowerUp } from './powerups';
 import { mergeControllerAction } from './actionMerge';
 import { createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
 import { selectTrack, shortcutPose, TRACKS, trackPose, type TrackId } from './track';
@@ -15,6 +15,8 @@ export type PlayerInventory = { id: string; item: PowerUp | null; feedback?: str
 export type GameViewProps = {
   players: GamePlayer[];
   laps?: number;
+  /** The room already runs its shared countdown; solo keeps its local countdown. */
+  initialCountdown?: number;
   /** Circuit is selected in the lobby; changing it starts a fresh race. */
   trackId?: TrackId;
   /** Changing this value starts a fresh race. Input updates never reset it. */
@@ -37,7 +39,7 @@ export type GameViewProps = {
   rematchDisabled?: boolean;
 };
 
-type HudKart = { id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
+type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
 const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike']);
 const EMPTY_HUD: Hud = { countdown: 3, elapsed: 0, complete: false, karts: [], results: [] };
@@ -51,7 +53,7 @@ function snapshot(race: RaceState, players: GamePlayer[]): Hud {
     results: raceResults(race),
     karts: race.karts.map((kart) => {
       const { position } = (kart.onShortcut ? shortcutPose : trackPose)(kart.distance, kart.lane);
-      return { id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
+      return { notice: kart.power.notice ? { ...kart.power.notice } : null, noticeKey: `${kart.power.collected}:${kart.power.used}`, id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
         lap: currentLap(kart, race.laps), progress: lapProgress(kart), speed: Math.round(kart.speed * 3.6),
         boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts, activeIds)?.id ?? null };
     }),
@@ -63,7 +65,7 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to ten chase cameras. */
-export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
+export function GameView({ players, laps = 3, initialCountdown = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
@@ -82,6 +84,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
   const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: paused || Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
   const totalLaps = Number.isFinite(laps) ? Math.max(1, Math.min(9, Math.round(laps))) : 3;
+  const countdownSeconds = Number.isFinite(initialCountdown) ? Math.max(0, Math.min(5, initialCountdown)) : 3;
   const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : roster.length <= 6 ? 3 : 4;
   const rows = Math.max(1, Math.ceil(roster.length / columns));
   const spareCells = columns * rows - roster.length;
@@ -108,6 +111,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
     if (entrants.length === 0) return;
     selectTrack(trackId);
     const race = createRace(entrants, totalLaps);
+    race.countdown = countdownSeconds;
     const keys = new Set<string>();
     const blockedKeys = new Set<string>();
     // One monotonic sequence combines keyboard presses with phone actions for player one.
@@ -126,7 +130,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
       // Only small detached snapshots leave the authoritative simulation.
       const inventory = race.karts.map(kart => ({
         id: kart.id, item: kart.power.item,
-        ...(kart.power.flash > 0 && ITEM_FEEDBACK.has(kart.power.hitLabel) ? { feedback: kart.power.hitLabel } : {}),
+        ...(kart.power.flash > 0 && ITEM_FEEDBACK.has(kart.power.hitLabel) ? { feedback: kart.power.hitLabel } : kart.power.notice ? { feedback: itemNoticeText(kart.power.notice) } : {}),
       }));
       const signature = JSON.stringify(inventory);
       if (signature === lastInventorySignature && now - lastInventoryAt < 2000) return;
@@ -267,7 +271,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
       document.removeEventListener('visibilitychange', visibility);
       canvas.removeEventListener('webglcontextlost', contextLost); canvas.removeEventListener('webglcontextrestored', contextRestored);
     };
-  }, [rosterKey, totalLaps, trackId, raceKey, restart, audioRef, updateAudio]);
+  }, [rosterKey, totalLaps, countdownSeconds, trackId, raceKey, restart, audioRef, updateAudio]);
 
   const gridStyle = { '--game-columns': columns, '--game-rows': rows } as CSSProperties;
   return (
@@ -287,7 +291,7 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
                     <div className={styles.lap}>LAP <strong>{kart?.lap || 1}<span>/{totalLaps}</span></strong></div>
                   </div>
                   <div className={styles.itemHud} aria-label={kart?.item ? `Item: ${POWER_UPS[kart.item].name}` : 'No item held'}>
-                    {kart?.item ? <><span className={styles.itemIcon} style={{ color: POWER_UPS[kart.item].color }}>{POWER_UPS[kart.item].icon}</span><span className={styles.itemText}><strong>{POWER_UPS[kart.item].name}</strong><small>{kart.item === 'flask' && kart.flask ? (index === 0 && localKeyboard ? 'Tap E again for bursts' : 'Tap ITEM again for bursts') : (index === 0 && localKeyboard ? 'Press E to use' : 'Press ITEM to use')}</small></span></> : <span className={styles.itemEmpty}>ITEM</span>}
+                    {kart?.item ? <><span className={styles.itemIcon} style={{ color: POWER_UPS[kart.item].color }}>{POWER_UPS[kart.item].icon}</span><span className={styles.itemText}><strong>{POWER_UPS[kart.item].name}</strong><small>{kart.item === 'flask' && kart.flask ? (index === 0 && localKeyboard ? 'Tap E again for bursts' : 'Double-tap GO for bursts') : (index === 0 && localKeyboard ? 'Press E to use' : 'Double-tap GO to use')}</small></span></> : <span className={styles.itemEmpty}>ITEM</span>}
                   </div>
                 </div>
                 <div className={styles.miniMap} aria-label={`Circuit map for ${player.name}`}>
@@ -323,6 +327,10 @@ export function GameView({ players, laps = 3, trackId = 'sunset', raceKey = 0, l
                 </div>}
                 {kart?.leaderWarning && <div className={styles.warning} role="status">CROWN COMET INCOMING!</div>}
                 {kart?.hitLabel && <div className={styles.hitNotice}>{kart.hitLabel}</div>}
+                {kart?.notice && !kart.finished && <div key={`${kart.notice.kind}:${kart.noticeKey}`} className={styles.itemNotice} style={{ '--item-color': POWER_UPS[kart.notice.item].color } as CSSProperties} role="status" aria-atomic="true">
+                  <span className={styles.noticeIcon} aria-hidden="true">{POWER_UPS[kart.notice.item].icon}</span>
+                  <span><small>{kart.notice.kind === 'activate' ? 'POWER-UP ACTIVATED!' : kart.notice.kind === 'pickup' ? 'POWER-UP COLLECTED!' : 'ITEM ALREADY HELD'}</small><strong>{POWER_UPS[kart.notice.item].name}</strong><em>{kart.notice.kind === 'activate' ? 'Let’s go!' : index === 0 && localKeyboard ? 'Press E to use' : 'Double-tap GO to use'}</em></span>
+                </div>}
                 {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
               </div>
               <div className={styles.bottomHud}>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Zuckerberg — The Synthetic Avatar</title><desc id="desc">Original stylized portrait with pale face, precise short brown hair, wide blue eyes and grey crewneck, raised VR headset, blue holographic menus and thumbs-up icons.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#65baff" stop-opacity=".48"/><stop offset="1" stop-color="#121826"/></radialGradient><linearGradient id="silver" x2=".85" y2="1"><stop stop-color="#fbfdff"/><stop offset=".35" stop-color="#8b9dad"/><stop offset=".6" stop-color="#e4eef5"/><stop offset="1" stop-color="#526777"/></linearGradient><linearGradient id="leather" x2="1" y2="1"><stop stop-color="#424954"/><stop offset=".45" stop-color="#1d222b"/><stop offset="1" stop-color="#080d15"/></linearGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#fff0ab"/><stop offset=".45" stop-color="#fbc34d"/><stop offset="1" stop-color="#b77918"/></linearGradient></defs>
+<rect width="256" height="256" rx="24" fill="url(#bg)"/>
+<circle cx="128" cy="116" r="94" fill="none" stroke="#65baff" stroke-opacity=".18"/>
+<path d="M25 216h206M37 225h182" stroke="#65baff" stroke-opacity=".25"/>
+
+<g fill="#67cfff" fill-opacity=".13" stroke="#75d7ff" stroke-width="1.5"><rect x="14" y="109" width="48" height="59" rx="6"/><rect x="192" y="139" width="50" height="40" rx="6"/></g><path d="M23 121h28M23 129h20M23 148h28M201 150h30M201 160h20" stroke="#84e0ff" stroke-width="2" opacity=".8"/>
+<path d="M77 236l3-62q4-23 28-27h40q26 4 29 27l3 62" fill="#8c919a" stroke="#4b535e" stroke-width="3"/>
+<path d="M108 146q20 30 40 0" fill="none" stroke="#6d737e" stroke-width="7"/><path d="M89 172l-2 59M166 172l3 59" stroke="#a4a8ae" stroke-width="3"/>
+<path d="M115 128v23q13 10 25 0v-23" fill="#d6b0a0"/>
+<ellipse cx="89" cy="100" rx="8" ry="14" fill="#e3c0ae"/><ellipse cx="166" cy="100" rx="8" ry="14" fill="#e3c0ae"/>
+<path d="M89 71q7-31 39-30 32 0 39 30v45q-9 30-39 33-30-3-39-33z" fill="#efcdbb" stroke="#bf9f8e" stroke-width="2.5"/>
+<path d="M88 78V56q9-23 40-24 29 1 39 24v22l-9-14H98z" fill="#6b5143"/><path d="M95 52h65M96 59h64" stroke="#987a62" stroke-width="2"/>
+<path d="M96 90h24M136 90h23" stroke="#836350" stroke-width="3" stroke-linecap="round"/>
+<g><ellipse cx="109" cy="102" rx="9" ry="8" fill="#fff7ec"/><ellipse cx="146" cy="102" rx="9" ry="8" fill="#fff7ec"/><circle cx="110" cy="102" r="4" fill="#6d9bb0"/><circle cx="145" cy="102" r="4" fill="#6d9bb0"/><circle cx="111" cy="101" r="1.3" fill="white"/><circle cx="146" cy="101" r="1.3" fill="white"/></g>
+<path d="M128 104l-5 15 10 1" fill="none" stroke="#bf9883" stroke-width="2"/>
+<path d="M115 132q13 3 26 0" fill="none" stroke="#a37769" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M85 53l9-10h67l10 10-4 22h-26l-8-7h-10l-8 7H89z" fill="#d7e4eb" stroke="#546a7e" stroke-width="3"/><path d="M96 52h61v11h-61z" fill="#213c54"/><path d="M104 55h44" stroke="#7ad6ff" stroke-width="3"/><path d="M85 56l-9 3v12l12 1M171 56l9 3v12l-12 1" fill="#414e61"/>
+<g transform="translate(213 84) scale(.7)"><path d="M-13 13V-4h9l4-17q1-5 5-3 7 5 3 18h12q6 0 4 7l-4 16h-24z" fill="#89e5ff"/><path d="M-21-4h7v23h-7" fill="#4c92dd"/></g>
+
+<path d="M24 242h208" stroke="#65baff" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>

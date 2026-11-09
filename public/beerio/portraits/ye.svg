@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Ye — The Avant-Garde Visionary</title><desc id="desc">Original stylized portrait with dark brown skin, close-cropped hair, metallic lower-face mask and black wraparound glasses, oversized puffer coat, violet soundwaves and geometric footwear.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#b56dff" stop-opacity=".48"/><stop offset="1" stop-color="#121826"/></radialGradient><linearGradient id="silver" x2=".85" y2="1"><stop stop-color="#fbfdff"/><stop offset=".35" stop-color="#8b9dad"/><stop offset=".6" stop-color="#e4eef5"/><stop offset="1" stop-color="#526777"/></linearGradient><linearGradient id="leather" x2="1" y2="1"><stop stop-color="#424954"/><stop offset=".45" stop-color="#1d222b"/><stop offset="1" stop-color="#080d15"/></linearGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#fff0ab"/><stop offset=".45" stop-color="#fbc34d"/><stop offset="1" stop-color="#b77918"/></linearGradient></defs>
+<rect width="256" height="256" rx="24" fill="url(#bg)"/>
+<circle cx="128" cy="116" r="94" fill="none" stroke="#b56dff" stroke-opacity=".18"/>
+<path d="M25 216h206M37 225h182" stroke="#b56dff" stroke-opacity=".25"/>
+
+<g fill="none" stroke="#c87bff" stroke-width="2" opacity=".65"><path d="M42 92q-23 43 0 82M29 80q-35 57 0 111M214 92q23 43 0 82M227 80q35 57 0 111"/></g><g fill="#b879ff"><rect x="20" y="117" width="7" height="36" rx="2"/><rect x="35" y="107" width="7" height="57" rx="2"/><rect x="49" y="122" width="7" height="27" rx="2"/><rect x="204" y="116" width="7" height="37" rx="2"/><rect x="218" y="101" width="7" height="65" rx="2"/><rect x="232" y="122" width="7" height="27" rx="2"/></g>
+<path d="M51 231l6-54q1-29 33-38l8-16h60l10 16q33 9 34 38l5 54z" fill="url(#leather)" stroke="#070d17" stroke-width="5"/>
+<path d="M97 135l31 28 32-28 8 98H89z" fill="#191d29"/>
+<path d="M60 167q34 12 59 5M57 192q34 12 63 5M56 216q36 12 64 6M137 171q29 7 61-4M137 198q30 4 64-6M137 223q29 5 65-7M128 162v72" fill="none" stroke="#4d5061" stroke-width="4"/>
+<path d="M96 136l26 27-30 10-12-27M161 136l-28 27 31 10 13-27" fill="#3c3c4c" stroke="#151522" stroke-width="3"/>
+<path d="M89 73q4-33 39-34 35 1 39 34v39q-6 33-39 38-34-5-39-38z" fill="#87513b" stroke="#4e2e28" stroke-width="2.5"/>
+<ellipse cx="88" cy="97" rx="7" ry="13" fill="#7b4936"/><ellipse cx="168" cy="97" rx="7" ry="13" fill="#7b4936"/>
+<path d="M89 71q-1-28 17-35 22-8 43 2 18 8 18 33l-8-14H97z" fill="#292024"/><path d="M97 50q29-12 60 2" fill="none" stroke="#49332d" stroke-width="4"/>
+<path d="M91 106l37 8 37-8-3 29q-14 16-34 17-20-1-35-17z" fill="url(#silver)" stroke="#566170" stroke-width="2.5"/><path d="M128 115v35M97 122l26 7M158 122l-26 7M106 137h44" stroke="#788695" stroke-width="2"/>
+<path d="M86 84l39-4 7 5 37-1-4 21-34 2-7-8-32 7z" fill="#111725" stroke="#61687d" stroke-width="3"/><path d="M97 88l20-2M140 89h19" stroke="#9a7bc3" stroke-width="2"/>
+<path d="M76 228l37-1 8 11H68zM144 227l36 1 10 10h-49z" fill="#797d8d" stroke="#111827" stroke-width="2"/><path d="M73 242h44M145 242h42" stroke="#e6a4ff" stroke-width="4"/>
+
+<path d="M24 242h208" stroke="#b56dff" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>

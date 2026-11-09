@@ -5,7 +5,7 @@ import { addFoundryScenery } from './foundryScenery';
 import { FOUNDRY_THEME } from './foundryCourse';
 import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, shortcutPose, trackPose, wrap, type Vec3 } from './track';
 import type { GamePlayer, RaceState } from './simulation';
-import { DANCE_SECONDS, LIGHTNING_SECONDS } from './powerups';
+import { DANCE_SECONDS, LIGHTNING_SECONDS, ITEM_RESPAWN_SECONDS, ITEM_BURST_SECONDS, ITEM_NOTICE_SECONDS } from './powerups';
 
 type Color = [number, number, number];
 type Mesh = { buffer: WebGLBuffer; count: number };
@@ -369,7 +369,299 @@ const CHARACTER_COLORS: Record<string, Color> = {
   fox: [1, 0.48, 0.19], robot: [0.63, 0.75, 0.84], frog: [0.4, 0.81, 0.29],
   cat: [0.67, 0.51, 0.87], alien: [0.32, 0.86, 0.72], bear: [0.68, 0.4, 0.23],
   bird: [1, 0.79, 0.22], blob: [0.99, 0.48, 0.69],
+  gorilla: [0.19, 0.23, 0.29], tiger: [1, 0.61, 0.12], monkey: [0.62, 0.39, 0.19],
+  hippo: [0.51, 0.56, 0.45], flamingo: [1, 0.58, 0.72], rabbit: [0.9, 0.92, 0.94],
+  panda: [0.94, 0.94, 0.87], zebra: [0.9, 0.88, 0.86], cow: [0.3, 0.22, 0.18],
+  sheep: [0.92, 0.9, 0.85], lion: [1, 0.75, 0.16], buffalo: [0.43, 0.26, 0.15],
+  orangutan: [0.84, 0.4, 0.1], elephant: [0.57, 0.66, 0.75], goat: [0.83, 0.81, 0.51],
+  crocodile: [0.18, 0.72, 0.18], antelope: [0.67, 0.4, 0.16], fish: [0.94, 0.1, 0.12],
+  pig: [1, 0.63, 0.68], ram: [0.83, 0.78, 0.65], donkey: [0.48, 0.45, 0.38],
+  giraffe: [0.98, 0.76, 0.35], horse: [0.63, 0.27, 0.13],
+  bezos: [.914, .725, .58], trump: [.925, .702, .525], musk: [.933, .761, .663],
+  zuckerberg: [.937, .804, .733], ye: [.529, .318, .231], huang: [.863, .729, .596],
 };
+/** Stylized likenesses use each person's actual hair, complexion and signature
+ * outfit. Cosmetic props never change a driver's collision shape or abilities. */
+const FIGURE_SKIN: Record<string, Color> = {
+  bezos: [.914, .725, .58], trump: [.925, .702, .525], musk: [.933, .761, .663],
+  zuckerberg: [.937, .804, .733], ye: [.529, .318, .231], huang: [.863, .729, .596],
+};
+const FIGURE_OUTFIT: Record<string, Color> = {
+  bezos: [.08, .13, .19], trump: [.07, .19, .42], musk: [.17, .2, .19],
+  zuckerberg: [.43, .46, .49], ye: [.085, .075, .12], huang: [.045, .055, .07],
+};
+const GOLD: Color = [1, .72, .19], HOLO_BLUE: Color = [.28, .79, 1], GPU_GREEN: Color = [.45, 1, .18];
+const isFigure = (id: string) => Object.prototype.hasOwnProperty.call(FIGURE_SKIN, id);
+
+function figureHead(g: Geometry, id: string, center: Vec3) {
+  const [x, y, z] = center, skin = FIGURE_SKIN[id], hair: Color = [.2, .15, .12];
+  const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
+  const wide = id === 'trump' ? .49 : id === 'huang' ? .45 : .41;
+  g.ellipsoid(center, [wide, id === 'zuckerberg' ? .53 : .48, .38], skin, 12, 7);
+  for (const side of [-1, 1]) g.ellipsoid(p(side * wide, -.01, -.02), [.085, .14, .07], skin, 7, 4);
+  // Huang's short salt-and-pepper cut and glasses are his identity cues, not
+  // flags or exaggerated ethnic shorthand. All faces retain normal proportions.
+  if (id === 'bezos') {
+    g.ellipsoid(p(-.1, .32, .12), [.19, .07, .13], [.98, .92, .82], 8, 4);
+    g.ellipsoid(p(.12, .4, -.04), [.1, .025, .12], [1, .98, .94], 7, 4);
+  } else if (id === 'trump') {
+    const orange: Color = [1, .62, .15];
+    g.ellipsoid(p(0, .35, -.05), [.52, .24, .4], orange, 10, 5);
+    g.ellipsoid(p(-.08, .46, .19), [.55, .15, .25], [1, .77, .25], 10, 5);
+    g.ellipsoid(p(-.25, .29, .34), [.31, .14, .1], orange, 8, 4);
+    g.triangle(p(.37, .4, -.22), p(-.45, .66, .09), p(-.48, .29, .36), GOLD);
+  } else if (id === 'musk') {
+    g.ellipsoid(p(0, .34, -.1), [.43, .22, .33], hair, 9, 5);
+    for (let i = 0; i < 5; i++) {
+      const dx = -.34 + i * .16;
+      g.triangle(p(dx - .1, .34, .16), p(dx + .1, .35, .19), p(dx - .11, .62 + (i % 2) * .07, -.24), hair);
+      g.triangle(p(dx + .1, .35, .19), p(dx + .11, .31, -.29), p(dx - .11, .62 + (i % 2) * .07, -.24), [.28, .2, .14]);
+    }
+  } else if (id === 'zuckerberg') {
+    g.ellipsoid(p(0, .38, -.08), [.42, .16, .33], [.39, .27, .19], 10, 5);
+    g.box(p(0, .32, .25), [.7, .09, .05], [.39, .27, .19]);
+    // Raised VR headset, with a strap that remains visible in the chase view.
+    g.box(p(0, .33, .36), [.69, .24, .17], CHARCOAL);
+    for (const side of [-1, 1]) {
+      g.box(p(side * .17, .33, .46), [.23, .11, .025], HOLO_BLUE);
+      g.box(p(side * .43, .29, -.03), [.05, .1, .66], CHARCOAL);
+    }
+    g.box(p(0, .29, -.37), [.83, .1, .055], CHARCOAL);
+  } else if (id === 'huang') {
+    g.ellipsoid(p(0, .34, -.09), [.46, .21, .34], [.17, .18, .19], 10, 5);
+    for (const side of [-1, 1]) {
+      g.ellipsoid(p(side * .35, .2, -.04), [.105, .27, .27], [.69, .72, .73], 7, 4);
+      for (let i = 0; i < 3; i++) g.beam(p(side * (.12 + i * .09), .48 - i * .035, -.23), p(side * (.08 + i * .09), .49 - i * .035, .12), .018, [.8, .82, .83]);
+    }
+  } else if (id === 'ye') {
+    g.ellipsoid(p(0, .07, -.17), [.53, .56, .37], FIGURE_OUTFIT[id], 10, 6);
+    g.ellipsoid(p(0, -.015, .16), [.41, .44, .27], [.49, .51, .56], 10, 6);
+    for (const side of [-1, 1]) g.ellipsoid(p(side * .17, .1, .405), [.18, .095, .035], [.025, .025, .04], 8, 4);
+    g.box(p(0, .1, .415), [.13, .055, .04], CHARCOAL);
+    for (let i = -2; i <= 2; i++) g.box(p(i * .055, -.17, .419), [.018, .12, .02], [.17, .19, .23]);
+    return;
+  }
+  const eyeY = id === 'zuckerberg' ? -.015 : .035;
+  for (const side of [-1, 1]) {
+    const eyeHeight = id === 'zuckerberg' ? .1 : id === 'huang' ? .052 : .062;
+    g.ellipsoid(p(side * .17, eyeY, .342), [.1, eyeHeight, .035], [1, .98, .93], 7, 4);
+    g.ellipsoid(p(side * .17, eyeY, .373), [.037, eyeHeight * .72, .018], id === 'musk' || id === 'zuckerberg' ? [.13, .3, .42] : [.17, .13, .1], 6, 4);
+    g.beam(p(side * .08, eyeY + .13, .346), p(side * .27, eyeY + .13 + (id === 'trump' ? -.055 : .015), .31), .025, id === 'trump' ? GOLD : hair);
+  }
+  g.ellipsoid(p(0, -.08, .37), [id === 'huang' ? .09 : .075, .13, .1], skin, 7, 4);
+  if (id === 'bezos') {
+    g.ellipsoid(p(0, -.24, .32), [.25, .095, .05], [.39, .16, .12], 8, 4);
+    g.box(p(0, -.22, .37), [.38, .075, .025], [1, .99, .94]);
+    for (let tooth = -2; tooth <= 2; tooth++) g.box(p(tooth * .06, -.22, .385), [.009, .065, .008], [.72, .68, .6]);
+  } else if (id === 'trump') {
+    g.ellipsoid(p(0, -.25, .35), [.12, .068, .055], [.8, .38, .29], 8, 4);
+    g.box(p(0, -.25, .401), [.11, .013, .012], [.42, .2, .18]);
+  } else if (id === 'huang') {
+    g.beam(p(-.15, -.215, .335), p(0, -.265, .36), .016, [.44, .25, .21]);
+    g.beam(p(0, -.265, .36), p(.15, -.215, .335), .016, [.44, .25, .21]);
+  } else {
+    g.beam(p(-.13, -.24, .335), p(.13, id === 'musk' ? -.19 : -.235, .335), .017, [.44, .25, .21]);
+  }
+  if (id === 'huang') {
+    // Open rectangular wire rims rather than opaque sunglasses.
+    for (const side of [-1, 1]) {
+      const left = side * .17 - .135, right = side * .17 + .135;
+      for (const yy of [-.045, .13]) g.beam(p(left, yy, .392), p(right, yy, .392), .009, SILVER);
+      for (const xx of [left, right]) g.beam(p(xx, -.045, .392), p(xx, .13, .392), .009, SILVER);
+      g.beam(p(side * .31, .1, .38), p(side * .43, .1, -.02), .012, SILVER);
+    }
+    g.beam(p(-.035, .07, .399), p(.035, .07, .399), .012, SILVER);
+  }
+}
+
+function figureTorso(g: Geometry, id: string, center: Vec3, accent: Color) {
+  const [x, y, z] = center, coat = FIGURE_OUTFIT[id];
+  const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
+  const width = id === 'trump' ? .52 : id === 'ye' ? .59 : id === 'musk' ? .46 : .39;
+  if (id === 'ye') {
+    for (let band = 0; band < 4; band++) g.ellipsoid(p(0, -.3 + band * .21, 0), [width, .17, .39], coat, 9, 4);
+    g.box(p(0, -.03, .392), [.035, .82, .035], SILVER);
+  } else {
+    g.ellipsoid(center, [width, id === 'bezos' ? .52 : .46, .32], coat, 10, 6);
+    if (id === 'bezos') {
+      g.box(p(0, .08, .31), [.23, .69, .05], [1, .97, .9]);
+      for (const side of [-1, 1]) {
+        g.box(p(side * .21, -.05, .31), [.17, .62, .09], coat);
+        g.box(p(side * .23, -.13, .37), [.13, .16, .025], [.16, .22, .28]);
+      }
+    } else if (id === 'trump') {
+      g.box(p(0, .05, .32), [.24, .63, .045], [1, .97, .92]);
+      for (const side of [-1, 1]) g.triangle(p(side * .32, .36, .29), p(side * .07, .04, .37), p(side * .09, -.13, .35), [.12, .27, .52]);
+      g.box(p(0, -.19, .37), [.115, 1, .045], [.94, .05, .07]);
+      g.triangle(p(-.058, -.69, .396), p(.058, -.69, .396), p(0, -.82, .396), [.94, .05, .07]);
+    } else if (id === 'musk') {
+      g.box(p(0, .02, .323), [.35, .6, .04], CHARCOAL);
+      for (let line = 0; line < 3; line++) {
+        g.beam(p(-.12, -.15 + line * .13, .35), p(.12, -.15 + line * .13, .35), .013, HOLO_BLUE);
+        g.beam(p(-.1 + line * .1, -.19, .35), p(-.1 + line * .1, .19, .35), .01, GPU_GREEN);
+      }
+      g.box(p(0, -.38, -.02), [.82, .08, .56], [.25, .28, .25]);
+    } else if (id === 'huang') {
+      g.box(p(0, 0, .323), [.018, .68, .025], SILVER);
+      for (const side of [-1, 1]) {
+        g.triangle(p(side * .29, .33, .25), p(side * .06, .08, .36), p(side * .16, -.08, .34), [.14, .16, .18]);
+        g.beam(p(side * .16, -.16, .32), p(side * .31, -.04, .26), .012, SILVER);
+      }
+    }
+  }
+  // Tiny rear racing stripe preserves the driver's chosen color without
+  // recoloring the requested suit, puffer, leather jacket or grey shirt.
+  g.box(p(0, -.12, -.325), [.3, .09, .025], accent);
+}
+
+function figureHand(g: Geometry, id: string, center: Vec3, gesture = false) {
+  g.sphere(center, .12, FIGURE_SKIN[id], 7, 4);
+  if (gesture && id === 'trump') g.beam([center[0] - .07, center[1], center[2]], [center[0] - .09, center[1] + .23, center[2]], .052, FIGURE_SKIN[id]);
+}
+function figureProp(g: Geometry, id: string, hand: Vec3, chest: Vec3) {
+  const p = (dx: number, dy: number, dz: number): Vec3 => [hand[0] + dx, hand[1] + dy, hand[2] + dz];
+  if (id === 'bezos') {
+    const base: Vec3 = [chest[0] + .65, chest[1] + .05, chest[2] - .13];
+    g.box(base, [.28, .13, .27], GOLD);
+    g.cylinder([base[0], base[1] + .07, base[2]], .08, .38, SILVER, 8, .075);
+    g.cylinder([base[0], base[1] + .45, base[2]], .075, .16, [1, .94, .72], 8, 0);
+    for (const side of [-1, 1]) g.triangle([base[0] + side * .075, base[1] + .13, base[2]], [base[0] + side * .19, base[1] + .07, base[2]], [base[0] + side * .075, base[1] + .3, base[2]], GOLD);
+    g.sphere([base[0], base[1] + .29, base[2] + .075], .045, HOLO_BLUE, 6, 4, true);
+  } else if (id === 'musk') {
+    g.beam(p(0, -.18, 0), p(0, .47, 0), .055, SILVER);
+    g.beam(p(-.12, .49, 0), p(.12, .49, 0), .055, SILVER);
+    for (const side of [-1, 1]) g.beam(p(side * .12, .49, 0), p(side * .12, .68, 0), .055, SILVER);
+  } else if (id === 'huang') {
+    g.box(p(.01, .18, .02), [.21, .2, .05], [.8, .85, .87]);
+    g.box(p(.01, .18, .052), [.12, .11, .016], GPU_GREEN);
+    for (const side of [-1, 1]) for (let pin = -1; pin <= 1; pin++) g.box(p(.01 + side * .13, .18 + pin * .06, .02), [.06, .018, .022], GOLD);
+    // Two fingers visibly pinch the relic rather than hiding it in a fist.
+    g.beam(p(-.06, .02, 0), p(-.075, .16, .02), .027, FIGURE_SKIN[id]);
+    g.beam(p(.07, .02, 0), p(.09, .14, .02), .027, FIGURE_SKIN[id]);
+  }
+}
+function figureBoot(g: Geometry, id: string, foot: Vec3) {
+  g.box([foot[0], foot[1], foot[2] + .1], [id === 'ye' ? .43 : .32, .24, id === 'ye' ? .65 : .5], id === 'musk' ? SILVER : CHARCOAL);
+  if (id === 'musk') {
+    g.cylinder([foot[0], foot[1] - .13, foot[2]], .09, .08, [.14, .25, .34], 7);
+    g.cylinder([foot[0], foot[1] - .32, foot[2]], .012, .19, HOLO_BLUE, 7, .075);
+  } else if (id === 'ye') {
+    g.box([foot[0], foot[1] - .105, foot[2] + .1], [.44, .035, .66], [.7, .38, 1]);
+  }
+}
+
+function figureSeated(g: Geometry, color: Color, id: string, motorcycle: boolean) {
+  const y = (motorcycle ? 1.47 : 1.3) + (id === 'bezos' ? .08 : 0), z = motorcycle ? -.2 : -.15;
+  const chest: Vec3 = [0, y, z]; figureTorso(g, id, chest, color);
+  figureHead(g, id, [0, y + (id === 'bezos' ? .78 : .71), z]);
+  for (const side of [-1, 1]) {
+    const special = side === 1 && ['trump', 'musk', 'huang'].includes(id);
+    const hand: Vec3 = special ? [id === 'trump' ? .8 : .68, y + .28, z + .35] : [side * (motorcycle ? .48 : .39), motorcycle ? 1.48 : 1.23, motorcycle ? .59 : .57];
+    const elbow: Vec3 = [side * .5, y - .06, z + .18];
+    const sleeve = id === 'bezos' ? [1, .97, .91] as Color : FIGURE_OUTFIT[id];
+    g.beam([side * .32, y + .2, z], elbow, id === 'ye' ? .19 : .13, sleeve);
+    g.beam(elbow, hand, id === 'ye' ? .18 : .11, id === 'bezos' ? FIGURE_SKIN[id] : sleeve);
+    figureHand(g, id, hand, special);
+    if (side === 1) figureProp(g, id, hand, chest);
+    if (motorcycle || id === 'musk' || id === 'ye') {
+      g.beam([side * .23, y - .3, z], [side * .42, .88, .1], .13, CHARCOAL);
+      figureBoot(g, id, [side * .44, .73, .1]);
+    }
+  }
+}
+
+function figurePose(color: Color, phase: number, id: string, twerk: boolean): Geometry {
+  const g = new Geometry(), sway = Math.sin(phase);
+  const stiff = id === 'zuckerberg', theatrical = id === 'ye';
+  const hover = id === 'musk' ? .22 + .06 * Math.sin(phase * 2) : 0;
+  const bounce = (twerk ? Math.cos(phase) * .12 : Math.abs(Math.cos(phase)) * (stiff ? .06 : .18)) + hover;
+  const hip: Vec3 = [sway * (stiff ? .07 : twerk ? .25 : .17), 1.04 + bounce - (theatrical && !twerk ? (1 + Math.sin(phase)) * .12 : 0), twerk ? -.25 - Math.cos(phase * 2) * .12 : 0];
+  const chest: Vec3 = [-sway * (stiff ? .04 : .15), hip[1] + (twerk ? .5 : .65), twerk ? .43 : 0];
+  figureTorso(g, id, chest, color);
+  figureHead(g, id, [chest[0], chest[1] + (id === 'bezos' ? .77 : .69), chest[2] + (twerk ? .13 : 0)]);
+  for (const side of [-1, 1]) {
+    const foot: Vec3 = [side * (twerk ? .52 : .34 + .17 * Math.sin(phase + side)), .15 + hover, twerk ? 0 : side * .25 * Math.cos(phase)];
+    const knee: Vec3 = [side * .49, hip[1] * .53 + hover * .4, twerk ? .3 : .08];
+    g.beam([hip[0] + side * .18, hip[1], hip[2]], knee, .14, CHARCOAL);
+    g.beam(knee, foot, .13, CHARCOAL); figureBoot(g, id, foot);
+    let hand: Vec3;
+    if (twerk) hand = [knee[0], knee[1] + .2, knee[2] + .16];
+    else if (stiff) hand = [side * .74, chest[1] + (Math.sin(phase + side) > 0 ? .43 : -.1), .2];
+    else hand = [side * (theatrical ? 1.16 : .94 + .18 * Math.cos(phase)), chest[1] + .15 + Math.sin(phase + side * 1.3) * (theatrical ? .8 : .6), .1 + side * sway * .2];
+    const elbow: Vec3 = [(chest[0] + hand[0]) * .52, chest[1] - .13, chest[2] + .1];
+    const sleeve = id === 'bezos' ? [1, .97, .91] as Color : FIGURE_OUTFIT[id];
+    g.beam([chest[0] + side * .29, chest[1] + .16, chest[2]], elbow, theatrical ? .2 : .13, sleeve);
+    g.beam(elbow, hand, theatrical ? .19 : .11, id === 'bezos' ? FIGURE_SKIN[id] : sleeve);
+    figureHand(g, id, hand, !twerk);
+    if (side === 1) figureProp(g, id, hand, chest);
+  }
+  return g;
+}
+
+/** One tiny static mesh per figure is transformed during frames. These are
+ * cosmetic only: no hitboxes, projectiles or automatic power-up activation. */
+export function figureAuraGeometry(character: string): Geometry {
+  const g = new Geometry();
+  const panel = (center: Vec3, color: Color, menu = true) => {
+    const [x, y, z] = center;
+    g.box(center, [.55, .36, .025], [.07, .18, .25]);
+    for (const side of [-1, 1]) {
+      g.beam([x + side * .275, y - .18, z + .018], [x + side * .275, y + .18, z + .018], .012, color);
+      g.beam([x - .275, y + side * .18, z + .018], [x + .275, y + side * .18, z + .018], .012, color);
+    }
+    if (menu) for (let line = 0; line < 3; line++) g.box([x - .02, y - .1 + line * .1, z + .022], [.35 - line * .07, .018, .008], color);
+  };
+  if (character === 'bezos') {
+    g.beam([.65, 1.96, -.28], [.65, 2.92, -.28], .012, GOLD);
+    g.sphere([.65, 2.92, -.28], .065, [1, .95, .6], 6, 4, true);
+  } else if (character === 'trump') {
+    for (let i = 0; i < 4; i++) {
+      const angle = i * Math.PI / 2;
+      const x = Math.cos(angle) * 1.02, z = Math.sin(angle) * .85;
+      g.sphere([x, 1.9 + (i % 2) * .2, z], .12, i % 2 ? [.12, .35, 1] : [1, .13, .16], 6, 4, true);
+      g.box([x, 1.91 + (i % 2) * .2, z + .12], [.1, .035, .018], [1, 1, 1]);
+    }
+    for (const side of [-1, 1]) {
+      g.beam([side * .89, 1.6, -.55], [side * .89, 2.4, -.55], .018, GOLD);
+      g.box([side * .76, 2.24, -.55], [.27, .24, .025], GOLD);
+    }
+  } else if (character === 'musk') {
+    panel([.91, 2.12, -.38], HOLO_BLUE, false);
+    const car: Vec3[] = [[.68, 2.02, -.35], [.69, 2.1, -.35], [.77, 2.1, -.35], [.81, 2.2, -.35], [1.01, 2.2, -.35], [1.08, 2.1, -.35], [1.14, 2.07, -.35], [1.14, 2.02, -.35], [.68, 2.02, -.35]];
+    for (let index = 1; index < car.length; index++) g.beam(car[index - 1], car[index], .01, HOLO_BLUE);
+    // Wireframe electric-car blueprint and a tiny solar-panel satellite.
+    g.box([-.92, 2.15, -.2], [.2, .15, .18], SILVER);
+    for (const side of [-1, 1]) g.box([-.92 + side * .23, 2.15, -.2], [.22, .24, .025], HOLO_BLUE);
+    for (const side of [-1, 1]) g.sphere([.91 + side * .15, 1.94, -.35], .047, HOLO_BLUE, 5, 3, true);
+    for (const side of [-1, 1]) g.triangle([side * .44 - .06, .55, .1], [side * .44 + .06, .55, .1], [side * .44, .22, .1], HOLO_BLUE, true);
+  } else if (character === 'zuckerberg') {
+    panel([.88, 2.04, -.39], HOLO_BLUE);
+    for (const side of [-1, 1]) {
+      g.box([side * .9, 1.75, .35], [.18, .2, .055], HOLO_BLUE);
+      g.box([side * .9 - .065, 1.89, .35], [.07, .2, .055], HOLO_BLUE);
+      g.box([side * .9 + .12, 1.7, .35], [.07, .15, .055], [.1, .35, .65]);
+    }
+  } else if (character === 'ye') {
+    const sonic: Color = [.7, .4, 1];
+    for (let i = 0; i < 8; i++) {
+      const angle = i * Math.PI / 4;
+      const x = Math.cos(angle) * 1.05, z = Math.sin(angle) * 1.05;
+      g.box([x, 1.35 + (i % 3) * .09, z], [.055, .19 + (i % 3) * .13, .055], sonic);
+      const next = angle + Math.PI / 4;
+      g.beam([x, .12, z], [Math.cos(next) * 1.05, .12, Math.sin(next) * 1.05], .012, sonic);
+    }
+    for (const side of [-1, 1]) g.box([side * .42, .07, -.2], [.32, .025, .5], sonic);
+  } else if (character === 'huang') {
+    for (const side of [-1, 1]) {
+      g.box([side * .9, 1.98, -.2], [.37, .21, .08], [.08, .2, .1]);
+      g.box([side * .9, 1.98, -.145], [.17, .12, .025], GPU_GREEN);
+      for (let pin = -2; pin <= 2; pin++) g.box([side * .9 + pin * .06, 1.84, -.2], [.022, .08, .025], SILVER);
+      for (let trail = 0; trail < 4; trail++) g.sphere([side * (.84 - trail * .11), 2 + trail * .055, -.34 - trail * .12], .035 - trail * .005, GPU_GREEN, 5, 3, true);
+    }
+  }
+  return g;
+}
+
 function characterId(id?: string): string { return id && Object.prototype.hasOwnProperty.call(CHARACTER_COLORS, id) ? id : 'fox'; }
 
 /** A shared, original character model keeps each racer's identity in every pose. */
@@ -427,6 +719,66 @@ function characterHead(g: Geometry, character: string, center: Vec3, accent: Col
     eyes(0.18, 0.025, 0.415);
     g.ellipsoid(p(0, -0.18, 0.426), [0.13, 0.09, 0.035], CHARCOAL, 8, 4);
     for (const side of [-1, 1]) g.sphere(p(side * 0.25, 0.06, -0.39), 0.13, CREAM, 7, 4);
+  } else if (!['fox', 'cat', 'bird', 'bear'].includes(character)) {
+    // Animal silhouettes match the supplied roster in all seated/dancing poses.
+    const pink: Color = [1, 0.58, 0.65];
+    const longFace = ['horse', 'donkey', 'zebra', 'goat', 'giraffe', 'antelope'].includes(character);
+    if (character === 'lion') for (let i = 0; i < 12; i++) {
+      const angle = i * Math.PI / 6;
+      g.sphere(p(Math.cos(angle) * .43, Math.sin(angle) * .43, -.09), .25, [0.77, .4, .08], 7, 4);
+    }
+    g.ellipsoid(center, [character === 'hippo' ? .58 : .47, longFace ? .53 : .44, .43], fur, 11, 7);
+    if (['sheep', 'ram'].includes(character)) for (let i = 0; i < 10; i++) {
+      const angle = i * Math.PI / 5;
+      g.sphere(p(Math.cos(angle) * .39, .16 + Math.sin(angle) * .33, -.05), .19, CREAM, 7, 4);
+    }
+    for (const side of [-1, 1]) {
+      if (character === 'elephant') {
+        g.ellipsoid(p(side * .57, .02, -.04), [.35, .48, .13], fur, 9, 6);
+        g.ellipsoid(p(side * .59, .02, .075), [.25, .35, .035], pink, 8, 5);
+      } else if (['rabbit', 'donkey', 'horse', 'zebra'].includes(character)) {
+        g.ellipsoid(p(side * .25, .6, -.035), [.13, character === 'rabbit' ? .52 : .34, .12], fur, 8, 5);
+        g.ellipsoid(p(side * .25, .63, .07), [.065, .24, .025], pink, 7, 4);
+      } else if (!['fish', 'flamingo', 'crocodile'].includes(character)) {
+        const ears = ['panda', 'cow'].includes(character) ? CHARCOAL : fur;
+        g.sphere(p(side * .42, .3, -.035), ['monkey', 'orangutan'].includes(character) ? .24 : .19, ears, 8, 5);
+      }
+      if (['buffalo', 'antelope', 'cow', 'goat', 'giraffe'].includes(character)) {
+        const width = character === 'buffalo' ? .7 : .36;
+        g.beam(p(side * .28, .31, -.13), p(side * width, .57, -.12), .075, CREAM);
+        g.beam(p(side * width, .57, -.12), p(side * (width + .03), .88, -.16), .055, CREAM);
+        if (character === 'giraffe') g.sphere(p(side * .39, .88, -.16), .11, [0.44, .23, .12], 7, 4);
+      }
+      if (character === 'ram') {
+        for (let i = 0; i < 8; i++) { const angle = i * Math.PI / 4; g.sphere(p(side * (.49 + Math.cos(angle) * .17), .12 + Math.sin(angle) * .22, .02), .11, [0.57, .38, .2], 7, 4); }
+      }
+      if (character === 'panda') g.ellipsoid(p(side * .19, .08, .38), [.2, .22, .055], CHARCOAL, 8, 5);
+    }
+    if (['monkey', 'orangutan', 'gorilla'].includes(character)) g.ellipsoid(p(0, -.07, .34), [.37, .33, .17], character === 'gorilla' ? [.52, .53, .53] : CREAM, 10, 6);
+    if (['tiger', 'zebra', 'giraffe'].includes(character)) for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
+      if (character === 'giraffe') g.sphere(p(side * .39, -.2 + i * .2, -.16), .105, [0.54, .3, .1], 6, 4);
+      else g.beam(p(side * .34, -.22 + i * .21, -.28), p(side * .43, -.13 + i * .21, .12), .045, CHARCOAL);
+    }
+    if (['horse', 'zebra', 'donkey'].includes(character)) for (let i = 0; i < 5; i++) g.sphere(p(0, .45 - i * .15, -.35), .15, CHARCOAL, 7, 4);
+    if (character === 'elephant') {
+      g.beam(p(0, -.1, .38), p(0, -.62, .55), .14, fur);
+      g.beam(p(0, -.62, .55), p(0, -.66, .8), .12, fur);
+    } else if (character === 'flamingo') {
+      g.ellipsoid(p(0, -.12, .53), [.23, .17, .34], [1, .8, .16], 9, 5);
+      g.ellipsoid(p(0, -.18, .78), [.16, .12, .12], CHARCOAL, 8, 4);
+    } else if (character === 'fish') {
+      g.ellipsoid(p(0, -.15, .41), [.18, .14, .12], pink, 8, 5);
+      g.ellipsoid(p(0, -.15, .505), [.1, .075, .03], CHARCOAL, 7, 4);
+      g.triangle(p(0, .3, -.25), p(0, .87, -.22), p(0, .12, .2), fur);
+      for (const side of [-1, 1]) g.triangle(p(side * .35, 0, 0), p(side * .78, -.23, -.23), p(side * .32, -.27, .19), pink);
+    } else {
+      const snout = character === 'crocodile' ? [.4, .18, .48] : character === 'hippo' ? [.5, .28, .33] : longFace ? [.27, .3, .27] : [.28, .19, .18];
+      g.ellipsoid(p(0, -.17, character === 'crocodile' ? .52 : .37), snout as Vec3, ['pig', 'cow', 'buffalo'].includes(character) ? pink : character === 'crocodile' || character === 'hippo' ? fur : CREAM, 10, 5);
+      if (character === 'pig') for (const side of [-1, 1]) g.sphere(p(side * .09, -.15, .56), .05, [0.65, .28, .36], 6, 4);
+      else g.ellipsoid(p(0, -.1, longFace ? .63 : .55), [.09, .06, .04], CHARCOAL, 7, 4);
+      if (character === 'crocodile') for (let i = 0; i < 5; i++) g.sphere(p((i - 2) * .13, -.25, .88), .05, CREAM, 5, 3);
+    }
+    eyes(.19, .12, .4);
   } else {
     g.ellipsoid(center, [0.49, 0.44, 0.43], fur, 12, 7);
     if (character === 'fox' || character === 'cat') pointedEars();
@@ -455,10 +807,12 @@ function characterTail(g: Geometry, character: string, hip: Vec3) {
   if (character === 'fox') {
     g.beam([x, y, z - 0.2], [x + 0.38, y + 0.32, z - 0.83], 0.2, fur);
     g.beam([x + 0.38, y + 0.32, z - 0.83], [x + 0.47, y + 0.64, z - 1.03], 0.18, CREAM);
-  } else if (character === 'cat') {
+  } else if (['cat', 'monkey', 'orangutan', 'tiger', 'lion', 'giraffe', 'horse', 'zebra', 'donkey'].includes(character)) {
     g.beam([x, y, z - 0.25], [x - 0.46, y + 0.25, z - 0.72], 0.09, fur);
     g.beam([x - 0.46, y + 0.25, z - 0.72], [x - 0.57, y + 0.74, z - 0.63], 0.09, fur);
-  } else if (character === 'bird') {
+  } else if (character === 'crocodile') {
+    g.beam([x, y, z - .2], [x + .3, y + .2, z - 1.1], .18, fur);
+  } else if (character === 'bird' || character === 'flamingo') {
     for (const side of [-1, 0, 1]) g.beam([x, y, z - 0.15], [x + side * 0.25, y + 0.3, z - 0.72], 0.1, side ? CORAL : fur);
   } else if (character === 'robot') {
     g.box([x, y + 0.25, z - 0.34], [0.54, 0.6, 0.22], SILVER);
@@ -467,6 +821,7 @@ function characterTail(g: Geometry, character: string, hip: Vec3) {
 }
 
 function seatedDriver(g: Geometry, color: Color, character: string, motorcycle: boolean) {
+  if (isFigure(character)) { figureSeated(g, color, character, motorcycle); return; }
   const y = motorcycle ? 1.47 : 1.3, z = motorcycle ? -0.2 : -0.15;
   characterTail(g, character, [0, y - 0.2, z]);
   g.ellipsoid([0, y, z], [0.38, 0.45, 0.31], color, 10, 6);
@@ -553,6 +908,7 @@ export function racerGeometry(color: Color, character = 'fox', vehicle = 'kart',
 
 /** Eight poses are uploaded once. All clients use the same host dance timer. */
 export function dancerGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  if (isFigure(character)) return figurePose(color, phase, character, false);
   const g = new Geometry(), id = characterId(character);
   const sway = Math.sin(phase), bounce = Math.abs(Math.cos(phase)) * 0.18;
   const hip: Vec3 = [sway * 0.17, 1.05 + bounce, 0];
@@ -574,6 +930,7 @@ export function dancerGeometry(color: Color, phase: number, character = 'fox'): 
 
 /** A separate cartoon squat/hip-wiggle, with the same chosen outfit and identity. */
 export function twerkGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  if (isFigure(character)) return figurePose(color, phase, character, true);
   const g = new Geometry(), id = characterId(character);
   const wiggle = Math.sin(phase), dip = Math.cos(phase) * 0.12;
   const hip: Vec3 = [wiggle * 0.25, 1.01 + dip, -0.24 - Math.cos(phase * 2) * 0.13];
@@ -707,6 +1064,8 @@ export class RaceRenderer {
   private emptyKarts: Mesh[];
   private dancers: Mesh[][];
   private twerkers: Mesh[][];
+  private figureAuras: (Mesh | null)[];
+  private figures: (string | null)[];
   private cameras: Camera[];
   private columns: number;
   private rows: number;
@@ -772,6 +1131,8 @@ export class RaceRenderer {
     this.emptyKarts = players.map((player) => this.upload(racerGeometry(parseColor(player.color), player.character, player.vehicle, false)));
     this.dancers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(dancerGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
     this.twerkers = players.map((player) => Array.from({ length: 8 }, (_, frame) => this.upload(twerkGeometry(parseColor(player.color), frame * Math.PI / 4, player.character))));
+    this.figures = players.map(player => isFigure(player.character ?? '') ? player.character! : null);
+    this.figureAuras = this.figures.map(id => id ? this.upload(figureAuraGeometry(id)) : null);
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
     this.rows = Math.ceil(players.length / this.columns);
     this.cameras = race.karts.map((kart) => ({ eye: racePose(routeOffset(kart.distance, -10, kart.onShortcut), kart.lane * 0.6, 4.5, kart.onShortcut).position, target: racePose(routeOffset(kart.distance, 10, kart.onShortcut), kart.lane * 0.35, 0.9, kart.onShortcut).position }));
@@ -843,9 +1204,23 @@ export class RaceRenderer {
       gl.uniform3fv(this.eyeUniform, camera.eye);
       this.draw(this.world);
       for (const box of race.powers.boxes) {
-        if (box.cooldown > 0) continue;
         const point = trackPose(box.distance, box.lane, 1.65 + Math.sin(race.elapsed * 3 + box.id) * 0.2).position;
-        this.draw(this.item, model(point, race.elapsed * 1.6 + box.id));
+        if (box.cooldown > 0) {
+          // The box disappears on the authoritative pickup frame. A short
+          // outward sparkle makes that disappearance unmistakable in every view.
+          const age = ITEM_RESPAWN_SECONDS - box.cooldown;
+          if (age >= 0 && age < ITEM_BURST_SECONDS) {
+            const life = age / ITEM_BURST_SECONDS;
+            for (let particle = 0; particle < 6; particle++) {
+              const angle = particle * Math.PI / 3 + box.id, radius = 0.7 + life * 2.4;
+              this.draw(this.spark, model([point[0] + Math.cos(angle) * radius, point[1] + life * 1.5, point[2] + Math.sin(angle) * radius], angle, (1 - life) * 0.9));
+            }
+          }
+          continue;
+        }
+        // A held item keeps its slot. Ghosted boxes communicate that they are
+        // available to other racers, but cannot replace this driver's item.
+        this.draw(this.item, model(point, race.elapsed * 1.6 + box.id), kart.power.item || kart.power.jet > 0 || kart.power.dance > 0 || kart.finishTime !== null ? 0.25 : 1);
       }
       for (const hazard of race.powers.hazards) {
         const pose = (hazard.onShortcut ? shortcutPose : trackPose)(hazard.distance, hazard.lane);
@@ -868,6 +1243,7 @@ export class RaceRenderer {
         const transform = model(pose.position, yaw);
         this.draw(this.shadow, model([pose.position[0], pose.position[1] + 0.055, pose.position[2]], yaw));
         const dancing = other.power.dance > 0;
+        let figurePosition = pose.position, figureYaw = yaw;
         this.draw(dancing ? this.emptyKarts[j] : this.karts[j], transform);
         if (dancing) {
           const age = DANCE_SECONDS - other.power.dance;
@@ -875,6 +1251,7 @@ export class RaceRenderer {
           const exit = Math.max(0, Math.min(1, age / 0.35, other.power.dance / 0.35));
           const offset = 2.2 * exit;
           const dancerPosition: Vec3 = [pose.position[0] + Math.cos(yaw) * offset, pose.position[1], pose.position[2] - Math.sin(yaw) * offset];
+          figurePosition = dancerPosition; figureYaw = yaw + Math.sin(age * 3) * .15;
           const frame = Math.floor(age * 12) % 8;
           const twerking = other.power.danceStyle === 'twerk';
           this.draw((twerking ? this.twerkers : this.dancers)[j][frame], model(dancerPosition, yaw + Math.sin(age * 3) * (twerking ? 0.1 : 0.25)));
@@ -882,6 +1259,13 @@ export class RaceRenderer {
             const angle = particle * Math.PI / 3 + age * 4;
             this.draw(this.spark, model([dancerPosition[0] + Math.cos(angle) * 1.2, dancerPosition[1] + 0.8 + (particle % 3) * 0.6 + Math.sin(age * 8 + particle) * 0.2, dancerPosition[2] + Math.sin(angle) * 1.2], angle, 0.35));
           }
+        }
+        const aura = this.figureAuras[j], figure = this.figures[j];
+        if (aura) {
+          const orbit = figure === 'trump' || figure === 'huang';
+          const pulse = figure === 'ye' ? 1 + Math.sin(race.elapsed * 4) * .065 : 1;
+          const lift = figure === 'musk' ? Math.sin(race.elapsed * 3) * .055 : 0;
+          this.draw(aura, model([figurePosition[0], figurePosition[1] + lift, figurePosition[2]], figureYaw + (orbit ? race.elapsed * .65 : 0), pulse));
         }
         if (other.power.lightning > 0) {
           const age = LIGHTNING_SECONDS - other.power.lightning;
@@ -911,6 +1295,16 @@ export class RaceRenderer {
             this.draw(this.dust, model(point, particle, (0.4 + life * 1.8) * (1 - life)));
           }
         }
+        if (other.power.notice?.kind === 'activate') {
+          const age = ITEM_NOTICE_SECONDS - other.power.notice.remaining;
+          if (age < ITEM_BURST_SECONDS) {
+            const life = age / ITEM_BURST_SECONDS;
+            for (let particle = 0; particle < 6; particle++) {
+              const angle = particle * Math.PI / 3 + race.elapsed * 3;
+              this.draw(this.spark, model([pose.position[0] + Math.cos(angle) * (1.3 + life * 2), pose.position[1] + 1 + life, pose.position[2] + Math.sin(angle) * (1.3 + life * 2)], angle, (1 - life) * 0.85));
+            }
+          }
+        }
         if (other.bump > 0 || other.power.flash > 0) {
           for (let particle = 0; particle < 5; particle++) {
             const angle = particle * 2.4 + race.elapsed * 5, radius = 1.2 + Math.max(0, 0.7 - Math.max(other.bump, other.power.flash)) * 2;
@@ -928,7 +1322,7 @@ export class RaceRenderer {
   }
   dispose() {
     const gl = this.gl;
-    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, this.crown, this.prism, this.lightning, ...this.karts, ...this.emptyKarts, ...this.dancers.flat(), ...this.twerkers.flat()]) gl.deleteBuffer(mesh.buffer);
+    for (const mesh of [this.world, this.boost, this.shadow, this.dust, this.spark, this.item, this.slick, this.bolt, this.shield, this.crown, this.prism, this.lightning, ...this.karts, ...this.emptyKarts, ...this.dancers.flat(), ...this.twerkers.flat(), ...this.figureAuras.filter((mesh): mesh is Mesh => mesh !== null)]) gl.deleteBuffer(mesh.buffer);
     gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }

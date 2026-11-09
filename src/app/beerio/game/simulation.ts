@@ -54,6 +54,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
   race.elapsed += dt;
   stepPowers(race, players, dt);
   const previousDistances = new Map(race.karts.map((kart) => [kart.id, kart.distance]));
+  const previousLanes = new Map(race.karts.map((kart) => [kart.id, kart.lane]));
   const previousRoutes = new Map(race.karts.map((kart) => [kart.id, kart.onShortcut]));
   for (const kart of race.karts) {
     const input = players.find((player) => player.id === kart.id)?.input;
@@ -212,7 +213,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       if (race.firstFinish === null) race.firstFinish = race.elapsed;
     }
   }
-  collectPowerups(race, previousDistances, new Set(players.filter(player => player.connected !== false).map(player => player.id)), previousRoutes);
+  collectPowerups(race, previousDistances, new Set(players.filter(player => player.connected !== false).map(player => player.id)), previousRoutes, previousLanes);
   // Symmetric resolution: update each pair once, so player order has no advantage.
   for (let i = 0; i < race.karts.length; i++) {
     for (let j = i + 1; j < race.karts.length; j++) {

@@ -1071,3 +1071,93 @@ test('pickup eligibility adapts to finished/disconnected rivals and restores att
   press(race, players, 0);
   assert.equal(active.power.used, 1); assert.equal(offline.power.dance, DANCE_SECONDS);
 });
+
+test('pickup sweep follows the steering path instead of only its final lane', () => {
+  for (const track of TRACKS) {
+    selectTrack(track.id);
+    for (const seam of [false, true]) {
+      const { race } = ready(['a']);
+      const kart = race.karts[0];
+      const box = { id: 2, distance: seam ? .1 : TRACK_LENGTH * .075, lane: 0, cooldown: 0 };
+      race.powers.boxes = [box];
+      const from = seam ? TRACK_LENGTH - 4 : box.distance - 4;
+      kart.distance = from + 8; kart.lane = 4;
+      collectPowerups(race, new Map([[kart.id, from]]), undefined, undefined, new Map([[kart.id, -4]]));
+      assert.equal(kart.power.collected, 1, `${track.id}: diagonal pickup${seam ? ' across the lap seam' : ''}`);
+      assert.equal(box.cooldown, 4.5);
+      assert.equal(kart.power.notice?.kind, 'pickup');
+      assert.equal(kart.power.notice?.remaining, 2, 'Readable confirmation lasts longer than the old half-second flash');
+      collectPowerups(race, new Map([[kart.id, from]]), undefined, undefined, new Map([[kart.id, -4]]));
+      assert.equal(kart.power.collected, 1, 'A collected box cannot award twice');
+    }
+  }
+  selectTrack('sunset');
+});
+
+test('pickup sweep rejects diagonal near misses and accepts the visible edge of a kart', () => {
+  const { race } = ready(['a']);
+  const kart = race.karts[0], box = { id: 0, distance: 100, lane: 0, cooldown: 0 };
+  race.powers.boxes = [box];
+  kart.distance = 105; kart.lane = 0;
+  collectPowerups(race, new Map([[kart.id, 95]]), undefined, undefined, new Map([[kart.id, 10]]));
+  assert.equal(kart.power.item, null, 'Reaching the box lane only after passing its row is not a collision');
+  kart.distance = 100; kart.lane = 1.9;
+  collectPowerups(race, new Map([[kart.id, 96]]), undefined, undefined, new Map([[kart.id, 1.9]]));
+  assert.equal(kart.power.collected, 1, 'The edge of the kart visibly overlaps the rotating box');
+});
+
+test('the first swept pickup contact wins regardless of array order or final proximity', () => {
+  for (const ids of [['a', 'b'], ['b', 'a']]) {
+    const { race } = ready(ids);
+    race.powers.boxes = [{ id: 0, distance: 100, lane: 0, cooldown: 0 }];
+    const early = race.karts.find(kart => kart.id === 'a')!, late = race.karts.find(kart => kart.id === 'b')!;
+    early.distance = 105; late.distance = 100;
+    collectPowerups(race, new Map([['a', 97], ['b', 94]]));
+    assert.ok(early.power.item);
+    assert.equal(late.power.item, null);
+  }
+});
+
+test('full inventory keeps the shared box and explains a crossing without repeating while parked', () => {
+  const { race, players } = ready(['a']);
+  const kart = race.karts[0], box = { id: 0, distance: 100, lane: 0, cooldown: 0 };
+  race.powers.boxes = [box]; kart.power.item = 'guard'; kart.distance = 100;
+  collectPowerups(race, new Map([[kart.id, 96]]));
+  assert.equal(box.cooldown, 0, 'Other racers can still use this box');
+  assert.equal(kart.power.item, 'guard'); assert.equal(kart.power.collected, 0);
+  assert.equal(kart.power.notice?.kind, 'full');
+  for (let step = 0; step < 21; step++) {
+    stepPowers(race, players, .1);
+    collectPowerups(race, new Map([[kart.id, kart.distance]]));
+  }
+  assert.equal(kart.power.notice, null, 'Standing inside a box cannot continually renew the notice');
+});
+
+test('successful activation has a durable independent notice; unavailable targets do not claim activation', () => {
+  const { race, players } = ready(['a']);
+  const kart = race.karts[0]; kart.power.item = 'guard'; players[0].input.action = 1;
+  stepPowers(race, players, 1 / 60);
+  assert.deepEqual(kart.power.notice, { kind: 'activate', item: 'guard', remaining: 2 });
+  assert.equal(kart.power.item, null); assert.equal(kart.power.used, 1);
+  kart.power.flash = .1; kart.power.hitLabel = 'A different hit';
+  stepPowers(race, players, .1);
+  assert.equal(kart.power.notice?.kind, 'activate', 'A collision flash cannot erase the activation confirmation');
+  for (let step = 0; step < 20; step++) stepPowers(race, players, .1);
+  assert.equal(kart.power.notice, null);
+  kart.power.item = 'dance'; players[0].input.action = 2;
+  stepPowers(race, players, .1);
+  assert.equal(kart.power.notice, null);
+  assert.equal(kart.power.hitLabel, 'No racer ahead');
+});
+
+test('using an item at a box preserves activation feedback while the next pickup fills inventory', () => {
+  const { race, players } = ready(['a']);
+  const kart = race.karts[0]; kart.power.item = 'guard'; players[0].input.action = 1;
+  stepPowers(race, players, 1 / 60);
+  const box = race.powers.boxes[0]; kart.distance = box.distance; kart.lane = box.lane;
+  collectPowerups(race, new Map([[kart.id, box.distance - 5]]));
+  assert.equal(kart.power.used, 1); assert.equal(kart.power.collected, 1); assert.ok(kart.power.item);
+  assert.equal(box.cooldown, 4.5);
+  assert.equal(kart.power.notice?.kind, 'activate', 'Pickup cannot erase a same-frame activation notice');
+  assert.equal(kart.power.notice?.item, 'guard');
+});

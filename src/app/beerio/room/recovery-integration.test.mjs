@@ -69,16 +69,18 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   host.createRoom({ relayUrl: relay.url });
   await until(() => host.getSnapshot().status === 'connected', 'host connection');
   const initialCode = host.getSnapshot().code;
+  const figures = ['bezos', 'trump', 'musk', 'zuckerberg', 'ye', 'huang'];
   const phones = Array.from({ length: 10 }, (_, i) => {
     const c = new BeerioRoomClient(); clients.push(c);
-    c.joinRoom({ relayUrl: relay.url, code: initialCode, name: `Racer ${i}`, appearance: { character: 'frog', vehicle: 'motorcycle', color: '#123456' } });
+    c.joinRoom({ relayUrl: relay.url, code: initialCode, name: `Racer ${i}`, appearance: { character: figures[i % figures.length], vehicle: 'motorcycle', color: '#123456' } });
     return c;
   });
   await until(() => phones.every(c => c.getSnapshot().status === 'connected'), 'checkpoint-confirmed phone joins');
   const ids = phones.map(c => c.getSnapshot().playerId);
-  phones.forEach(phone => phone.setReady(true));
-  await until(() => host.getSnapshot().players.every(player => player.ready), 'all drivers ready');
-  host.setLocked(true); await until(() => phones.every(c => c.getSnapshot().locked), 'race lock');
+  host.beginCharacterSelection();
+  await until(() => phones.every(phone => phone.getSnapshot().selectionPhase === 'selecting'), 'shared character selection');
+  phones.forEach(phone => phone.chooseCharacter({ confirm: true }));
+  await until(() => phones.every(c => c.getSnapshot().locked && c.getSnapshot().selectionPhase === 'racing'), 'five-second race start');
   phones[0].setInput({ steer: 1, accelerate: true, brake: false }); phones[0].useItem();
   await until(() => host.getSnapshot().players.find(p => p.id === ids[0]).input.action === 1, 'first item and checkpoint');
 
@@ -96,7 +98,9 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   assert.notEqual(recoveredCode, initialCode);
   assert.deepEqual(phones.map(c => c.getSnapshot().playerId), ids);
   assert.equal(phones.every(c => c.getSnapshot().code === recoveredCode && c.getSnapshot().locked), true);
-  assert.equal(host.getSnapshot().players.every(p => p.character === 'frog' && p.vehicle === 'motorcycle' && p.color === '#123456'), true);
+  assert.equal(host.getSnapshot().characterSelectionVersion, 2);
+  assert.deepEqual(ids.map(id => host.getSnapshot().players.find(p => p.id === id).character), phones.map((_, i) => figures[i % figures.length]));
+  assert.equal(host.getSnapshot().players.every(p => p.vehicle === 'motorcycle' && p.color === '#123456'), true);
   for (const p of host.getSnapshot().players) assert.deepEqual(p.input, ZERO);
   await until(() => phones.every(c => !c.getSnapshot().recovering), 'all phones receive recovery completion');
   assert.equal(phones[0].useItem(), true);
@@ -142,6 +146,8 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   assert.equal(latePhone.getSnapshot().recovering, false);
   assert.deepEqual(phones.map(c => c.getSnapshot().playerId), ids);
   assert.notEqual(host.getSnapshot().code, recoveredCode);
+  assert.deepEqual(ids.map(id => host.getSnapshot().players.find(p => p.id === id).character), phones.map((_, i) => figures[i % figures.length]));
+  assert.ok(phones.every(phone => phone.getSnapshot().characterSelectionVersion === 2));
   assert.equal(received.some(m => m.type === 'room_closed'), false);
   for (const p of host.getSnapshot().players) assert.deepEqual(p.input, ZERO);
   host.leaveRoom();

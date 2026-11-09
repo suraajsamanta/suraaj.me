@@ -9,7 +9,7 @@ const FIRST_CONNECTION_WINDOW_MS = 90_000;
 type RecoveryPlayer = { id: string; actionSequence: number; [key: string]: unknown };
 type RecoveryCheckpoint = { version: 1; roomId: string; revision: number; ackRequired?: boolean; maxPlayers: number; locked: boolean; players: RecoveryPlayer[] };
 type SavedSession = { code: string; token: string; role: RoomRole; relayUrl: string; roomId?: string; checkpoint?: RecoveryCheckpoint };
-type WelcomeRoom = { code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; recovering?: boolean; recoveryWaitingFor?: string[]; hostConnected: boolean };
+type WelcomeRoom = { serverTime?: number; characterSelection?: boolean; characterSelectionVersion?: 1 | 2; selectionPhase?: RoomSnapshot["selectionPhase"]; countdownEndsAt?: number | null; code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; recovering?: boolean; recoveryWaitingFor?: string[]; hostConnected: boolean };
 
 /** NEXT_PUBLIC values are compiled at build time. Never point cellular phones at localhost. */
 export function getRelayUrl(): string {
@@ -35,7 +35,7 @@ function validateUrl(value: string): string {
 }
 
 function initialSnapshot(): RoomSnapshot {
-  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 10, locked: false, recovering: false, recoveryWaitingFor: [], hostConnected: false, error: null, relayUrl: getRelayUrl(), canRetryConnection: false };
+  return { status: "idle", role: null, code: null, playerId: null, players: [], maxPlayers: 10, locked: false, characterSelection: false, selectionPhase: "gathering", countdownEndsAt: null, recovering: false, recoveryWaitingFor: [], hostConnected: false, error: null, relayUrl: getRelayUrl(), canRetryConnection: false };
 }
 
 /** Browser room transport. Every reconnect resumes with a secret token, not the public room code. */
@@ -110,12 +110,12 @@ export class BeerioRoomClient {
   };
 
   createRoom = (options: CreateRoomOptions = {}) => {
-    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 10, recoveryVersion: 1 }, options.relayUrl, "host");
+    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 10, recoveryVersion: 1, characterSelectionVersion: 2 }, options.relayUrl, "host");
   };
   joinRoom = (options: JoinRoomOptions) => {
     const code = options.code.replace(/\s/g, "").toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) { this.update({ status: "error", error: "Enter the six-character room code shown on the host screen." }); return; }
-    this.begin({ type: "join", code, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
+    this.begin({ type: "join", characterSelectionVersion: 2, code, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
   };
   private begin(hello: Record<string, unknown>, relayUrl: string | undefined, role: RoomRole) {
     this.leaveRoom();
@@ -153,7 +153,7 @@ export class BeerioRoomClient {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       const hello = this.session ? {
-        type: "resume", code: this.session.code, token: this.session.token,
+        type: "resume", code: this.session.code, token: this.session.token, characterSelectionVersion: 2,
         ...(this.session.roomId ? { roomId: this.session.roomId, recoveryVersion: 1 } : {}),
         ...(this.session.role === "host" && this.session.checkpoint ? { checkpoint: this.session.checkpoint } : {}),
       } : this.pendingHello;
@@ -185,6 +185,13 @@ export class BeerioRoomClient {
       const delay = Math.min(8000, 500 * 2 ** this.retries++) + Math.random() * 250;
       this.reconnectTimer = setTimeout(() => this.connect(true), delay);
     };
+  }
+
+  /** Convert the relay deadline to this device's clock; phone clock skew cannot show an early GO. */
+  private localCountdown(room: WelcomeRoom): Partial<RoomSnapshot> {
+    if (room.countdownEndsAt == null) return { countdownEndsAt: null };
+    if (!Number.isFinite(room.countdownEndsAt) || !Number.isFinite(room.serverTime)) return { countdownEndsAt: null };
+    return { countdownEndsAt: Date.now() + Math.max(0, room.countdownEndsAt - room.serverTime!) };
   }
 
   private receive(message: Record<string, unknown>) {
@@ -228,7 +235,7 @@ export class BeerioRoomClient {
         this.connectionTimer = null;
         this.coldStartTimer = null;
         this.firstConnectionDeadline = 0;
-        this.update({ ...room, recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [], status: "connected", role: message.role, playerId: typeof message.playerId === "string" ? message.playerId : null, error: null, canRetryConnection: false });
+        this.update({ ...room, ...this.localCountdown(room), recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [], status: "connected", role: message.role, playerId: typeof message.playerId === "string" ? message.playerId : null, error: null, canRetryConnection: false });
         this.inputTimer = setInterval(() => {
           if (this.snapshot.role === "player") this.sendInput();
         }, 100);
@@ -253,7 +260,7 @@ export class BeerioRoomClient {
         // A lock transition is a race boundary. Held controls from the previous
         // race (or its results screen) must not continue into the next one.
         if (!room.hostConnected || room.locked !== this.snapshot.locked || (room.recovering === true) !== this.snapshot.recovering) this.input = { ...ZERO_INPUT };
-        this.update({ ...room, recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [] });
+        this.update({ ...room, ...this.localCountdown(room), recovering: room.recovering === true, recoveryWaitingFor: room.recoveryWaitingFor ?? [] });
         break;
       }
       case "input": {
@@ -357,6 +364,20 @@ export class BeerioRoomClient {
   };
   setAppearance = (appearance: Appearance) => {
     if (this.snapshot.role === "player" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "appearance", appearance });
+  };
+  beginCharacterSelection = () => {
+    if (this.snapshot.role !== "host" || this.snapshot.status !== "connected" || this.snapshot.locked) return;
+    if (!this.snapshot.characterSelection) { this.update({ error: "This room uses an older relay. Update the relay and create a new room to choose characters." }); return; }
+    this.update({ error: null });
+    this.send({ type: "select_characters" });
+  };
+  chooseCharacter = (choice: { direction: "up" | "down" | "left" | "right" } | { confirm: boolean }) => {
+    if (this.snapshot.role === "player" && this.snapshot.status === "connected" && this.snapshot.hostConnected && !this.snapshot.locked) {
+      this.update({ error: null }); this.send({ type: "character", ...choice });
+    }
+  };
+  skipOfflineDrivers = () => {
+    if (this.snapshot.role === "host" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "skip_offline" });
   };
   setReady = (ready: boolean) => {
     if (this.snapshot.role === "player" && this.snapshot.status === "connected" && !this.snapshot.locked) this.send({ type: "ready", ready });

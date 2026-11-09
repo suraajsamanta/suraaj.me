@@ -10,6 +10,7 @@ export type RoomPlayer = {
   vehicle?: Appearance["vehicle"];
   connected: boolean;
   ready: boolean;
+  characterConfirmed?: boolean;
   /** Frozen by the relay when the host starts. */
   inRace: boolean;
   input: RoomInput;
@@ -26,6 +27,11 @@ export type RoomSnapshot = {
   players: RoomPlayer[];
   maxPlayers: number;
   locked: boolean;
+  characterSelection?: boolean;
+  /** Version 1 has 24 animals; version2 adds six guest racers. */
+  characterSelectionVersion?: 1 | 2;
+  selectionPhase?: "gathering" | "selecting" | "countdown" | "racing";
+  countdownEndsAt?: number | null;
   /** A restored race waits for its original controllers, unless the host explicitly resumes. */
   recovering: boolean;
   recoveryWaitingFor: string[];

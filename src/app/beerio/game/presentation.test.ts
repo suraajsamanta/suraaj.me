@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { audioSnapshot, noteFrequency, RaceAudio, soundEvents } from './audio';
-import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, twerkGeometry, lightningGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
+import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, twerkGeometry, figureAuraGeometry, lightningGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
+import { collectPowerups, ITEM_BURST_SECONDS, ITEM_RESPAWN_SECONDS } from './powerups';
 import { createRace, type GamePlayer } from './simulation';
 import { ACTIVE_SHORTCUT, selectTrack, shortcutPose, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACKS, TRACK_LENGTH, TRACK_POINTS, trackPose } from './track';
 
@@ -102,8 +103,9 @@ test('restarting races reuses one audio graph rather than accumulating motors', 
 
 function fakeWebGL() {
   let identity = 0;
+  let currentModel = new Float32Array(16);
   const buffers = new Set<object>(), programs = new Set<object>();
-  const stats = { vertices: 0, viewports: 0, viewportRects: [] as number[][], draws: 0, uploads: 0, nonFinite: false, data: [] as Float32Array[], models: [] as Float32Array[], views: [] as Float32Array[] };
+  const stats = { meshDraws: [] as { count: number; model: Float32Array }[], opacities: [] as number[], vertices: 0, viewports: 0, viewportRects: [] as number[][], draws: 0, uploads: 0, nonFinite: false, data: [] as Float32Array[], models: [] as Float32Array[], views: [] as Float32Array[] };
   const numeric = (values: ArrayLike<number>) => { for (let i = 0; i < values.length; i++) if (!Number.isFinite(values[i])) stats.nonFinite = true; };
   const gl = new Proxy({
     createBuffer() { const buffer = { id: identity++ }; buffers.add(buffer); return buffer; },
@@ -113,9 +115,10 @@ function fakeWebGL() {
     createShader() { return {}; }, getShaderParameter() { return true; }, getProgramParameter() { return true; },
     getAttribLocation(_program: object, name: string) { return name === 'a_color' ? 1 : 0; }, getUniformLocation(_program: object, name: string) { return { name }; },
     bufferData(_target: number, data: Float32Array) { stats.uploads++; stats.vertices += data.length / 6; stats.data.push(data.slice()); numeric(data); },
-    uniformMatrix4fv(location: { name: string }, _transpose: boolean, data: Float32Array) { numeric(data); if (location.name === 'u_model') stats.models.push(data.slice()); if (location.name === 'u_view') stats.views.push(data.slice()); },
+    uniformMatrix4fv(location: { name: string }, _transpose: boolean, data: Float32Array) { numeric(data); if (location.name === 'u_model') { stats.models.push(data.slice()); currentModel = data.slice(); } if (location.name === 'u_view') stats.views.push(data.slice()); },
     uniform3fv(_location: object, data: number[]) { numeric(data); },
-    viewport(x: number, y: number, width: number, height: number) { stats.viewports++; stats.viewportRects.push([x, y, width, height]); }, drawArrays() { stats.draws++; },
+    uniform1f(location: { name: string }, value: number) { if (location.name === 'u_opacity') stats.opacities.push(value); },
+    viewport(x: number, y: number, width: number, height: number) { stats.viewports++; stats.viewportRects.push([x, y, width, height]); }, drawArrays(_mode: number, _start: number, count: number) { stats.draws++; stats.meshDraws.push({ count, model: currentModel.slice() }); },
   }, { get(target, key) { if (key in target) return target[key as keyof typeof target]; return /^[A-Z_]+$/.test(String(key)) ? 0 : () => {}; } });
   return { gl, buffers, programs, stats };
 }
@@ -390,6 +393,141 @@ test('ten-view lightning and twerk effects remain finite, use cached geometry, e
     renderer.render(race, 1 / 60);
     assert.equal(stats.draws - expired, baseline, 'expired effects return to the normal draw count');
     assert.equal(stats.uploads, uploads, 'no effects upload geometry during race frames');
+    assert.equal(stats.nonFinite, false);
+    renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+test('collected boxes disappear on the pickup frame, burst briefly, stay gone, then respawn', () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    const { gl, stats, buffers, programs } = fakeWebGL();
+    const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 960, height: 600 }) } as unknown as HTMLCanvasElement;
+    const race = createRace([player]); race.countdown = 0; race.powers.boxes = [];
+    const kart = race.karts[0]; kart.distance = 100; kart.lane = 0;
+    const renderer = new RaceRenderer(canvas, [player], race), uploads = stats.uploads;
+    const drawCount = () => { const before = stats.draws; renderer.render(race, 1 / 60); return stats.draws - before; };
+    const empty = drawCount();
+    const box = { id: 1, distance: 100, lane: 0, cooldown: 0 }; race.powers.boxes = [box];
+    assert.equal(drawCount(), empty + 1);
+    collectPowerups(race, new Map([[kart.id, 96]]));
+    assert.equal(box.cooldown, ITEM_RESPAWN_SECONDS);
+    assert.equal(drawCount(), empty + 6, 'The box itself is replaced by six outgoing sparkles');
+    box.cooldown = ITEM_RESPAWN_SECONDS - ITEM_BURST_SECONDS - .01;
+    assert.equal(drawCount(), empty, 'After the short burst nothing remains at the pickup point');
+    box.cooldown = .01; assert.equal(drawCount(), empty, 'Box remains absent for the whole cooldown');
+    box.cooldown = 0; stats.opacities.length = 0;
+    assert.equal(drawCount(), empty + 1);
+    assert.ok(stats.opacities.includes(.25), 'A full inventory sees a ghosted box instead of an apparently collectible one');
+    kart.power.item = null; stats.opacities.length = 0;
+    assert.equal(drawCount(), empty + 1);
+    assert.ok(!stats.opacities.includes(.25), 'An empty inventory sees the full-bright collectible');
+    assert.equal(stats.uploads, uploads, 'Pickup feedback reuses geometry instead of allocating during race frames');
+    assert.equal(stats.nonFinite, false);
+    renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+
+test('all24 supplied animals have distinct finite race and dance models', () => {
+  const signatures = new Set<string>();
+  const suppliedAnimals = ['gorilla', 'tiger', 'monkey', 'hippo', 'flamingo', 'rabbit', 'panda', 'zebra', 'cow', 'sheep', 'lion', 'buffalo', 'orangutan', 'elephant', 'goat', 'crocodile', 'antelope', 'fish', 'pig', 'ram', 'donkey', 'bear', 'giraffe', 'horse'];
+  for (const id of suppliedAnimals) {
+    const character = { id };
+    const mesh = racerGeometry([1, .5, .2], character.id, 'kart');
+    assert.ok(mesh.data.every(Number.isFinite), character.id);
+    assert.ok(mesh.data.length / 6 < 10000, `${character.id} stays within model budget`);
+    signatures.add(JSON.stringify(mesh.data));
+    const dance = dancerGeometry([1, .5, .2], .5, character.id);
+    assert.ok(dance.data.every(Number.isFinite));
+    const twerk = twerkGeometry([1, .5, .2], .5, character.id);
+    assert.ok(twerk.data.every(Number.isFinite));
+  }
+  assert.equal(signatures.size, 24);
+});
+
+const publicFigures = ['bezos', 'trump', 'musk', 'zuckerberg', 'ye', 'huang'];
+test('all six requested people have distinct bounded race models and keep every supported vehicle', () => {
+  const signatures = new Set<string>();
+  for (const figure of publicFigures) for (const vehicle of vehicles) {
+    const mesh = racerGeometry([.2, .8, .85], figure, vehicle);
+    assert.ok(mesh.data.every(Number.isFinite), `${figure}/${vehicle} has finite geometry`);
+    assert.equal(mesh.data.length % 18, 0, 'All geometry consists of complete colored triangles');
+    assert.ok(mesh.data.length / 6 < 9000, `${figure}/${vehicle} fits the ten-player model budget`);
+    for (let at = 0; at < mesh.data.length; at += 6) {
+      assert.ok(Math.abs(mesh.data[at]) < 3 && mesh.data[at + 1] >= -.01 && mesh.data[at + 1] < 4 && Math.abs(mesh.data[at + 2]) < 4, `${figure}/${vehicle} remains within its readable cosmetic silhouette`);
+    }
+    signatures.add(JSON.stringify(mesh.data));
+    assert.notDeepEqual(mesh.data, racerGeometry([.2, .8, .85], 'fox', vehicle).data, `${figure} is not a fallback animal`);
+    assert.notDeepEqual(mesh.data, racerGeometry([1, .4, .2], figure, vehicle).data, 'Player color still appears on the ride and rear outfit stripe');
+    assert.deepEqual(racerGeometry([.2, .8, .85], figure, vehicle, false).data, racerGeometry([.2, .8, .85], 'fox', vehicle, false).data, 'An empty ride has no person or held prop left in the seat');
+  }
+  assert.equal(signatures.size, 24);
+});
+
+test('the six new people preserve their likenesses, props and selected accents in all dance and twerk poses', () => {
+  const identities = new Set<string>();
+  for (const figure of publicFigures) {
+    const dance = Array.from({ length: 8 }, (_, frame) => dancerGeometry([.2, .8, .85], frame * Math.PI / 4, figure));
+    const twerk = Array.from({ length: 8 }, (_, frame) => twerkGeometry([.2, .8, .85], frame * Math.PI / 4, figure));
+    for (const [name, poses] of [['dance', dance], ['twerk', twerk]] as const) {
+      assert.equal(new Set(poses.map(pose => JSON.stringify(pose.data))).size, 8, `${figure} has eight unique ${name} poses`);
+      assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 < 5000), `${figure} has bounded static ${name} geometry`);
+      for (const pose of poses) for (let at = 0; at < pose.data.length; at += 6) {
+        assert.ok(Math.abs(pose.data[at]) < 2 && pose.data[at + 1] >= -.02 && pose.data[at + 1] < 4.6 && Math.abs(pose.data[at + 2]) < 2, `${figure} props stay attached and in frame while ${name}`);
+      }
+    }
+    identities.add(JSON.stringify(dance[0].data));
+    assert.notDeepEqual(dance[0].data, twerk[0].data, `${figure} has distinct animations`);
+    assert.notDeepEqual(dance[0].data, dancerGeometry([1, .4, .2], 0, figure).data, 'The color stripe survives both animation routes');
+  }
+  assert.equal(identities.size, 6);
+});
+
+test('signature rocket, buttons, holograms, sonic bars and GPU trails are distinct low-cost cosmetic meshes', () => {
+  const identities = new Set<string>();
+  for (const figure of publicFigures) {
+    const mesh = figureAuraGeometry(figure);
+    assert.ok(mesh.data.length > 0 && mesh.data.length / 6 <= 1300, `${figure} has one small aura mesh`);
+    assert.ok(mesh.data.every(Number.isFinite)); assert.equal(mesh.data.length % 18, 0);
+    identities.add(JSON.stringify(mesh.data));
+  }
+  assert.equal(identities.size, 6);
+  for (const legacy of ['fox', 'gorilla', 'unknown', '__proto__']) assert.deepEqual(figureAuraGeometry(legacy).data, [], 'Existing characters do not acquire unintended effects');
+});
+
+test('ten-view celebrity effects animate and follow dancers without per-frame uploads or resource leaks', () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 2 }, configurable: true, writable: true });
+  try {
+    const { gl, stats, buffers, programs } = fakeWebGL();
+    const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1440, height: 900 }) } as unknown as HTMLCanvasElement;
+    const players = Array.from({ length: 10 }, (_, index) => ({ ...player, id: String(index), character: publicFigures[index % 6], vehicle: vehicles[index % 4] }));
+    const race = createRace(players); race.countdown = 0; race.powers.boxes = [];
+    const renderer = new RaceRenderer(canvas, players, race), uploads = stats.uploads, vertices = stats.vertices;
+    renderer.render(race, 1 / 60);
+    assert.equal(stats.viewports, 10); assert.equal(canvas.width, 1440, 'Dense grids retain the bounded pixel ratio');
+    const initial = stats.models.map(model => Array.from(model)); stats.models.length = 0;
+    race.elapsed = .6; renderer.render(race, 1 / 60);
+    assert.notDeepEqual(stats.models.map(model => Array.from(model)), initial, 'Signature effects orbit, pulse or hover without replacing geometry');
+    const huangVertices = figureAuraGeometry('huang').data.length / 6;
+    const huangDraws = stats.meshDraws.filter(draw => draw.count === huangVertices);
+    assert.equal(huangDraws.length, 20, 'Huang has exactly one small aura draw in each viewport per frame');
+    assert.notDeepEqual(Array.from(huangDraws[0].model), Array.from(huangDraws[10].model), 'The GPU aura itself orbits, independently of camera motion');
+    race.karts[5].power.dance = 2; stats.meshDraws.length = 0;
+    renderer.render(race, 1 / 60);
+    const dancingAura = stats.meshDraws.find(draw => draw.count === huangVertices)!.model;
+    const dancerPose = racePose(race.karts[5].distance, race.karts[5].lane, .04, race.karts[5].onShortcut);
+    const dancerYaw = dancerPose.yaw + race.karts[5].heading;
+    assert.ok(Math.abs(dancingAura[12] - (dancerPose.position[0] + Math.cos(dancerYaw) * 2.2)) < .001, 'The aura follows its dancer out of the seat');
+    assert.ok(Math.abs(dancingAura[14] - (dancerPose.position[2] - Math.sin(dancerYaw) * 2.2)) < .001);
+    for (const remaining of [3.5, 3.3, 2, .15, 0]) {
+      race.karts.forEach((kart, index) => { kart.power.dance = remaining; kart.power.danceStyle = index % 2 ? 'twerk' : 'dance'; });
+      const before = structuredClone(race); renderer.render(race, 1 / 60);
+      assert.deepEqual(race, before, 'Cosmetic accessories never mutate race state, item counts or collisions');
+    }
+    assert.equal(stats.uploads, uploads); assert.equal(stats.vertices, vertices);
     assert.equal(stats.nonFinite, false);
     renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }

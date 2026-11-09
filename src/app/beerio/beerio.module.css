@@ -24,19 +24,23 @@
 .readyBadge { padding:12px 16px; border:1px solid #77d69e40; border-radius:24px; color:#b6e5c8; font-size:10px; font-weight:800; letter-spacing:.12em; }
 .readyBadge .dot { margin-right:7px; }
 .phoneError { flex-shrink:0; margin:8px 0 0; }
-.controller { display:flex; flex:1; flex-direction:column; min-height:0; margin-top:20px; }
+/* Two primary thumb zones, with secondary actions kept out of the way. */
+.controller { display:flex; flex:1; flex-direction:column; min-height:0; margin-top:16px; }
 .controllerStatus { flex-shrink:0; font-size:10px; letter-spacing:.12em; }
 .controllerStatus .dot { margin-right:5px; }
-.controlHint { flex-shrink:0; max-width:360px; font-size:13px; line-height:1.5; margin:10px 0 18px; }
-.controls { display:grid; grid-template-columns:1fr; gap:14px; margin-top:auto; padding-top:12px; touch-action:none; }
-.steering,.pedals { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); align-items:stretch; gap:14px; }
-.control,.control.brake,.control.go { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; min-width:0; height:clamp(92px,18dvh,150px); min-height:76px; border-radius:20px; cursor:pointer; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; box-shadow:0 5px 0 #0e0c1c; }
-.control { font-size:32px; }
-.control small { margin-top:7px; font-size:10px; letter-spacing:.15em; }
-.control.brake,.control.go { height:clamp(110px,21dvh,170px); font-size:23px; letter-spacing:.05em; }
-.control.brake { color:#ffe0d9; }
-.itemControl { display:flex; align-items:center; justify-content:center; gap:10px; min-height:52px; width:100%; padding:10px 12px; border:2px solid #c3a8ff; border-radius:14px; color:#f3eaff; background:#59427e; box-shadow:0 4px 0 #0e0c1c; font-size:12px; letter-spacing:.1em; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
+.controlHint { flex-shrink:0; max-width:520px; font-size:13px; line-height:1.5; margin:10px 0 16px; }
+.controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); grid-template-areas:'item item' 'steer pedals'; align-items:stretch; gap:12px; margin-top:auto; padding-top:8px; touch-action:none; }
+.steering { display:block; grid-area:steer; min-width:0; }
+.steering > * { height:100%; }
+.pedals { display:grid; grid-area:pedals; grid-template-columns:repeat(2,minmax(0,1fr)); grid-template-rows:minmax(0,1fr) 56px; align-items:stretch; gap:10px; height:clamp(220px,38dvh,320px); }
+.control,.control.brake,.control.go,.control.drift { display:flex; flex-direction:column; align-items:center; justify-content:center; width:100%; min-width:0; height:100%; min-height:0; padding:8px 4px; border-radius:16px; cursor:pointer; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; box-shadow:0 5px 0 #0e0c1c; }
+.control.go { grid-column:1 / -1; grid-row:1; border-radius:32px; font-size:clamp(42px,12vw,68px); letter-spacing:.02em; }
+.control.go small { margin-top:8px; font-size:clamp(8px,2.1vw,11px); line-height:1.6; letter-spacing:.03em; }
+.control.brake { grid-column:1; grid-row:2; color:#ffe0d9; font-size:12px; }
+.control.drift { grid-column:2; grid-row:2; color:#e6fbff; background:#236a85; border-color:#73d8f1; font-size:12px; letter-spacing:.04em; }
+.itemControl { display:flex; grid-area:item; align-items:center; justify-content:center; align-self:stretch; flex-wrap:wrap; gap:6px 10px; min-height:64px; width:100%; padding:10px 12px; border:2px solid #c3a8ff; border-radius:16px; color:#f3eaff; background:#59427e; box-shadow:0 4px 0 #0e0c1c; font-size:12px; letter-spacing:.1em; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; -webkit-tap-highlight-color:transparent; }
 .itemControl>span { font-size:25px; line-height:1; }
+.itemControl[data-loaded="true"] { border-color:#ffdf8c; background:#6b4c37; color:#fff1b2; }
 .itemControl:active { transform:translateY(3px); box-shadow:0 1px 0 #0e0c1c; filter:brightness(1.2); }
 .control.pressed { transform:translateY(3px); box-shadow:0 2px 0 #0e0c1c; }
 .control:focus-visible,.itemControl:focus-visible,.phoneLeave:focus-visible,.assistToggle:focus-visible,.trackPicker select:focus-visible { outline:3px solid white; outline-offset:3px; }
@@ -59,12 +63,13 @@
   .driverIdentity strong { font-size:15px; }
   .driverIdentity .avatar { width:30px; height:30px; }
   .phoneLeave { min-height:40px; }
-  .controller { margin-top:12px; }
+  .controller { margin-top:8px; }
   .controlHint { max-width:none; margin:6px 0 8px; font-size:12px; }
-  .controls { grid-template-columns:1fr minmax(76px,.48fr) 1fr; gap:14px; padding-top:4px; }
-  .steering,.pedals { gap:12px; }
-  .control,.control.brake,.control.go { height:clamp(104px,41dvh,190px); min-height:84px; }
-  .itemControl { flex-direction:column; align-self:end; min-height:84px; height:clamp(104px,41dvh,190px); padding:8px 4px; font-size:10px; letter-spacing:.05em; }
+  .controls { gap:8px 14px; padding-top:4px; }
+  .pedals { height:clamp(146px,44dvh,230px); grid-template-rows:minmax(0,1fr) 48px; gap:8px; }
+  .control.go { font-size:42px; border-radius:24px; }
+  .control.go small { margin-top:0; font-size:9px; line-height:1.35; }
+  .itemControl { min-height:48px; padding:6px 12px; font-size:11px; letter-spacing:.05em; }
   .phoneWaiting { padding:14px 5px; }
   .waitingFlag { display:none; }
   .phoneWaiting .eyebrow { margin-bottom:10px; }
@@ -100,22 +105,6 @@
 .form .customColor input { width: 36px; height: 34px; margin: 0; padding: 0; }
 .appearanceFields select:focus-visible, .colorSwatch:focus-visible, .customColor input:focus-visible { outline: 3px solid white; outline-offset: 3px; }
 
-/* Stagger the pedals like the B/A buttons on a gamepad, within thumb reach. */
-.controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'steer pedals' 'item item'; align-items: end; }
-.steering { display: block; grid-area: steer; }
-.steering > * { height: clamp(144px, 25dvh, 180px); }
-.itemControl { grid-area: item; }
-.pedals { grid-area: pedals; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(2, 1fr); gap: 6px; height: clamp(144px, 25dvh, 180px); }
-.control.brake, .control.go { height: 100%; min-height: 64px; border-radius: 50%; font-size: clamp(12px, 3.6vw, 18px); }
-.control.brake { grid-column: 2; grid-row: 1; }
-.control.go { grid-column: 1; grid-row: 2; }
-@media (orientation: landscape) and (max-height: 600px) {
-  .controls { grid-template-columns: minmax(0, 1fr) minmax(72px, .45fr) minmax(0, 1fr); grid-template-areas: 'steer item pedals'; align-items: end; }
-  .steering > *, .pedals { height: clamp(120px, 42dvh, 190px); }
-  .control.brake, .control.go { height: 100%; min-height: 54px; }
-  .itemControl { align-self: end; height: clamp(104px, 35dvh, 160px); }
-}
-
 /* The phone lobby puts the driver’s garage directly under a compact status. */
 .phoneShell .garagePhone { height: auto; }
 .garagePhone .phoneReady { flex: 0 0 auto; padding: 18px 4px 4px; }
@@ -144,28 +133,13 @@
   .readySelection > span:first-child { font-size: 24px; }
 }
 
-.itemControl { flex-wrap: wrap; }
 .itemControl small { flex-basis: 100%; min-width: 0; font-size: 10px; font-weight: 600; letter-spacing: normal; line-height: 1.15; overflow-wrap: anywhere; text-align: center; }
 .itemControl .itemFeedback { color: #fff1b2; font-weight: 900; }
-@media (orientation: landscape) and (max-height: 600px) { .itemControl { gap: 4px; } .itemControl small { flex-basis: auto; font-size: 9px; } }
-
-/* Drift sits beside the driving buttons, like a shoulder button on a controller. */
-.control.go { grid-column: 2; grid-row: 1; }
-.control.brake { grid-column: 1; grid-row: 2; }
-.control.drift { grid-column: 1; grid-row: 1; height: 100%; min-height: 54px; border-radius: 50%; color: #e6fbff; background: #236a85; border-color: #73d8f1; font-size: clamp(11px, 3.1vw, 16px); letter-spacing: .04em; }
+@media (orientation: landscape) and (max-height: 600px) { .itemControl small { flex-basis: auto; font-size: 11px; } }
 
 .player > strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .player > .avatar { flex-shrink: 0; }
 .form label small { display: block; margin-top: 6px; color: #c9c2d0; letter-spacing: normal; }
-/* Item sits directly above the steering stick in both orientations. */
-.controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'item pedals' 'steer pedals'; align-items: end; }
-.itemControl { align-self: stretch; }
-@media (orientation: landscape) and (max-height: 600px) {
-  .controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: 'item pedals' 'steer pedals'; gap: 6px 14px; }
-  .itemControl { align-self: stretch; flex-direction: row; min-height: 44px; height: auto; padding: 5px 8px; }
-  .steering > *, .pedals { height: clamp(100px, 35dvh, 160px); }
-}
-
 /* Restored older rooms retain their original capacity. */
 .capacityWarning { margin-top: 20px; padding: 18px 20px; border: 1px solid #ffce58; background: #3b3021; color: #fff1ca; line-height: 1.5; }
 .capacityWarning p { margin: 5px 0 12px; font-size: 14px; }

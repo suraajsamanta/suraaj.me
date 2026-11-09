@@ -10,8 +10,8 @@ export default function StartingGrid({ players, maxPlayers }: { players: RoomPla
       if (!player) return <div key={`empty-${index}`} className={`${styles.card} ${styles.empty}`} aria-label={`Open driver slot ${index + 1}`}><span>✦</span><strong>OPEN SLOT</strong><small>PLAYER {index + 1}</small></div>;
       const character = CHARACTERS.find((item) => item.id === player.character) ?? CHARACTERS[0];
       const vehicle = VEHICLES.find((item) => item.id === player.vehicle) ?? VEHICLES[0];
-      const status = !player.connected ? "DISCONNECTED" : player.ready ? "READY" : "NOT READY";
-      return <article key={player.id} className={`${styles.card} ${player.ready && player.connected ? styles.ready : ""}`} style={{ "--driver-color": player.color } as React.CSSProperties}>
+      const status = !player.connected ? "DISCONNECTED" : "JOINED";
+      return <article key={player.id} className={`${styles.card} ${player.connected ? styles.ready : ""}`} style={{ "--driver-color": player.color } as React.CSSProperties}>
         <div className={styles.cardTop}><span>PLAYER {index + 1}</span><span className={styles.status}>{status}</span></div>
         <div className={styles.art} aria-hidden="true"><span>{character.icon}</span><span>{vehicle.icon}</span></div>
         <div className={styles.details}><strong>{player.name}</strong><small>{character.name}<br />{vehicle.name}</small><div className={styles.color}><span aria-hidden="true" /> VEHICLE COLOR {player.color.toUpperCase()}</div></div>

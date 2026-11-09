@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Trump — The High-Velocity Showman</title><desc id="desc">Original stylized portrait with swept golden-orange hair, blue suit, extended red tie, dramatic pout, thumbs-up and orbiting red-and-blue buttons.</desc>
+<defs><radialGradient id="bg"><stop stop-color="#ee7652" stop-opacity=".48"/><stop offset="1" stop-color="#121826"/></radialGradient><linearGradient id="silver" x2=".85" y2="1"><stop stop-color="#fbfdff"/><stop offset=".35" stop-color="#8b9dad"/><stop offset=".6" stop-color="#e4eef5"/><stop offset="1" stop-color="#526777"/></linearGradient><linearGradient id="leather" x2="1" y2="1"><stop stop-color="#424954"/><stop offset=".45" stop-color="#1d222b"/><stop offset="1" stop-color="#080d15"/></linearGradient><linearGradient id="gold" x2="1" y2="1"><stop stop-color="#fff0ab"/><stop offset=".45" stop-color="#fbc34d"/><stop offset="1" stop-color="#b77918"/></linearGradient></defs>
+<rect width="256" height="256" rx="24" fill="url(#bg)"/>
+<circle cx="128" cy="116" r="94" fill="none" stroke="#ee7652" stroke-opacity=".18"/>
+<path d="M25 216h206M37 225h182" stroke="#ee7652" stroke-opacity=".25"/>
+
+<g stroke="#f1c665" stroke-width="2"><path d="M20 83h29v22l-15-6-14 6zM211 136h27v22l-13-7-14 7z" fill="url(#gold)"/><circle cx="42" cy="141" r="13" fill="#cc3a4c"/><circle cx="215" cy="79" r="13" fill="#2856aa"/></g><path d="M37 141h10M215 74v10M210 79h10" stroke="#fff" stroke-width="3"/>
+<path d="M49 236l9-54q3-24 38-34h66q34 9 38 34l10 54" fill="#244681" stroke="#112441" stroke-width="4"/>
+<path d="M108 149l20 17 20-17 11 87h-60z" fill="#fffdf5"/><path d="M98 149l30 18-25 23-21-30M158 149l-30 18 24 23 21-30" fill="#355b98" stroke="#102b51" stroke-width="2"/>
+<path d="M119 166h19l-4 18 9 52-14 12-14-12 8-52z" fill="#e7383c" stroke="#a21e31" stroke-width="2"/>
+<path d="M113 129v24q15 16 31 0v-24" fill="#d39168"/>
+<ellipse cx="85" cy="101" rx="8" ry="13" fill="#e8ac7d"/><ellipse cx="171" cy="101" rx="8" ry="13" fill="#e8ac7d"/>
+<path d="M86 75q14-33 43-33 35 0 42 37l-2 43q-9 31-40 32-33-1-42-32z" fill="#ecb386" stroke="#bc805d" stroke-width="2.5"/>
+<path d="M83 86q-7-26 9-43 6-12 30-13 33-6 57 11-4 21-35 24-23 0-45 16l-10 16z" fill="url(#gold)" stroke="#bd822f" stroke-width="2"/>
+<path d="M91 52q28-16 68-8M94 62q38-18 65-13M101 70q34-13 52-15" fill="none" stroke="#ffdf85" stroke-width="4" stroke-linecap="round"/>
+<path d="M97 95l23-3M138 92l22 5" stroke="#b28754" stroke-width="5" stroke-linecap="round"/>
+<g><ellipse cx="109" cy="104" rx="9" ry="5" fill="#fff7ec"/><ellipse cx="146" cy="104" rx="9" ry="5" fill="#fff7ec"/><circle cx="110" cy="104" r="4" fill="#668b99"/><circle cx="145" cy="104" r="4" fill="#668b99"/><circle cx="111" cy="103" r="1.3" fill="white"/><circle cx="146" cy="103" r="1.3" fill="white"/></g>
+<path d="M128 103l-7 17 13 1M100 117l9 2M148 119l9-1" fill="none" stroke="#c48764" stroke-width="2.5"/>
+<path d="M117 133q10-8 20 0-10 10-20 0" fill="#c57e6d"/><path d="M121 133h12" stroke="#814d43" stroke-width="2"/>
+<g transform="translate(49 191) rotate(-15)"><path d="M-6 29v-23q0-6 7-6h10l2-18q1-6 6-4 8 5 4 20l-2 7h5q6 0 5 8l-4 21q-1 5-8 5H1z" fill="#eeb88d" stroke="#b67d5d" stroke-width="2"/><path d="M-9 29h15v13H-9" fill="#f7f5ef"/></g>
+
+<path d="M24 242h208" stroke="#ee7652" stroke-width="3" stroke-linecap="round" opacity=".75"/>
+</svg>
