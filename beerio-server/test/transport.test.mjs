@@ -141,3 +141,43 @@ test('real WebSocket item presses retain sequence through release and resume wit
   replacement.ws.close();
   host.ws.close();
 });
+
+test('real concurrent random joins fill two isolated races, with reconnect and private rooms excluded', async (t) => {
+  const relay = await running(t);
+  const hosts = await Promise.all([client(relay.url), client(relay.url), client(relay.url)]);
+  const creates = hosts.map(h => h.wait(m => m.type === 'welcome'));
+  hosts.forEach((h, i) => h.send({ type: 'create', maxPlayers: 4, publicMatchmaking: i < 2 }));
+  const welcomes = await Promise.all(creates);
+  const players = await Promise.all(Array.from({ length: 10 }, () => client(relay.url)));
+  const replies = players.map(p => p.wait(m => m.type === 'welcome' || m.type === 'error'));
+  players.forEach((p, i) => p.send({ type: 'join_random', name: `Concurrent ${i}` }));
+  const joined = await Promise.all(replies);
+  assert.equal(joined.filter(m => m.type === 'welcome').length, 8);
+  assert.equal(joined.filter(m => m.code === 'no_random_room').length, 2);
+  assert.ok(joined.filter(m => m.type === 'welcome').every(m => m.room.code !== welcomes[2].room.code));
+  for (let i = 0; i < 2; i++) {
+    const racers = players.map((player, j) => ({ player, welcome: joined[j] })).filter(x => x.welcome.room?.code === welcomes[i].room.code);
+    assert.equal(racers.length, 4);
+    const allReady = hosts[i].wait(m => m.type === 'room' && m.room.players.length === 4 && m.room.players.every(p => p.ready));
+    racers.forEach(({ player }) => player.send({ type: 'ready', ready: true }));
+    await allReady;
+    const locked = hosts[i].wait(m => m.type === 'room' && m.room.locked);
+    hosts[i].send({ type: 'lock', locked: true }); await locked;
+  }
+  const racerA = players.findIndex((_, i) => joined[i].room?.code === welcomes[0].room.code);
+  const racerB = players.findIndex((_, i) => joined[i].room?.code === welcomes[1].room.code);
+  const inputs = [0, 1].map(i => hosts[i].wait(m => m.type === 'input' && m.input.accelerate));
+  players[racerA].send({ type: 'input', input: { steer: .5, accelerate: true, brake: false } });
+  players[racerB].send({ type: 'input', input: { steer: -.5, accelerate: true, brake: false } });
+  assert.equal((await inputs[0]).playerId, joined[racerA].playerId);
+  assert.equal((await inputs[1]).playerId, joined[racerB].playerId);
+  const states = [racerA, racerB].map(i => players[i].wait(m => m.type === 'state'));
+  hosts[0].send({ type: 'state', payload: { race: 'A' } }); hosts[1].send({ type: 'state', payload: { race: 'B' } });
+  assert.deepEqual((await states[0]).payload, { race: 'A' }); assert.deepEqual((await states[1]).payload, { race: 'B' });
+  players[racerA].ws.close();
+  await hosts[0].wait(m => m.type === 'room' && m.room.players.some(p => p.id === joined[racerA].playerId && !p.connected));
+  const again = await client(relay.url); const resumed = again.wait(m => m.type === 'welcome');
+  again.send({ type: 'resume', code: joined[racerA].room.code, token: joined[racerA].token, roomId: joined[racerA].roomId });
+  assert.equal((await resumed).playerId, joined[racerA].playerId);
+  assert.equal(relay.rooms.rooms.get(welcomes[1].room.code).players.get(joined[racerB].playerId).peer !== null, true);
+});

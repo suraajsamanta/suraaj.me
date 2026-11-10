@@ -60,13 +60,14 @@ export class RoomService {
       code: room.code,
       serverTime: this.now(),
       maxPlayers: room.maxPlayers,
+      publicMatchmaking: room.publicMatchmaking === true,
       locked: room.locked,
       characterSelection: room.characterSelection === true, characterSelectionVersion: room.characterSelectionVersion ?? 1, selectionPhase: room.selectionPhase ?? "gathering", countdownEndsAt: room.countdownEndsAt ?? null,
       recovering: room.recovering,
       recoveryWaitingFor: room.recovering ? [...room.participants].filter(id => !room.players.get(id)?.peer) : [],
       hostConnected: Boolean(room.host),
       players: Array.from(room.players.values(), (player) => ({
-        id: player.id, name: player.name, color: player.color, character: player.character, vehicle: player.vehicle,
+        id: player.id, name: player.name, color: player.color, character: player.character, characterCursor: player.characterCursor ?? null, vehicle: player.vehicle,
         connected: Boolean(player.peer) && !room.pendingWelcomes.has(player.peer), ready: player.ready === true, characterConfirmed: player.characterConfirmed === true, inRace: room.locked && room.participants.has(player.id), input: { ...player.input },
         ...(player.actionSequence > 0 ? { actionSequence: player.actionSequence } : {}),
       })),
@@ -81,11 +82,11 @@ export class RoomService {
     // Private host-only checkpoint: hashes authorize returning controllers, never new ones.
     this.send(room.host, { type: 'checkpoint', checkpoint: {
       version: 1, revision: ++room.checkpointRevision, ackRequired: room.pendingWelcomes.size > 0,
-      roomId: room.roomId, maxPlayers: room.maxPlayers, locked: room.locked,
+      roomId: room.roomId, maxPlayers: room.maxPlayers, locked: room.locked, publicMatchmaking: room.publicMatchmaking === true,
       characterSelection: room.characterSelection === true, characterSelectionVersion: room.characterSelectionVersion ?? 1, selectionPhase: room.selectionPhase,
       participants: [...room.participants],
       players: Array.from(room.players.values(), (p) => ({
-        id: p.id, name: p.name, color: p.color, character: p.character, vehicle: p.vehicle,
+        id: p.id, name: p.name, color: p.color, character: p.character, characterCursor: p.characterCursor ?? null, vehicle: p.vehicle,
         tokenHash: p.tokenHash, actionSequence: p.actionSequence, characterConfirmed: p.characterConfirmed === true,
       })),
     } });
@@ -97,7 +98,7 @@ export class RoomService {
       players.every(player => player.peer && player.characterConfirmed);
     if (!allSelected) { room.selectionPhase = 'selecting'; room.countdownEndsAt = null; }
     else if (room.selectionPhase !== 'countdown') {
-      room.selectionPhase = 'countdown'; room.countdownEndsAt = this.now() + SELECTION_COUNTDOWN_MS;
+      room.selectionPhase = 'countdown'; room.countdownEndsAt = this.now() + (room.characterSelectionVersion >= 3 ? 8000 : SELECTION_COUNTDOWN_MS);
     }
   }
   broadcastRoom(room) { this.updateSelection(room); this.checkpoint(room); this.broadcast(room, { type: 'room', room: this.roomView(room) }); }
@@ -134,10 +135,11 @@ export class RoomService {
     if (!message || typeof message !== 'object' || Array.isArray(message) || typeof message.type !== 'string') {
       this.error(peer, 'invalid_message', 'Invalid message.'); return;
     }
-    if (['create', 'join', 'resume'].includes(message.type)) {
+    if (['create', 'join', 'join_random', 'resume'].includes(message.type)) {
       if (peer.room) { this.error(peer, 'already_joined', 'Leave the current room first.'); return; }
       if (message.type === 'create') this.create(peer, message);
       else if (message.type === 'join') this.join(peer, message);
+      else if (message.type === 'join_random') this.joinRandom(peer, message);
       else this.resume(peer, message);
       return;
     }
@@ -187,8 +189,8 @@ export class RoomService {
         if (!room.characterSelection || room.locked || ![...room.players.values()].some(p => p.peer && !room.pendingWelcomes.has(p.peer))) { this.error(peer, 'selection_unavailable', 'Wait for a connected driver before choosing characters.'); return; }
         room.selectionPhase = 'selecting'; room.countdownEndsAt = null;
         for (const player of room.players.values()) {
-          player.characterConfirmed = false;
-          if (!selectionCharacters(room).includes(player.character)) player.character = selectionCharacters(room)[0];
+          if (room.characterSelectionVersion < 3) player.characterConfirmed = false;
+          if (room.characterSelectionVersion < 3 && !selectionCharacters(room).includes(player.character)) player.character = selectionCharacters(room)[0];
           this.resetInput(room, player);
         }
         this.broadcastRoom(room);
@@ -201,15 +203,20 @@ export class RoomService {
       case 'character': {
         const player = room.players.get(peer.playerId);
         if (peer.role !== 'player' || !player || player.peer !== peer || room.pendingWelcomes.has(peer)) { this.error(peer, 'player_only', 'Only a joined driver may choose a character.'); return; }
-        if (!room.host || !room.characterSelection || room.locked || !['selecting', 'countdown'].includes(room.selectionPhase)) { this.error(peer, 'selection_unavailable', 'Character selection is not open.'); return; }
-        if (message.confirm === true && message.direction === undefined) player.characterConfirmed = true;
-        else if (message.confirm === false && message.direction === undefined) player.characterConfirmed = false;
+        if (!room.host || !room.characterSelection || room.locked || !(room.characterSelectionVersion >= 3 ? ['gathering', 'selecting', 'countdown'] : ['selecting', 'countdown']).includes(room.selectionPhase)) { this.error(peer, 'selection_unavailable', 'Character selection is not open.'); return; }
+        if (message.confirm === true && message.direction === undefined) {
+          if (room.characterSelectionVersion >= 3 && !selectionCharacters(room).includes(player.characterCursor)) { this.error(peer, 'invalid_character_choice', 'Move the joystick to choose a character first.'); return; }
+          if (room.characterSelectionVersion >= 3) player.character = player.characterCursor;
+          player.characterConfirmed = true;
+        } else if (message.confirm === false && message.direction === undefined) { player.characterConfirmed = false; if (room.characterSelectionVersion >= 3) player.character = null; }
         else if (['up', 'down', 'left', 'right'].includes(message.direction) && message.confirm === undefined && !player.characterConfirmed) {
           const characters = selectionCharacters(room), columns = SELECTION_COLUMNS, rows = Math.ceil(characters.length / columns);
-          const index = Math.max(0, characters.indexOf(player.character));
+          const index = characters.indexOf(room.characterSelectionVersion >= 3 ? player.characterCursor : player.character);
+          if (index < 0) { player.characterCursor = characters[0]; this.broadcastRoom(room); break; }
           const row = Math.floor(index / columns), column = index % columns;
           const next = message.direction === 'left' ? row * columns + (column + columns - 1) % columns : message.direction === 'right' ? row * columns + (column + 1) % columns : message.direction === 'up' ? ((row + rows - 1) % rows) * columns + column : ((row + 1) % rows) * columns + column;
-          player.character = characters[next];
+          if (room.characterSelectionVersion >= 3) player.characterCursor = characters[next];
+          else player.character = characters[next];
         } else { this.error(peer, 'invalid_character_choice', 'Use a direction or select the highlighted character.'); return; }
         this.broadcastRoom(room);
         break;
@@ -220,7 +227,7 @@ export class RoomService {
         if (room.locked || (room.characterSelection && room.selectionPhase !== 'gathering')) { this.error(peer, 'room_locked', 'Appearance is locked during character selection and racing.'); return; }
         if (!validAppearance(message.appearance)) { this.error(peer, 'invalid_appearance', 'Choose a valid racer, vehicle, and color.'); return; }
         const changed = player.character !== message.appearance.character || player.vehicle !== message.appearance.vehicle || player.color !== message.appearance.color.toLowerCase();
-        Object.assign(player, { character: message.appearance.character, vehicle: message.appearance.vehicle, color: message.appearance.color.toLowerCase() });
+        Object.assign(player, { character: room.characterSelectionVersion >= 3 ? player.character : message.appearance.character, vehicle: message.appearance.vehicle, color: message.appearance.color.toLowerCase() });
         if (changed) player.ready = false;
         this.broadcastRoom(room);
         break;
@@ -253,17 +260,17 @@ export class RoomService {
         }
         if (!message.locked && room.characterSelection && !room.locked) {
           room.selectionPhase = 'gathering'; room.countdownEndsAt = null;
-          for (const player of room.players.values()) player.characterConfirmed = false;
+          if (room.characterSelectionVersion < 3) for (const player of room.players.values()) player.characterConfirmed = false;
         }
         if (room.locked !== message.locked) {
           if (message.locked) {
-            if (room.characterSelection) { this.error(peer, 'selection_required', 'The race starts automatically after every character is selected and the five-second countdown ends.'); return; }
+            if (room.characterSelection) { this.error(peer, 'selection_required', 'The race starts after the host starts the countdown and everyone has selected a character.'); return; }
             const entrants = [...room.players.values()].filter(player => player.peer && !room.pendingWelcomes.has(player.peer));
             if (!entrants.length || entrants.some(player => !player.ready)) {
               this.error(peer, 'not_ready', 'Every connected driver must be ready before starting.'); return;
             }
           } else {
-            for (const player of room.players.values()) { player.ready = false; player.characterConfirmed = false; }
+            for (const player of room.players.values()) { player.ready = false; player.characterConfirmed = false; if (room.characterSelectionVersion >= 3) { player.character = null; player.characterCursor = null; } }
             room.selectionPhase = 'gathering'; room.countdownEndsAt = null;
           }
           room.locked = message.locked;
@@ -313,9 +320,9 @@ export class RoomService {
     const code = this.makeCode();
     const hostToken = makeToken();
     const room = {
-      code, maxPlayers, players: new Map(), host: peer, hostToken, roomId: hashToken(hostToken),
+      code, maxPlayers, publicMatchmaking: message.publicMatchmaking === true, players: new Map(), host: peer, hostToken, roomId: hashToken(hostToken),
       hostGoneAt: null, touchedAt: this.now(), locked: false, recovering: false,
-      characterSelection: [1, 2].includes(message.characterSelectionVersion), characterSelectionVersion: message.characterSelectionVersion === 2 ? 2 : 1, selectionPhase: 'gathering', countdownEndsAt: null,
+      characterSelection: [1, 2, 3].includes(message.characterSelectionVersion), characterSelectionVersion: [2, 3].includes(message.characterSelectionVersion) ? message.characterSelectionVersion : 1, selectionPhase: 'gathering', countdownEndsAt: null,
       recoveryEnabled: message.recoveryVersion === 1, checkpointRevision: 0, pendingWelcomes: new Map(),
       participants: new Set(),
     };
@@ -342,12 +349,20 @@ export class RoomService {
     return this.rooms.get(code);
   }
 
-  join(peer, message) {
-    const room = this.getJoinRoom(peer, message);
+  joinRandom(peer, message) {
+    // Only hosts who explicitly opt in are discoverable. Select and reserve in
+    // this synchronous operation, so concurrent requests cannot overfill a room.
+    const eligible = [...this.rooms.values()].filter(room => room.publicMatchmaking && room.host && !room.locked && !room.recovering && room.selectionPhase === 'gathering' && room.players.size < room.maxPlayers && (room.characterSelectionVersion < 2 || (Number.isInteger(message.characterSelectionVersion) && message.characterSelectionVersion >= room.characterSelectionVersion)));
+    if (!eligible.length) { this.error(peer, 'no_random_room', 'No open public rooms right now. Try again or join with a code.', true); return; }
+    this.join(peer, message, eligible[randomInt(eligible.length)]);
+  }
+
+  join(peer, message, selectedRoom) {
+    const room = selectedRoom ?? this.getJoinRoom(peer, message);
     if (!room) return;
     if (!room.host) { this.error(peer, 'host_away', 'The host is reconnecting. Try again shortly.', true); return; }
     if (room.locked) { this.error(peer, 'room_locked', 'This race has started. Ask the host to open a new race.', true); return; }
-    if (room.characterSelectionVersion >= 2 && message.characterSelectionVersion !== 2) { this.error(peer, 'update_required', 'Refresh Beerio on this phone to load the new characters, then join again.', true); return; }
+    if (room.characterSelectionVersion >= 2 && (!Number.isInteger(message.characterSelectionVersion) || message.characterSelectionVersion < room.characterSelectionVersion)) { this.error(peer, 'update_required', 'Refresh Beerio on this phone to load the new characters, then join again.', true); return; }
     if (room.players.size >= room.maxPlayers) { this.error(peer, 'room_full', 'All racer slots are taken.', true); return; }
     if (message.appearance !== undefined && !validAppearance(message.appearance)) { this.error(peer, 'invalid_appearance', 'Choose a valid racer, vehicle, and color.', true); return; }
     const name = cleanName(message.name);
@@ -357,10 +372,10 @@ export class RoomService {
     const player = {
       id: randomBytes(8).toString('hex'), tokenHash: hashToken(token), name,
       color: message.appearance?.color.toLowerCase() ?? COLORS.find((color) => !usedColors.has(color)),
-      character: message.appearance?.character ?? 'fox', vehicle: message.appearance?.vehicle ?? 'kart', peer,
+      character: room.characterSelectionVersion >= 3 ? null : message.appearance?.character ?? 'fox', characterCursor: null, vehicle: message.appearance?.vehicle ?? 'kart', peer,
       input: freshInput(), ready: false, characterConfirmed: false, actionSequence: 0, actionFloor: 0, lastInputAt: this.now(), goneAt: null,
     };
-    if (room.characterSelection && room.selectionPhase !== 'gathering' && !selectionCharacters(room).includes(player.character)) player.character = selectionCharacters(room)[0];
+    if (room.characterSelection && room.characterSelectionVersion < 3 && room.selectionPhase !== 'gathering' && !selectionCharacters(room).includes(player.character)) player.character = selectionCharacters(room)[0];
     room.players.set(player.id, player);
     room.touchedAt = this.now();
     peer.room = room.code;
@@ -384,7 +399,7 @@ export class RoomService {
       else this.error(peer, 'recovery_pending', 'Waiting for the host to restore the room after a relay restart.');
     }
     if (!room) return;
-    if (room.characterSelectionVersion >= 2 && message.characterSelectionVersion !== 2) { this.error(peer, 'update_required', 'Refresh Beerio to reconnect with the new character roster.'); return; }
+    if (room.characterSelectionVersion >= 2 && (!Number.isInteger(message.characterSelectionVersion) || message.characterSelectionVersion < room.characterSelectionVersion)) { this.error(peer, 'update_required', 'Refresh Beerio to reconnect with the new character roster.'); return; }
     if (message.token === room.hostToken) {
       if (room.host && room.host !== peer) {
         const old = room.host;
@@ -438,10 +453,12 @@ export class RoomService {
     const c = message.checkpoint;
     if (!c || typeof c !== 'object' || c.version !== 1 || c.roomId !== message.roomId ||
       !Number.isInteger(c.maxPlayers) || c.maxPlayers < 4 || c.maxPlayers > 10 ||
-      (c.characterSelectionVersion !== undefined && ![1, 2].includes(c.characterSelectionVersion)) ||
+      (c.characterSelectionVersion !== undefined && ![1, 2, 3].includes(c.characterSelectionVersion)) ||
       typeof c.locked !== 'boolean' || !Array.isArray(c.players) || c.players.length > c.maxPlayers ||
       c.players.some(p => !p || typeof p.id !== 'string' || !/^[a-f0-9]{16}$/.test(p.id) ||
-        !isHash(p.tokenHash) || typeof p.name !== 'string' || p.name !== cleanName(p.name) || !validName(p.name) || !validAppearance(p) ||
+        !isHash(p.tokenHash) || typeof p.name !== 'string' || p.name !== cleanName(p.name) || !validName(p.name) || !(validAppearance(p) || (c.characterSelectionVersion >= 3 && p.character === null && validAppearance({ ...p, character: 'gorilla' }))) ||
+        (c.characterSelectionVersion >= 3 && p.characterCursor != null && !SELECTION_CHARACTERS.includes(p.characterCursor)) ||
+        (c.characterSelectionVersion >= 3 && (p.characterConfirmed === true || c.locked) && !SELECTION_CHARACTERS.includes(p.character)) ||
         !Number.isSafeInteger(p.actionSequence) || p.actionSequence < 0) ||
       new Set(c.players.map(p => p.id)).size !== c.players.length ||
       new Set(c.players.map(p => p.tokenHash)).size !== c.players.length ||
@@ -450,7 +467,7 @@ export class RoomService {
       c.participants.some(id => !c.players.some(p => p.id === id))) {
       this.error(peer, 'invalid_recovery', 'The saved room could not be restored safely. Start a new room.', true); return null;
     }
-    if (c.characterSelectionVersion === 2 && message.characterSelectionVersion !== 2) {
+    if (c.characterSelectionVersion >= 2 && (!Number.isInteger(message.characterSelectionVersion) || message.characterSelectionVersion < c.characterSelectionVersion)) {
       this.error(peer, 'update_required', 'Refresh Beerio to restore this room with the new character roster.'); return null;
     }
     if (this.rooms.size >= this.maxRooms) {
@@ -461,12 +478,12 @@ export class RoomService {
     const room = {
       code: this.makeCode(message.code), roomId: message.roomId, hostToken: message.token,
       host: null, hostGoneAt: this.now(), touchedAt: this.now(),
-      maxPlayers: c.maxPlayers, locked: c.locked, recovering: c.locked && c.participants.length > 0,
-      characterSelection: c.characterSelection === true, characterSelectionVersion: c.characterSelectionVersion === 2 ? 2 : 1, selectionPhase: c.locked ? 'racing' : ['selecting', 'countdown'].includes(c.selectionPhase) ? 'selecting' : 'gathering', countdownEndsAt: null,
+      maxPlayers: c.maxPlayers, publicMatchmaking: c.publicMatchmaking === true, locked: c.locked, recovering: c.locked && c.participants.length > 0,
+      characterSelection: c.characterSelection === true, characterSelectionVersion: [2, 3].includes(c.characterSelectionVersion) ? c.characterSelectionVersion : 1, selectionPhase: c.locked ? 'racing' : ['selecting', 'countdown'].includes(c.selectionPhase) ? 'selecting' : 'gathering', countdownEndsAt: null,
       recoveryEnabled: true, checkpointRevision: 0, pendingWelcomes: new Map(),
       participants: new Set(c.participants),
       players: new Map(c.players.map(p => [p.id, {
-        id: p.id, name: p.name, color: p.color.toLowerCase(), character: p.character, vehicle: p.vehicle,
+        id: p.id, name: p.name, color: p.color.toLowerCase(), character: p.character, characterCursor: p.characterCursor ?? null, vehicle: p.vehicle,
         tokenHash: p.tokenHash, actionSequence: p.actionSequence, actionFloor: p.actionSequence,
         peer: null, ready: false, characterConfirmed: c.characterSelection === true && p.characterConfirmed === true, input: freshInput(), lastInputAt: this.now(), goneAt: this.now(),
       }])),
