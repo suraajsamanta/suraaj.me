@@ -37,7 +37,7 @@ async function fixture(t, host = true) {
     setLocked: locked => { if (room.status === 'connected') { if (locked) room.error = null; messages.push({ type: 'lock', locked }); } },
     publishState: payload => { if (room.status === 'connected') messages.push({ type: 'state', payload }); },
     leaveRoom: () => { room.code = null; room.role = null; messages.push({ type: 'leave' }); },
-    onState(listener) { stateListener = listener; return () => { stateListener = () => {}; }; }, createRoom(options) { messages.push({ type: 'create', options }); }, joinRoom(options) { messages.push({ type: 'join', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); }, setReady(ready) { messages.push({ type: 'ready', ready }); },
+    onState(listener) { stateListener = listener; return () => { stateListener = () => {}; }; }, createRoom(options) { messages.push({ type: 'create', options }); }, joinRoom(options) { messages.push({ type: 'join', options }); }, joinRandomRoom(options) { messages.push({ type: 'join_random', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); }, setReady(ready) { messages.push({ type: 'ready', ready }); },
   });
   const react = {
     useState(initial) {
@@ -645,4 +645,73 @@ test('phone reports named item collection and activation even after the item is 
     tree = await f.render(); assert.equal(controller().item, item); assert.equal(controller().itemFeedback, label);
   }
   f.emit({ type: 'inventory', inventory: [{ id: 'a', item: null, feedback: 'Unknown item activated!' }] }); tree = await f.render(); assert.equal(controller().itemFeedback, '');
+});
+
+test('v3 host keeps QR and character grid together while gathering and only enables start after every confirmed pick', async t => {
+  const f = await fixture(t);
+  f.room.characterSelectionVersion = 3;
+  f.room.players.forEach(player => { player.character = null; player.characterCursor = null; player.characterConfirmed = false; });
+  let tree = await f.render();
+  const grid = () => f.nodes(tree, node => node.type === 'CharacterGrid');
+  const qr = () => f.nodes(tree, node => node.props?.alt === 'QR code to join this room');
+  assert.equal(grid().length, 1); assert.equal(qr().length, 1);
+  assert.equal(grid()[0].props.version, 3);
+  assert.equal(f.nodes(tree, node => node.type === 'StartingGrid').length, 0, 'No separate joining lobby');
+  assert.equal(f.button(tree, 'EVERYONE’S IN · CHOOSE CHARACTERS ↗'), undefined);
+  assert.equal(f.button(tree, 'START RACE ↗').disabled, true);
+  assert.equal(f.messages.some(message => message.type === 'select_characters'), false);
+  f.room.players[0].characterCursor = 'fox';
+  tree = await f.render(); assert.equal(f.button(tree, 'START RACE ↗').disabled, true, 'Browsing alone is not a confirmed choice');
+  f.room.players.forEach(player => { player.character = 'fox'; player.characterCursor = 'fox'; player.characterConfirmed = true; });
+  tree = await f.render(); assert.equal(f.button(tree, 'START RACE ↗').disabled, false);
+  f.button(tree, 'START RACE ↗').onClick(); tree = await f.render();
+  assert.equal(f.game(tree), undefined);
+  assert.equal(f.messages.filter(message => message.type === 'select_characters').length, 1);
+  f.room.selectionPhase = 'countdown'; f.room.countdownEndsAt = Date.now() + 8000;
+  tree = await f.render();
+  assert.equal(grid().length, 1); assert.equal(qr().length, 1, 'Joining remains discoverable throughout countdown');
+  assert.equal(f.button(tree, 'RACE STARTING…').disabled, true);
+  f.lock();
+  const game = f.game(await f.render());
+  assert.equal(game.initialCountdown, 0, 'The host does not insert a second countdown');
+  assert.deepEqual(game.players.map(player => player.character), ['fox', 'fox']);
+});
+
+test('v3 phone opens its own blank character controller immediately on joining and hides it while reconnecting', async t => {
+  const f = await fixture(t, false);
+  const self = { id: 'a', name: 'Fresh driver', color: '#123456', character: null, characterCursor: null, connected: true, characterConfirmed: false, inRace: false, input: { ...ZERO } };
+  Object.assign(f.room, { code: 'ABC234', role: 'player', playerId: 'a', status: 'connected', hostConnected: true, characterSelectionVersion: 3, selectionPhase: 'gathering', players: [self] });
+  let tree = await f.render();
+  let controller = f.nodes(tree, node => node.type === 'CharacterController')[0];
+  assert.ok(controller, 'No extra waiting screen between joining and choosing');
+  assert.equal(controller.props.player.character, null);
+  assert.equal(controller.props.player.characterCursor, null);
+  controller.props.onChoose({ direction: 'right' });
+  assert.deepEqual(f.messages.at(-1), { type: 'character', direction: 'right' });
+  f.room.status = 'reconnecting'; tree = await f.render();
+  assert.equal(f.nodes(tree, node => node.type === 'CharacterController').length, 0);
+  self.characterCursor = 'fox'; self.character = 'fox'; self.characterConfirmed = true;
+  f.room.status = 'connected'; tree = await f.render();
+  controller = f.nodes(tree, node => node.type === 'CharacterController')[0];
+  assert.equal(controller.props.player.character, 'fox');
+  assert.equal(controller.props.player.characterConfirmed, true);
+});
+
+test('random joining is offered separately and host discovery requires opt-in', async t => {
+  const f = await fixture(t, false);
+  let tree = await f.render();
+  f.button(tree, 'HOST A RACE ↗').onClick(); tree = await f.render();
+  const toggle = f.nodes(tree, n => n.type === 'button' && n.props.role === 'switch')[0];
+  assert.equal(toggle.props['aria-checked'], false);
+  toggle.props.onClick(); tree = await f.render();
+  f.button(tree, 'CREATE ROOM ↗').onClick();
+  assert.equal(f.messages.at(-1).options.publicMatchmaking, true);
+  f.button(tree, '← BACK').onClick(); tree = await f.render();
+  f.button(tree, 'JOIN A RANDOM ROOM').onClick(); tree = await f.render();
+  assert.equal(f.nodes(tree, n => n.type === 'input' && n.props.placeholder === 'ABC123').length, 0);
+  const name = f.nodes(tree, n => n.type === 'input' && n.props.placeholder === 'Your name')[0];
+  name.props.onChange({ target: { value: 'Speedy' } }); tree = await f.render();
+  assert.equal(f.button(tree, 'FIND A ROOM ↗').disabled, false);
+  f.nodes(tree, n => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
+  assert.equal(f.messages.at(-1).type, 'join_random'); assert.equal(f.messages.at(-1).options.name, 'Speedy');
 });

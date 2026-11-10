@@ -397,7 +397,7 @@ function figureHead(g: Geometry, id: string, center: Vec3) {
   const [x, y, z] = center, skin = FIGURE_SKIN[id], hair: Color = [.2, .15, .12];
   const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
   const wide = id === 'trump' ? .49 : id === 'huang' ? .45 : .41;
-  g.ellipsoid(center, [wide, id === 'zuckerberg' ? .53 : .48, .38], skin, 12, 7);
+  g.ellipsoid(center, [wide, id === 'zuckerberg' ? .53 : .48, .38], skin, id === 'bezos' ? 16 : 12, id === 'bezos' ? 8 : 7);
   for (const side of [-1, 1]) g.ellipsoid(p(side * wide, -.01, -.02), [.085, .14, .07], skin, 7, 4);
   // Huang's short salt-and-pepper cut and glasses are his identity cues, not
   // flags or exaggerated ethnic shorthand. All faces retain normal proportions.
@@ -406,10 +406,19 @@ function figureHead(g: Geometry, id: string, center: Vec3) {
     g.ellipsoid(p(.12, .4, -.04), [.1, .025, .12], [1, .98, .94], 7, 4);
   } else if (id === 'trump') {
     const orange: Color = [1, .62, .15];
-    g.ellipsoid(p(0, .35, -.05), [.52, .24, .4], orange, 10, 5);
-    g.ellipsoid(p(-.08, .46, .19), [.55, .15, .25], [1, .77, .25], 10, 5);
-    g.ellipsoid(p(-.25, .29, .34), [.31, .14, .1], orange, 8, 4);
-    g.triangle(p(.37, .4, -.22), p(-.45, .66, .09), p(-.48, .29, .36), GOLD);
+    g.ellipsoid(p(0, .32, -.08), [.49, .19, .34], orange, 12, 6);
+    // A solid, asymmetric swept quiff, not stacked horizontal hair discs.
+    const sweep = [[-.51, .3, .3, .045, .065], [-.34, .4, .28, .11, .15], [-.07, .53, .19, .15, .23], [.23, .48, .08, .14, .24], [.46, .35, -.025, .075, .16]];
+    const point = (section: number, corner: number): Vec3 => {
+      const [dx, dy, dz, ry, rz] = sweep[section], angle = corner * Math.PI / 4;
+      return p(dx, dy + Math.cos(angle) * ry, dz + Math.sin(angle) * rz);
+    };
+    for (let section = 0; section < sweep.length - 1; section++) for (let corner = 0; corner < 8; corner++) {
+      g.quad(point(section, corner), point(section + 1, corner), point(section + 1, corner + 1), point(section, corner + 1), corner < 3 ? [1, .75, .23] : orange);
+    }
+    for (const section of [0, sweep.length - 1]) for (let corner = 0; corner < 8; corner++) {
+      g.triangle(p(sweep[section][0], sweep[section][1], sweep[section][2]), point(section, corner), point(section, corner + 1), orange);
+    }
   } else if (id === 'musk') {
     g.ellipsoid(p(0, .34, -.1), [.43, .22, .33], hair, 9, 5);
     for (let i = 0; i < 5; i++) {
@@ -434,7 +443,7 @@ function figureHead(g: Geometry, id: string, center: Vec3) {
       for (let i = 0; i < 3; i++) g.beam(p(side * (.12 + i * .09), .48 - i * .035, -.23), p(side * (.08 + i * .09), .49 - i * .035, .12), .018, [.8, .82, .83]);
     }
   } else if (id === 'ye') {
-    g.ellipsoid(p(0, .07, -.17), [.53, .56, .37], FIGURE_OUTFIT[id], 10, 6);
+    g.ellipsoid(p(0, .07, -.17), [.53, .56, .37], [.14, .145, .18], 10, 6);
     g.ellipsoid(p(0, -.015, .16), [.41, .44, .27], [.49, .51, .56], 10, 6);
     for (const side of [-1, 1]) g.ellipsoid(p(side * .17, .1, .405), [.18, .095, .035], [.025, .025, .04], 8, 4);
     g.box(p(0, .1, .415), [.13, .055, .04], CHARCOAL);
@@ -475,11 +484,13 @@ function figureHead(g: Geometry, id: string, center: Vec3) {
 }
 
 function figureTorso(g: Geometry, id: string, center: Vec3, accent: Color) {
-  const [x, y, z] = center, coat = FIGURE_OUTFIT[id];
+  const [x, y, z] = center, coat: Color = id === 'ye' ? [.16, .16, .205] : FIGURE_OUTFIT[id];
   const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
   const width = id === 'trump' ? .52 : id === 'ye' ? .59 : id === 'musk' ? .46 : .39;
   if (id === 'ye') {
-    for (let band = 0; band < 4; band++) g.ellipsoid(p(0, -.3 + band * .21, 0), [width, .17, .39], coat, 9, 4);
+    // Overlapping padded bands already enclose the torso. A second inner
+    // ellipsoid would be entirely hidden but duplicated in all sixteen poses.
+    for (let band = 0; band < 4; band++) g.ellipsoid(p(0, -.3 + band * .21, 0), [width, .17, .39], [coat[0] + band * .008, coat[1] + band * .008, coat[2] + band * .008], 10, 4);
     g.box(p(0, -.03, .392), [.035, .82, .035], SILVER);
   } else {
     g.ellipsoid(center, [width, id === 'bezos' ? .52 : .46, .32], coat, 10, 6);
@@ -514,19 +525,39 @@ function figureTorso(g: Geometry, id: string, center: Vec3, accent: Color) {
   g.box(p(0, -.12, -.325), [.3, .09, .025], accent);
 }
 
+/** The waist bridges the moving hips to the jacket even in a bent-over pose. */
+function figureWaist(g: Geometry, id: string, hip: Vec3, chest: Vec3) {
+  const wide = id === 'trump' ? .35 : id === 'ye' ? .36 : .28;
+  const top: Vec3 = [chest[0], chest[1] - .29, chest[2]];
+  g.beam(hip, top, wide * .8, id === 'ye' ? [.12, .12, .16] : FIGURE_OUTFIT[id]);
+  g.ellipsoid([hip[0], hip[1] + .035, hip[2]], [wide, .23, .27], CHARCOAL, 8, 4);
+}
+
+function figureSleeve(g: Geometry, id: string, from: Vec3, to: Vec3, forearm = false) {
+  const fabric: Color = id === 'ye' ? [.17, .17, .215] : id === 'bezos' ? forearm ? FIGURE_SKIN[id] : [1, .97, .91] : FIGURE_OUTFIT[id];
+  const width = id === 'ye' ? .19 : id === 'musk' ? .14 : forearm ? .11 : .13;
+  g.beam(from, to, width, fabric);
+  if (id === 'ye') for (const at of [.25, .75]) {
+    const center = from.map((value, axis) => value + (to[axis] - value) * at) as Vec3;
+    g.ellipsoid(center, [.235, .21, .23], fabric, 6, 3);
+  }
+  if (id === 'bezos' && !forearm) g.ellipsoid(to, [.145, .11, .135], [1, .97, .91], 8, 4);
+}
+
 function figureHand(g: Geometry, id: string, center: Vec3, gesture = false) {
   g.sphere(center, .12, FIGURE_SKIN[id], 7, 4);
   if (gesture && id === 'trump') g.beam([center[0] - .07, center[1], center[2]], [center[0] - .09, center[1] + .23, center[2]], .052, FIGURE_SKIN[id]);
 }
-function figureProp(g: Geometry, id: string, hand: Vec3, chest: Vec3) {
+function figureProp(g: Geometry, id: string, hand: Vec3) {
   const p = (dx: number, dy: number, dz: number): Vec3 => [hand[0] + dx, hand[1] + dy, hand[2] + dz];
   if (id === 'bezos') {
-    const base: Vec3 = [chest[0] + .65, chest[1] + .05, chest[2] - .13];
+    const base: Vec3 = p(0, .14, 0);
     g.box(base, [.28, .13, .27], GOLD);
     g.cylinder([base[0], base[1] + .07, base[2]], .08, .38, SILVER, 8, .075);
     g.cylinder([base[0], base[1] + .45, base[2]], .075, .16, [1, .94, .72], 8, 0);
     for (const side of [-1, 1]) g.triangle([base[0] + side * .075, base[1] + .13, base[2]], [base[0] + side * .19, base[1] + .07, base[2]], [base[0] + side * .075, base[1] + .3, base[2]], GOLD);
     g.sphere([base[0], base[1] + .29, base[2] + .075], .045, HOLO_BLUE, 6, 4, true);
+    g.beam([base[0] + .08, base[1] + .3, base[2] + .08], [base[0] + .43, base[1] + .3, base[2] + .08], .009, GOLD);
   } else if (id === 'musk') {
     g.beam(p(0, -.18, 0), p(0, .47, 0), .055, SILVER);
     g.beam(p(-.12, .49, 0), p(.12, .49, 0), .055, SILVER);
@@ -541,7 +572,7 @@ function figureProp(g: Geometry, id: string, hand: Vec3, chest: Vec3) {
   }
 }
 function figureBoot(g: Geometry, id: string, foot: Vec3) {
-  g.box([foot[0], foot[1], foot[2] + .1], [id === 'ye' ? .43 : .32, .24, id === 'ye' ? .65 : .5], id === 'musk' ? SILVER : CHARCOAL);
+  g.box([foot[0], foot[1], foot[2] + .1], [id === 'ye' ? .43 : .32, .24, id === 'ye' ? .65 : .5], id === 'musk' ? SILVER : id === 'ye' ? [.13, .13, .17] : CHARCOAL);
   if (id === 'musk') {
     g.cylinder([foot[0], foot[1] - .13, foot[2]], .09, .08, [.14, .25, .34], 7);
     g.cylinder([foot[0], foot[1] - .32, foot[2]], .012, .19, HOLO_BLUE, 7, .075);
@@ -555,14 +586,13 @@ function figureSeated(g: Geometry, color: Color, id: string, motorcycle: boolean
   const chest: Vec3 = [0, y, z]; figureTorso(g, id, chest, color);
   figureHead(g, id, [0, y + (id === 'bezos' ? .78 : .71), z]);
   for (const side of [-1, 1]) {
-    const special = side === 1 && ['trump', 'musk', 'huang'].includes(id);
-    const hand: Vec3 = special ? [id === 'trump' ? .8 : .68, y + .28, z + .35] : [side * (motorcycle ? .48 : .39), motorcycle ? 1.48 : 1.23, motorcycle ? .59 : .57];
+    const special = side === 1 && ['bezos', 'trump', 'musk', 'huang'].includes(id);
+    const hand: Vec3 = special ? [id === 'trump' ? .8 : .68, y + (id === 'bezos' ? .02 : .28), z + .35] : [side * (motorcycle ? .48 : .39), motorcycle ? 1.48 : 1.23, motorcycle ? .59 : .57];
     const elbow: Vec3 = [side * .5, y - .06, z + .18];
-    const sleeve = id === 'bezos' ? [1, .97, .91] as Color : FIGURE_OUTFIT[id];
-    g.beam([side * .32, y + .2, z], elbow, id === 'ye' ? .19 : .13, sleeve);
-    g.beam(elbow, hand, id === 'ye' ? .18 : .11, id === 'bezos' ? FIGURE_SKIN[id] : sleeve);
+    figureSleeve(g, id, [side * .32, y + .2, z], elbow);
+    figureSleeve(g, id, elbow, hand, true);
     figureHand(g, id, hand, special);
-    if (side === 1) figureProp(g, id, hand, chest);
+    if (side === 1) figureProp(g, id, hand);
     if (motorcycle || id === 'musk' || id === 'ye') {
       g.beam([side * .23, y - .3, z], [side * .42, .88, .1], .13, CHARCOAL);
       figureBoot(g, id, [side * .44, .73, .1]);
@@ -575,32 +605,67 @@ function figurePose(color: Color, phase: number, id: string, twerk: boolean): Ge
   const stiff = id === 'zuckerberg', theatrical = id === 'ye';
   const hover = id === 'musk' ? .22 + .06 * Math.sin(phase * 2) : 0;
   const bounce = (twerk ? Math.cos(phase) * .12 : Math.abs(Math.cos(phase)) * (stiff ? .06 : .18)) + hover;
-  const hip: Vec3 = [sway * (stiff ? .07 : twerk ? .25 : .17), 1.04 + bounce - (theatrical && !twerk ? (1 + Math.sin(phase)) * .12 : 0), twerk ? -.25 - Math.cos(phase * 2) * .12 : 0];
+  const crouch = theatrical && !twerk ? (1 + Math.sin(phase)) * .19 : 0;
+  const hip: Vec3 = [sway * (stiff ? .07 : twerk ? .25 : .17), 1.04 + bounce - crouch, twerk ? -.25 - Math.cos(phase * 2) * .12 : 0];
   const chest: Vec3 = [-sway * (stiff ? .04 : .15), hip[1] + (twerk ? .5 : .65), twerk ? .43 : 0];
+  figureWaist(g, id, hip, chest);
   figureTorso(g, id, chest, color);
   figureHead(g, id, [chest[0], chest[1] + (id === 'bezos' ? .77 : .69), chest[2] + (twerk ? .13 : 0)]);
   for (const side of [-1, 1]) {
-    const foot: Vec3 = [side * (twerk ? .52 : .34 + .17 * Math.sin(phase + side)), .15 + hover, twerk ? 0 : side * .25 * Math.cos(phase)];
+    const foot: Vec3 = [side * (twerk ? .52 : theatrical ? .54 : .34 + .17 * Math.sin(phase + side)), .15 + hover, twerk ? 0 : side * .25 * Math.cos(phase)];
     const knee: Vec3 = [side * .49, hip[1] * .53 + hover * .4, twerk ? .3 : .08];
     g.beam([hip[0] + side * .18, hip[1], hip[2]], knee, .14, CHARCOAL);
     g.beam(knee, foot, .13, CHARCOAL); figureBoot(g, id, foot);
     let hand: Vec3;
     if (twerk) hand = [knee[0], knee[1] + .2, knee[2] + .16];
+    else if (theatrical) hand = [side * (1.25 - crouch * 1.3), chest[1] + .25 - crouch * 2.8, .15 + crouch * .65];
     else if (stiff) hand = [side * .74, chest[1] + (Math.sin(phase + side) > 0 ? .43 : -.1), .2];
     else hand = [side * (theatrical ? 1.16 : .94 + .18 * Math.cos(phase)), chest[1] + .15 + Math.sin(phase + side * 1.3) * (theatrical ? .8 : .6), .1 + side * sway * .2];
     const elbow: Vec3 = [(chest[0] + hand[0]) * .52, chest[1] - .13, chest[2] + .1];
-    const sleeve = id === 'bezos' ? [1, .97, .91] as Color : FIGURE_OUTFIT[id];
-    g.beam([chest[0] + side * .29, chest[1] + .16, chest[2]], elbow, theatrical ? .2 : .13, sleeve);
-    g.beam(elbow, hand, theatrical ? .19 : .11, id === 'bezos' ? FIGURE_SKIN[id] : sleeve);
+    figureSleeve(g, id, [chest[0] + side * .29, chest[1] + .16, chest[2]], elbow);
+    figureSleeve(g, id, elbow, hand, true);
     figureHand(g, id, hand, !twerk);
-    if (side === 1) figureProp(g, id, hand, chest);
+    if (side === 1) figureProp(g, id, hand);
   }
+  return g;
+}
+
+/** Full-body selection pose uses the same outfit, hands, feet and auras as racing. */
+function figureShowroomGeometry(color: Color, id: string): Geometry {
+  const g = new Geometry(), hover = id === 'musk' ? .26 : 0;
+  const hip: Vec3 = [0, .99 + hover, 0];
+  const chest: Vec3 = [0, 1.38 + hover + (id === 'bezos' ? .08 : 0), 0];
+  figureWaist(g, id, hip, chest);
+  figureTorso(g, id, chest, color);
+  figureHead(g, id, [0, chest[1] + (id === 'bezos' ? .77 : .72), 0]);
+  for (const side of [-1, 1]) {
+    const foot: Vec3 = [side * (id === 'ye' ? .36 : .27), .15 + hover, .03];
+    const knee: Vec3 = [side * .26, .58 + hover, -.02];
+    g.beam([side * .2, hip[1], 0], knee, .14, CHARCOAL);
+    g.beam(knee, foot, .13, CHARCOAL); figureBoot(g, id, foot);
+    const special = side === 1 && ['bezos', 'trump', 'musk', 'huang'].includes(id);
+    const hand: Vec3 = id === 'ye' ? [side * .96, 1.42, .17] : [side * (special ? .67 : .59), (special ? 1.52 : 1.02) + hover, .17];
+    const elbow: Vec3 = [side * (id === 'ye' ? .64 : .53), 1.24 + hover, -.01];
+    figureSleeve(g, id, [side * .3, chest[1] + .19, 0], elbow);
+    figureSleeve(g, id, elbow, hand, true);
+    figureHand(g, id, hand, special);
+    if (special) figureProp(g, id, hand);
+  }
+  const aura = figureAuraGeometry(id, true).data;
+  if (id === 'trump') {
+    // Keep orbiting buttons beside the face in the fixed selection camera.
+    const turn = .64, c = Math.cos(turn), s = Math.sin(turn);
+    for (let i = 0; i < aura.length; i += 6) {
+      const x = aura[i], z = aura[i + 2]; aura[i] = x * c + z * s; aura[i + 2] = z * c - x * s;
+    }
+  }
+  g.data.push(...aura);
   return g;
 }
 
 /** One tiny static mesh per figure is transformed during frames. These are
  * cosmetic only: no hitboxes, projectiles or automatic power-up activation. */
-export function figureAuraGeometry(character: string): Geometry {
+export function figureAuraGeometry(character: string, showroom = false): Geometry {
   const g = new Geometry();
   const panel = (center: Vec3, color: Color, menu = true) => {
     const [x, y, z] = center;
@@ -612,8 +677,7 @@ export function figureAuraGeometry(character: string): Geometry {
     if (menu) for (let line = 0; line < 3; line++) g.box([x - .02, y - .1 + line * .1, z + .022], [.35 - line * .07, .018, .008], color);
   };
   if (character === 'bezos') {
-    g.beam([.65, 1.96, -.28], [.65, 2.92, -.28], .012, GOLD);
-    g.sphere([.65, 2.92, -.28], .065, [1, .95, .6], 6, 4, true);
+    for (const [x, y, z] of [[-.7, 1.9, -.2], [.95, 2.26, -.18], [-.5, 2.55, -.25]]) g.sphere([x, y, z], .035, [1, .95, .6], 6, 4, true);
   } else if (character === 'trump') {
     for (let i = 0; i < 4; i++) {
       const angle = i * Math.PI / 2;
@@ -633,7 +697,7 @@ export function figureAuraGeometry(character: string): Geometry {
     g.box([-.92, 2.15, -.2], [.2, .15, .18], SILVER);
     for (const side of [-1, 1]) g.box([-.92 + side * .23, 2.15, -.2], [.22, .24, .025], HOLO_BLUE);
     for (const side of [-1, 1]) g.sphere([.91 + side * .15, 1.94, -.35], .047, HOLO_BLUE, 5, 3, true);
-    for (const side of [-1, 1]) g.triangle([side * .44 - .06, .55, .1], [side * .44 + .06, .55, .1], [side * .44, .22, .1], HOLO_BLUE, true);
+    if (!showroom) for (const side of [-1, 1]) g.triangle([side * .44 - .06, .55, .1], [side * .44 + .06, .55, .1], [side * .44, .22, .1], HOLO_BLUE, true);
   } else if (character === 'zuckerberg') {
     panel([.88, 2.04, -.39], HOLO_BLUE);
     for (const side of [-1, 1]) {
@@ -664,9 +728,181 @@ export function figureAuraGeometry(character: string): Geometry {
 
 function characterId(id?: string): string { return id && Object.prototype.hasOwnProperty.call(CHARACTER_COLORS, id) ? id : 'fox'; }
 
+/** Species proportions are shared by selection, seated driving and item poses.
+ * Animals retain fur, paws/hooves/fins and their own body silhouette; the chosen
+ * player color is a scarf and racing belt rather than an identical human suit. */
+const ANIMAL_PROPORTIONS: Record<string, readonly [number, number, number, number, number, number, number]> = {
+  // standing hip height, chest rise, torso width/depth, arm/leg thickness, reach
+  gorilla: [.72, .66, .58, .35, .2, .16, .93], tiger: [.91, .61, .43, .3, .13, .14, .72],
+  monkey: [.85, .59, .3, .23, .1, .11, .79], hippo: [.6, .61, .58, .44, .18, .19, .74],
+  flamingo: [1.21, .35, .29, .29, .1, .045, .62], rabbit: [.72, .55, .36, .31, .105, .15, .58],
+  panda: [.67, .62, .53, .39, .18, .18, .74], zebra: [1, .57, .35, .29, .095, .105, .66],
+  cow: [.85, .58, .47, .37, .14, .14, .71], sheep: [.73, .49, .46, .34, .095, .085, .64],
+  lion: [.89, .64, .47, .33, .15, .15, .74], buffalo: [.78, .69, .57, .4, .18, .16, .79],
+  orangutan: [.65, .68, .41, .3, .16, .1, 1.04], elephant: [.72, .65, .57, .43, .21, .22, .8],
+  goat: [.96, .48, .31, .25, .085, .085, .62], crocodile: [.64, .62, .45, .36, .16, .17, .76],
+  antelope: [1.08, .5, .3, .24, .075, .08, .64], fish: [.74, .47, .39, .34, .06, .06, .91],
+  pig: [.58, .54, .49, .39, .13, .135, .64], ram: [.75, .55, .51, .36, .12, .12, .7],
+  donkey: [.9, .55, .38, .31, .12, .12, .66], bear: [.67, .68, .55, .39, .19, .18, .78],
+  giraffe: [1.17, .55, .31, .25, .08, .085, .65], horse: [.98, .63, .43, .32, .13, .125, .72],
+};
+const isAnimal = (id: string) => Object.prototype.hasOwnProperty.call(ANIMAL_PROPORTIONS, id);
+type AnimalPose = 'showroom' | 'seated' | 'motorcycle' | 'dance' | 'twerk';
+function appendOriented(target: Geometry, source: Geometry, center: Vec3, up: Vec3) {
+  const vertical = normalize(up), right = normalize(cross(vertical, [0, 0, 1])), forward = cross(right, vertical);
+  for (let at = 0; at < source.data.length; at += 6) {
+    const [x, y, z] = source.data.slice(at, at + 3);
+    target.data.push(center[0] + right[0] * x + vertical[0] * y + forward[0] * z,
+      center[1] + right[1] * x + vertical[1] * y + forward[1] * z,
+      center[2] + right[2] * x + vertical[2] * y + forward[2] * z,
+      ...source.data.slice(at + 3, at + 6));
+  }
+}
+function animalSegment(g: Geometry, a: Vec3, b: Vec3, radius: number, color: Color) {
+  const delta = subtract(b, a), center = a.map((v, i) => (v + b[i]) / 2) as Vec3;
+  const shape = new Geometry(); shape.ellipsoid([0, 0, 0], [radius, Math.hypot(...delta) / 2 + radius * .35, radius], color, 6, 3);
+  appendOriented(g, shape, center, delta);
+}
+function animalTail(g: Geometry, id: string, hip: Vec3) {
+  const fur = CHARACTER_COLORS[id], p = (x: number, y: number, z: number): Vec3 => [hip[0] + x, hip[1] + y, hip[2] + z];
+  if (['gorilla', 'orangutan'].includes(id)) return; // Apes do not have tails.
+  if (id === 'pig') {
+    for (let n = 0; n < 9; n++) {
+      const a = n / 8 * Math.PI * 2, b = (n + 1) / 8 * Math.PI * 2;
+      g.beam(p(.29 + Math.cos(a) * .12, .05 + Math.sin(a) * .12, -.42 - n * .018), p(.29 + Math.cos(b) * .12, .05 + Math.sin(b) * .12, -.44 - n * .018), .032, fur);
+    }
+  } else if (id === 'crocodile') {
+    const points: Vec3[] = [p(0, -.03, -.25), p(-.34, -.04, -.75), p(-.73, .06, -1.08), p(-.91, .25, -1.18)];
+    for (let n = 1; n < points.length; n++) animalSegment(g, points[n - 1], points[n], .2 / n, fur);
+    for (let n = 0; n < 5; n++) g.triangle(p(-n * .15 - .1, .05, -.4 - n * .14), p(-n * .15 - .1, .3 - n * .025, -.44 - n * .14), p(-n * .15 - .27, .06, -.6 - n * .14), [.1, .4, .12]);
+  } else if (id === 'fish') {
+    const base = p(0, .12, -.3), tip = p(0, .13, -1.02);
+    g.ellipsoid(base, [.2, .24, .3], fur, 7, 4);
+    for (const side of [-1, 1]) {
+      g.triangle(base, [tip[0] + side * .04, tip[1] + .53, tip[2]], [tip[0] + side * .04, tip[1] - .39, tip[2]], [1, .37, .27]);
+      g.triangle(base, [tip[0] + side * .04, tip[1] - .39, tip[2]], p(0, -.04, -.48), fur);
+    }
+  } else if (['rabbit', 'panda', 'bear', 'sheep', 'ram', 'goat', 'hippo'].includes(id)) {
+    g.ellipsoid(p(0, .04, -.34), [id === 'rabbit' ? .19 : .11, .14, .15], id === 'panda' ? CHARCOAL : id === 'rabbit' || id === 'sheep' ? CREAM : fur, 7, 4);
+  } else if (id === 'flamingo') {
+    for (const side of [-1, 0, 1]) animalSegment(g, p(0, .04, -.15), p(side * .14, .23, -.63), .075, side ? [.95, .35, .5] : fur);
+  } else {
+    const thick = id === 'horse' ? .14 : id === 'monkey' ? .065 : .08;
+    const end = p(-.48, id === 'monkey' ? .56 : .19, -.75);
+    animalSegment(g, p(0, .03, -.23), p(-.22, .02, -.65), thick, fur);
+    animalSegment(g, p(-.22, .02, -.65), end, thick, fur);
+    if (id === 'monkey') animalSegment(g, end, p(-.65, .6, -.64), thick, fur);
+    else if (['lion', 'cow', 'buffalo', 'giraffe', 'horse', 'zebra', 'donkey', 'antelope'].includes(id)) g.ellipsoid(end, [.13, .19, .13], id === 'lion' ? [.51, .25, .08] : CHARCOAL, 7, 4);
+    if (id === 'tiger' || id === 'zebra') for (let n = 0; n < 3; n++) g.ellipsoid(p(-.13 - n * .11, .04 + n * .035, -.52 - n * .08), [.09, .04, .09], CHARCOAL, 6, 3);
+  }
+}
+
+/** Exposed for silhouette regression tests: the entire animal below its head. */
+export function animalBodyGeometry(color: Color, id: string, pose: AnimalPose = 'showroom', phase = 0): Geometry {
+  return animalGeometry(color, id, pose, phase, false);
+}
+function animalGeometry(color: Color, id: string, pose: AnimalPose, phase = 0, head = true): Geometry {
+  const g = new Geometry(); if (!isAnimal(id)) return g;
+  const spec = ANIMAL_PROPORTIONS[id];
+  const [height, rise, width, depth, arm, leg, reach] = spec, fur = CHARACTER_COLORS[id];
+  const seated = pose === 'seated' || pose === 'motorcycle', bike = pose === 'motorcycle', dance = pose === 'dance', twerk = pose === 'twerk';
+  const sway = Math.sin(phase), bounce = dance ? Math.abs(Math.cos(phase)) * .13 : twerk ? Math.cos(phase) * .09 : 0;
+  const hip: Vec3 = seated ? [0, bike ? 1.11 : .97, bike ? -.2 : -.15] : [twerk ? sway * .2 : dance ? sway * .13 : 0, height + bounce - (twerk ? .15 : 0), twerk ? -.24 : 0];
+  const chest: Vec3 = [dance ? -sway * .12 : twerk ? -sway * .06 : 0, hip[1] + (seated ? .34 : rise), seated ? hip[2] : twerk ? .36 : 0];
+  const mid = hip.map((v, i) => (v + chest[i]) / 2) as Vec3, body = new Geometry();
+  const torsoHeight = seated ? .4 : rise * .65 + .13;
+  body.ellipsoid([0, 0, 0], [width, torsoHeight, depth], fur, 9, 5);
+  const pale: Color = id === 'gorilla' ? [.4, .43, .47] : id === 'crocodile' ? [.8, .87, .38] : id === 'bear' ? [.85, .63, .4] : id === 'pig' ? [1, .77, .79] : CREAM;
+  if (!['flamingo', 'fish', 'elephant', 'buffalo', 'sheep', 'ram'].includes(id)) body.ellipsoid([0, -.02, depth * .88], [width * .68, torsoHeight * .77, .075], pale, 8, 4);
+  if (id === 'panda') body.ellipsoid([0, torsoHeight * .57, 0], [width * 1.02, .16, depth * 1.01], CHARCOAL, 8, 4);
+  if (id === 'gorilla' || id === 'buffalo') body.ellipsoid([0, torsoHeight * .55, -.045], [width * 1.12, .23, depth], fur, 8, 4);
+  if (id === 'sheep' || id === 'ram') for (let n = 0; n < 9; n++) {
+    const a = n * Math.PI * 2 / 9;
+    body.ellipsoid([Math.sin(a) * width * .78, Math.cos(a) * torsoHeight * .73, .02], [.2, .2, depth * .95], id === 'ram' ? [.88, .83, .69] : CREAM, 6, 4);
+  }
+  if (id === 'tiger' || id === 'zebra') for (const side of [-1, 1]) for (let n = 0; n < 3; n++) {
+    body.beam([side * width * .83, -.22 + n * .2, -.12], [side * width * .83, -.18 + n * .2, .19], .035, CHARCOAL);
+    body.beam([side * width * .7, -.22 + n * .2, depth * .76], [side * width * .35, -.15 + n * .2, depth * .97], .035, CHARCOAL);
+  }
+  if (id === 'giraffe' || id === 'cow') for (let n = 0; n < 5; n++) {
+    const side = n % 2 ? -1 : 1;
+    body.ellipsoid([side * width * .6, -.23 + n * .11, depth * .85], [.09 + (n % 2) * .035, .1, .035], id === 'giraffe' ? [.49, .27, .08] : CREAM, 6, 3);
+    body.ellipsoid([side * width * .52, -.22 + n * .11, -depth * .85], [.11, .1, .035], id === 'giraffe' ? [.49, .27, .08] : CREAM, 6, 3);
+  }
+  if (id === 'crocodile') {
+    for (let n = 0; n < 4; n++) body.beam([-width * .53, -.26 + n * .16, depth * .93], [width * .53, -.26 + n * .16, depth * .93], .025, [.43, .6, .2]);
+    for (let n = 0; n < 5; n++) body.triangle([-.11, -.35 + n * .17, -depth * .8], [0, -.28 + n * .17, -depth - .2], [.11, -.24 + n * .17, -depth * .8], [.1, .4, .12]);
+  }
+  if (id === 'horse' || id === 'donkey' || id === 'zebra') body.ellipsoid([0, torsoHeight * .66, -.14], [.08, .26, .2], CHARCOAL, 6, 4);
+  // A narrow racing belt and back marker keep the selected color visible.
+  body.ellipsoid([0, -torsoHeight * .45, 0], [width * 1.015, .07, depth * 1.015], color, 9, 3);
+  body.box([0, torsoHeight * .1, -depth * 1.01], [.18, .25, .025], color);
+  appendOriented(g, body, mid, subtract(chest, hip));
+  animalTail(g, id, hip);
+  const headAt: Vec3 = [chest[0], chest[1] + (id === 'fish' ? .39 : id === 'flamingo' ? .57 : .56), chest[2] + (twerk ? .12 : 0)];
+  if (head) characterHead(g, id, headAt, color);
+  const hoof = ['cow', 'sheep', 'ram', 'goat', 'antelope', 'giraffe', 'horse', 'zebra', 'donkey', 'pig', 'buffalo'].includes(id);
+  for (const side of [-1, 1]) {
+    const shoulder: Vec3 = [chest[0] + side * width * .85, chest[1] - .03, chest[2]];
+    const hand: Vec3 = seated ? [side * (bike ? .48 : .4), bike ? 1.48 : 1.23, bike ? .59 : .57]
+      : twerk ? [side * .52, height * .47 + .3 + bounce, .36]
+      : dance ? [side * (reach + .16 * Math.cos(phase)), chest[1] + .15 + .48 * Math.sin(phase + side * 1.3), .12 + side * sway * .2]
+      : [side * reach, hip[1] + (id === 'gorilla' || id === 'orangutan' ? -.07 : .17), .12];
+    const elbow: Vec3 = [(shoulder[0] + hand[0]) / 2 + side * .06, (shoulder[1] + hand[1]) / 2 - .07, (shoulder[2] + hand[2]) / 2 - .03];
+    if (id === 'fish' || id === 'flamingo') {
+      // Actual fin/wing volumes follow the same shoulder and hand joints.
+      const base: Vec3 = [shoulder[0], shoulder[1] - .12, shoulder[2]];
+      const low: Vec3 = [hand[0], hand[1] - .19, hand[2] - .12];
+      g.triangle(base, hand, low, id === 'fish' ? [1, .36, .25] : fur);
+      g.triangle([base[0], base[1], base[2] - .08], low, hand, id === 'fish' ? fur : [.94, .35, .53]);
+      g.triangle(base, low, [base[0], base[1], base[2] - .08], fur);
+      for (let n = 0; n < 3; n++) animalSegment(g, base, [hand[0] - side * n * .065, hand[1] - n * .065, hand[2] - .07], .025, id === 'fish' ? [1, .64, .34] : [.95, .4, .57]);
+    } else {
+      const limb = id === 'panda' || id === 'sheep' ? CHARCOAL : fur;
+      animalSegment(g, shoulder, elbow, arm, limb); animalSegment(g, elbow, hand, arm * .88, limb);
+      if (hoof) {
+        g.box(hand, [arm * 2.3, .2, arm * 2.3], CHARCOAL);
+        g.box([hand[0], hand[1] - .04, hand[2] + arm * 1.18], [.018, .13, .018], CREAM);
+      } else {
+        g.ellipsoid(hand, [arm * 1.22, arm * 1.12, arm * 1.22], id === 'gorilla' ? [.26, .28, .32] : limb, 7, 4);
+        if (['tiger', 'lion', 'bear', 'crocodile'].includes(id)) for (let n = -1; n <= 1; n++) g.beam([hand[0] + n * .065, hand[1] - .04, hand[2] + arm], [hand[0] + n * .065, hand[1] - .075, hand[2] + arm + .07], .022, CREAM);
+      }
+      g.ellipsoid([hand[0], hand[1] + .035, hand[2]], [arm * 1.08, .035, arm * 1.08], color, 7, 3);
+    }
+    // The kart chassis fully occludes knees/feet. Keep those vertices in the
+    // complete standing, motorcycle and animation rigs, not every race view.
+    if (id === 'fish' || (seated && !bike)) continue;
+    const spread = width * .6 + (id === 'flamingo' ? -.07 : .02);
+    const foot: Vec3 = seated ? [side * (bike ? .44 : .33), bike ? .73 : .69, bike ? .09 : .47]
+      : [side * (spread + (twerk ? .2 : dance ? .1 * Math.sin(phase + side) : 0)), .14, dance ? side * .2 * Math.cos(phase) : .08];
+    const knee: Vec3 = [side * (spread + (twerk ? .16 : 0)), seated ? .9 : hip[1] * .52, twerk ? .28 : seated ? .3 : -.045];
+    const legColor: Color = id === 'panda' || id === 'sheep' || id === 'ram' ? CHARCOAL : id === 'flamingo' ? [.91, .38, .48] : fur;
+    animalSegment(g, [hip[0] + side * width * .49, hip[1], hip[2]], knee, leg, legColor);
+    animalSegment(g, knee, foot, leg * .87, legColor);
+    if (id === 'flamingo') {
+      for (let toe = -1; toe <= 1; toe++) g.beam(foot, [foot[0] + toe * .09, .04, foot[2] + .26], .032, legColor);
+    } else if (hoof) {
+      g.box([foot[0], foot[1] -.015, foot[2] + .07], [leg * 2.35, .2, leg * 2.4 + .1], CHARCOAL);
+      g.box([foot[0], foot[1] -.02, foot[2] + leg * 1.2 + .125], [.02, .15, .016], CREAM);
+    } else {
+      const rabbit = id === 'rabbit';
+      g.ellipsoid([foot[0], foot[1], foot[2] + (rabbit ? .18 : .07)], [leg * 1.45, .14, rabbit ? .38 : leg * 1.6], legColor, 7, 4);
+      if (id === 'elephant' || id === 'bear' || id === 'tiger' || id === 'lion' || id === 'crocodile') for (let n = -1; n <= 1; n++) g.ellipsoid([foot[0] + n * leg * .7, foot[1] -.035, foot[2] + leg * 1.6], [.035, .045, .06], CREAM, 5, 3);
+    }
+    if (id === 'tiger' || id === 'zebra') for (let n = 0; n < 2; n++) g.ellipsoid([knee[0], knee[1] - n * .14, knee[2]], [leg * 1.05, .027, leg * 1.05], CHARCOAL, 7, 3);
+    if (id === 'giraffe') g.ellipsoid([knee[0], knee[1], knee[2] + leg * .87], [.06, .1, .022], [.49, .27, .08], 6, 3);
+  }
+  return g;
+}
+
 /** A shared, original character model keeps each racer's identity in every pose. */
 function characterHead(g: Geometry, character: string, center: Vec3, accent: Color) {
-  const fur = CHARACTER_COLORS[character], [x, y, z] = center;
+  const fur = CHARACTER_COLORS[character];
+  // Long-necked animals keep their defining silhouette in the kart and every
+  // animation, not just in the selection artwork.
+  const neck = character === 'giraffe' ? .3 : character === 'flamingo' ? .2 : 0;
+  if (neck) g.ellipsoid([center[0], center[1] - .4 + neck / 2, center[2]], [.17, .28 + neck / 2, .17], fur, 8, 5);
+  const [x, y, z] = [center[0], center[1] + neck, center[2]];
   const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
   const eyes = (dx = 0.18, dy = 0.05, dz = 0.39) => {
     for (const side of [-1, 1]) {
@@ -727,42 +963,65 @@ function characterHead(g: Geometry, character: string, center: Vec3, accent: Col
       const angle = i * Math.PI / 6;
       g.sphere(p(Math.cos(angle) * .43, Math.sin(angle) * .43, -.09), .25, [0.77, .4, .08], 7, 4);
     }
-    g.ellipsoid(center, [character === 'hippo' ? .58 : .47, longFace ? .53 : .44, .43], fur, 11, 7);
+    const headWidth = character === 'hippo' || character === 'gorilla' ? .58 : character === 'flamingo' ? .37 : .47;
+    g.ellipsoid(p(0, 0, 0), [headWidth, longFace ? .53 : .44, .43], fur, 11, 7);
     if (['sheep', 'ram'].includes(character)) for (let i = 0; i < 10; i++) {
       const angle = i * Math.PI / 5;
-      g.sphere(p(Math.cos(angle) * .39, .16 + Math.sin(angle) * .33, -.05), .19, CREAM, 7, 4);
+      g.sphere(p(Math.cos(angle) * .39, .16 + Math.sin(angle) * .33, -.05), .19, CREAM, 6, 3);
     }
     for (const side of [-1, 1]) {
       if (character === 'elephant') {
         g.ellipsoid(p(side * .57, .02, -.04), [.35, .48, .13], fur, 9, 6);
         g.ellipsoid(p(side * .59, .02, .075), [.25, .35, .035], pink, 8, 5);
       } else if (['rabbit', 'donkey', 'horse', 'zebra'].includes(character)) {
-        g.ellipsoid(p(side * .25, .6, -.035), [.13, character === 'rabbit' ? .52 : .34, .12], fur, 8, 5);
-        g.ellipsoid(p(side * .25, .63, .07), [.065, .24, .025], pink, 7, 4);
+        const ear = character === 'rabbit' ? .52 : character === 'donkey' ? .38 : .24;
+        g.ellipsoid(p(side * .25, .37 + ear * .7, -.035), [.13, ear, .12], fur, 8, 5);
+        g.ellipsoid(p(side * .25, .4 + ear * .7, .07), [.065, ear * .65, .025], pink, 7, 4);
+      } else if (['goat', 'sheep', 'antelope', 'giraffe', 'cow'].includes(character)) {
+        g.ellipsoid(p(side * .53, .15, -.035), [.3, .12, .15], fur, 8, 5);
+        g.ellipsoid(p(side * .55, .17, .085), [.21, .07, .035], pink, 7, 4);
       } else if (!['fish', 'flamingo', 'crocodile'].includes(character)) {
         const ears = ['panda', 'cow'].includes(character) ? CHARCOAL : fur;
         g.sphere(p(side * .42, .3, -.035), ['monkey', 'orangutan'].includes(character) ? .24 : .19, ears, 8, 5);
       }
       if (['buffalo', 'antelope', 'cow', 'goat', 'giraffe'].includes(character)) {
-        const width = character === 'buffalo' ? .7 : .36;
-        g.beam(p(side * .28, .31, -.13), p(side * width, .57, -.12), .075, CREAM);
-        g.beam(p(side * width, .57, -.12), p(side * (width + .03), .88, -.16), .055, CREAM);
-        if (character === 'giraffe') g.sphere(p(side * .39, .88, -.16), .11, [0.44, .23, .12], 7, 4);
+        const width = character === 'buffalo' ? .78 : character === 'antelope' ? .57 : .36;
+        const tip = character === 'cow' ? .61 : character === 'giraffe' ? .73 : .88;
+        g.beam(p(side * .28, .31, -.13), p(side * width, .5, -.12), .075, CREAM);
+        g.beam(p(side * width, .5, -.12), p(side * (width + .03), tip, -.16), .055, CREAM);
+        if (character === 'giraffe') g.sphere(p(side * .39, tip, -.16), .09, [0.44, .23, .12], 7, 4);
       }
       if (character === 'ram') {
-        for (let i = 0; i < 8; i++) { const angle = i * Math.PI / 4; g.sphere(p(side * (.49 + Math.cos(angle) * .17), .12 + Math.sin(angle) * .22, .02), .11, [0.57, .38, .2], 7, 4); }
+        for (let i = 0; i < 8; i++) { const angle = i * Math.PI / 4; g.sphere(p(side * (.49 + Math.cos(angle) * .17), .12 + Math.sin(angle) * .22, .02), .11, [0.57, .38, .2], 6, 3); }
       }
       if (character === 'panda') g.ellipsoid(p(side * .19, .08, .38), [.2, .22, .055], CHARCOAL, 8, 5);
     }
-    if (['monkey', 'orangutan', 'gorilla'].includes(character)) g.ellipsoid(p(0, -.07, .34), [.37, .33, .17], character === 'gorilla' ? [.52, .53, .53] : CREAM, 10, 6);
+    if (['monkey', 'orangutan', 'gorilla'].includes(character)) {
+      const face: Color = character === 'gorilla' ? [.49, .51, .54] : [1, .81, .6];
+      g.ellipsoid(p(0, -.07, .34), [.37, .33, .17], face, 10, 6);
+      for (const side of [-1, 1]) g.ellipsoid(p(side * .19, .12, .345), [.22, .24, .13], face, 8, 5);
+      // Original reference-inspired brow, crest and cheerful cheek shapes.
+      g.beam(p(-.24, .3, .35), p(.24, .3, .35), .05, fur);
+      for (let tuft = -1; tuft <= 1; tuft++) g.ellipsoid(p(tuft * .12, .43 + (tuft === 0 ? .07 : 0), -.1), [.12, .17, .13], fur, 6, 4);
+    }
+    if (character === 'sheep') g.ellipsoid(p(0, -.08, .29), [.34, .39, .19], [.29, .27, .25], 10, 6);
+    if (character === 'cow') for (const side of [-1, 1]) g.ellipsoid(p(side * .25, .25, .22), [.16, .2, .13], CREAM, 7, 4);
     if (['tiger', 'zebra', 'giraffe'].includes(character)) for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
       if (character === 'giraffe') g.sphere(p(side * .39, -.2 + i * .2, -.16), .105, [0.54, .3, .1], 6, 4);
-      else g.beam(p(side * .34, -.22 + i * .21, -.28), p(side * .43, -.13 + i * .21, .12), .045, CHARCOAL);
+      else {
+        g.beam(p(side * .34, -.22 + i * .21, -.28), p(side * .43, -.13 + i * .21, .12), .045, CHARCOAL);
+        g.beam(p(side * .4, -.14 + i * .19, .21), p(side * .3, -.08 + i * .19, .34), .035, CHARCOAL);
+      }
     }
     if (['horse', 'zebra', 'donkey'].includes(character)) for (let i = 0; i < 5; i++) g.sphere(p(0, .45 - i * .15, -.35), .15, CHARCOAL, 7, 4);
+    if (character === 'giraffe') for (const side of [-1, 1]) {
+      g.ellipsoid(p(side * .28, .32, .23), [.1, .105, .055], [.54, .3, .1], 6, 4);
+      g.ellipsoid(p(side * .34, -.22, .29), [.08, .12, .04], [.54, .3, .1], 6, 4);
+    }
     if (character === 'elephant') {
       g.beam(p(0, -.1, .38), p(0, -.62, .55), .14, fur);
       g.beam(p(0, -.62, .55), p(0, -.66, .8), .12, fur);
+      for (const side of [-1, 1]) g.beam(p(side * .22, -.25, .37), p(side * .24, -.48, .63), .065, CREAM);
     } else if (character === 'flamingo') {
       g.ellipsoid(p(0, -.12, .53), [.23, .17, .34], [1, .8, .16], 9, 5);
       g.ellipsoid(p(0, -.18, .78), [.16, .12, .12], CHARCOAL, 8, 4);
@@ -773,12 +1032,22 @@ function characterHead(g: Geometry, character: string, center: Vec3, accent: Col
       for (const side of [-1, 1]) g.triangle(p(side * .35, 0, 0), p(side * .78, -.23, -.23), p(side * .32, -.27, .19), pink);
     } else {
       const snout = character === 'crocodile' ? [.4, .18, .48] : character === 'hippo' ? [.5, .28, .33] : longFace ? [.27, .3, .27] : [.28, .19, .18];
-      g.ellipsoid(p(0, -.17, character === 'crocodile' ? .52 : .37), snout as Vec3, ['pig', 'cow', 'buffalo'].includes(character) ? pink : character === 'crocodile' || character === 'hippo' ? fur : CREAM, 10, 5);
+      const muzzle: Color = ['pig', 'cow', 'buffalo'].includes(character) ? pink : character === 'crocodile' || character === 'hippo' ? fur : character === 'gorilla' ? [.49, .51, .54] : character === 'sheep' ? [.32, .3, .28] : CREAM;
+      g.ellipsoid(p(0, -.17, character === 'crocodile' ? .52 : .37), snout as Vec3, muzzle, 10, 5);
       if (character === 'pig') for (const side of [-1, 1]) g.sphere(p(side * .09, -.15, .56), .05, [0.65, .28, .36], 6, 4);
       else g.ellipsoid(p(0, -.1, longFace ? .63 : .55), [.09, .06, .04], CHARCOAL, 7, 4);
       if (character === 'crocodile') for (let i = 0; i < 5; i++) g.sphere(p((i - 2) * .13, -.25, .88), .05, CREAM, 5, 3);
+      if (['tiger', 'lion', 'monkey', 'orangutan', 'gorilla', 'rabbit'].includes(character)) {
+        g.ellipsoid(p(0, -.26, .5), [.17, .075, .035], CHARCOAL, 8, 4);
+        g.ellipsoid(p(0, -.24, .53), [.12, .025, .014], CREAM, 7, 3);
+      }
+      if (character === 'hippo') for (const side of [-1, 1]) {
+        g.sphere(p(side * .19, -.06, .65), .052, [.27, .33, .25], 6, 4);
+        g.box(p(side * .2, -.35, .58), [.11, .16, .09], CREAM);
+      }
+      if (character === 'goat') g.cylinder(p(0, -.69, .27), .035, .26, CREAM, 7, .13);
     }
-    eyes(.19, .12, .4);
+    eyes(.19, .12, ['monkey', 'orangutan', 'gorilla'].includes(character) ? .51 : character === 'sheep' ? .46 : .4);
   } else {
     g.ellipsoid(center, [0.49, 0.44, 0.43], fur, 12, 7);
     if (character === 'fox' || character === 'cat') pointedEars();
@@ -822,6 +1091,7 @@ function characterTail(g: Geometry, character: string, hip: Vec3) {
 
 function seatedDriver(g: Geometry, color: Color, character: string, motorcycle: boolean) {
   if (isFigure(character)) { figureSeated(g, color, character, motorcycle); return; }
+  if (isAnimal(character)) { g.data.push(...animalGeometry(color, character, motorcycle ? 'motorcycle' : 'seated').data); return; }
   const y = motorcycle ? 1.47 : 1.3, z = motorcycle ? -0.2 : -0.15;
   characterTail(g, character, [0, y - 0.2, z]);
   g.ellipsoid([0, y, z], [0.38, 0.45, 0.31], color, 10, 6);
@@ -906,8 +1176,52 @@ export function racerGeometry(color: Color, character = 'fox', vehicle = 'kart',
   return g;
 }
 
+/** Selection art is rendered from these real meshes. Heads, outfits, tails and
+ * held props are shared with the race and both item animations. No image plane
+ * or reference-sheet crop is part of a character model. */
+export function characterShowroomGeometry(color: Color, character = 'fox'): Geometry {
+  if (isAnimal(character)) return animalGeometry(color, character, 'showroom');
+  const g = new Geometry(), id = characterId(character);
+  if (isFigure(id)) return figureShowroomGeometry(color, id);
+  const figure = isFigure(id), chest: Vec3 = [0, 1.38, 0];
+  if (figure) {
+    figureTorso(g, id, chest, color);
+    figureHead(g, id, [0, 2.1, 0]);
+  } else {
+    characterTail(g, id, [0, .95, 0]);
+    g.ellipsoid(chest, [.38, .45, .31], color, 10, 6);
+    g.box([0, 1.4, .3], [.14, .31, .05], CREAM);
+    characterHead(g, id, [0, 2.06, 0], color);
+  }
+  for (const side of [-1, 1]) {
+    const foot: Vec3 = [side * .27, .15, .03];
+    const knee: Vec3 = [side * .24, .58, -.02];
+    g.beam([side * .2, 1.08, 0], knee, .14, CHARCOAL);
+    g.beam(knee, foot, .13, CHARCOAL);
+    if (figure) figureBoot(g, id, foot);
+    else {
+      g.box([foot[0], .15, .12], [.31, .25, .5], CHARCOAL);
+      g.box([foot[0], .1, .37], [.3, .08, .04], CREAM);
+      g.box([foot[0], .24, .18], [.18, .035, .22], color);
+    }
+    const special = figure && side === 1;
+    const hand: Vec3 = [side * (special ? .67 : .59), special ? 1.52 : 1.02, .17];
+    const elbow: Vec3 = [side * .53, 1.24, -.01];
+    const sleeve = figure ? id === 'bezos' ? [1, .97, .91] as Color : FIGURE_OUTFIT[id] : color;
+    g.beam([side * .3, 1.57, 0], elbow, id === 'ye' ? .19 : .12, sleeve);
+    g.beam(elbow, hand, id === 'ye' ? .18 : .11, id === 'bezos' ? FIGURE_SKIN[id] : sleeve);
+    if (figure) { figureHand(g, id, hand, special); if (special) figureProp(g, id, hand); }
+    else {
+      g.ellipsoid(hand, [.15, .16, .14], CREAM, 7, 4);
+      g.box([hand[0], hand[1] + .1, hand[2]], [.23, .1, .2], color);
+    }
+  }
+  return g;
+}
+
 /** Eight poses are uploaded once. All clients use the same host dance timer. */
 export function dancerGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  if (isAnimal(character)) return animalGeometry(color, character, 'dance', phase);
   if (isFigure(character)) return figurePose(color, phase, character, false);
   const g = new Geometry(), id = characterId(character);
   const sway = Math.sin(phase), bounce = Math.abs(Math.cos(phase)) * 0.18;
@@ -930,6 +1244,7 @@ export function dancerGeometry(color: Color, phase: number, character = 'fox'): 
 
 /** A separate cartoon squat/hip-wiggle, with the same chosen outfit and identity. */
 export function twerkGeometry(color: Color, phase: number, character = 'fox'): Geometry {
+  if (isAnimal(character)) return animalGeometry(color, character, 'twerk', phase);
   if (isFigure(character)) return figurePose(color, phase, character, true);
   const g = new Geometry(), id = characterId(character);
   const wiggle = Math.sin(phase), dip = Math.cos(phase) * 0.12;

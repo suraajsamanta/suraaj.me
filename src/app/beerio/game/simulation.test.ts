@@ -28,14 +28,24 @@ test('closed 3D circuit wraps at the start line', () => {
   assert.deepEqual(trackPose(0).position, trackPose(TRACK_LENGTH).position);
   assert.ok(Math.abs(circularDistance(TRACK_LENGTH - 1, 1) + 2) < 0.001);
 });
-test('up to six racers start behind the line and wait for the countdown', () => {
-  const players = Array.from({ length: 6 }, (_, i) => driver(String(i)));
+test('all ten racers stay behind the line for the full eight-second countdown', () => {
+  const players = Array.from({ length: 10 }, (_, i) => driver(String(i)));
   const race = createRace(players);
+  assert.equal(race.countdown, 8);
   const positions = race.karts.map((kart) => kart.distance);
-  advance(race, players, 2.9);
+  // Exact binary fractions verify the eight-second boundary without floating
+  // point drift in the test's usual 60 Hz advance helper.
+  for (let step = 0; step < 63; step++) stepRace(race, players, 0.125);
+  assert.equal(race.countdown, 0.125);
   assert.deepEqual(race.karts.map((kart) => kart.distance), positions);
-  assert.equal(race.karts.length, 6);
+  assert.equal(race.elapsed, 0);
+  assert.equal(race.karts.length, 10);
   assert.ok(race.karts.every((kart) => currentLap(kart, 3) === 1));
+  stepRace(race, players, 0.125);
+  assert.equal(race.countdown, 0);
+  assert.deepEqual(race.karts.map((kart) => kart.distance), positions);
+  stepRace(race, players, 1 / 60);
+  assert.ok(race.karts.every((kart, index) => kart.distance > positions[index]));
 });
 test('accelerator, braking, and coasting produce bounded speed', () => {
   const players = [driver('a')], race = createRace(players); race.countdown = 0;

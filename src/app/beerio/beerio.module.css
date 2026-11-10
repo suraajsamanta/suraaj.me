@@ -150,3 +150,178 @@
 .lobbyGrid { grid-template-columns: minmax(250px, .8fr) minmax(0, 1fr); }
 .players { min-width: 0; }
 @media (max-width: 700px) { .lobbyGrid { grid-template-columns: 1fr; } }
+
+
+/* Setup screens use the available display, not a long landing-page document. */
+.shell { height: 100dvh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.header { flex: 0 0 auto; min-height: 54px; padding: 10px clamp(16px, 3vw, 42px); }
+.content { display: flex; flex: 1 1 0; flex-direction: column; min-height: 0; width: 100%; max-width: 1600px; }
+.hero, .panel, .lobby { flex: 1 1 0; min-height: 0; padding: clamp(14px, 3dvh, 30px) clamp(16px, 4vw, 60px); }
+.hero { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.hero .eyebrow { margin-bottom: 14px; }
+.hero h1 { font-size: clamp(50px, 15dvh, 130px); }
+.hero p { margin: 20px 0; }
+.hero .textButton { margin-top: 24px; }
+.panel { width: 100%; max-width: 1000px; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
+.panel .back { flex: 0 0 auto; margin-bottom: 14px; min-height: 28px; }
+.panel .eyebrow { flex: 0 0 auto; margin-bottom: 10px; }
+.panel h1 { flex: 0 0 auto; font-size: clamp(36px, 8dvh, 70px); line-height: .95; }
+.panel > p { flex: 0 0 auto; margin: 12px 0; font-size: 15px; line-height: 1.4; }
+.panel .primary, .panel .secondary { flex: 0 0 auto; min-height: 46px; }
+.form { flex: 0 0 auto; width: 100%; gap: 10px; margin-top: 5px; }
+.form label { font-size: 10px; letter-spacing: .08em; }
+.form input { min-height: 44px; margin-top: 5px; padding: 10px 12px; font-size: 16px; }
+.form label small { margin-top: 3px; font-size: 10px; }
+.form button { margin-top: 3px; }
+.form .appearancePicker { margin: 4px 0; padding: 8px 10px; border-radius: 12px; }
+.form .appearancePicker legend { font-size: 10px; }
+.form .colorChoices { gap: 7px; margin-top: 4px; }
+.form .colorChoices > span { display: none; }
+.form .appearanceNote { margin-top: 6px !important; font-size: 10px !important; line-height: 1.3; }
+.practiceSetup { width: 100%; max-width: none; margin-top: 14px; padding: 12px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px 16px; align-items: start; }
+.practiceSetup .appearancePicker { grid-row: 1 / 3; margin: 0; padding: 10px; }
+.practiceSetup .appearancePreview { min-height: 0; margin-bottom: 8px; }
+.practiceSetup .appearancePreview > [role="img"] { width: min(90px, 13dvh); margin: 4px; }
+.practiceSetup .appearanceFields { gap: 7px; }
+.practiceSetup .appearanceFields select { min-height: 38px; padding: 8px; }
+.practiceSetup .colorChoices { gap: 5px; margin-top: 8px; }
+.practiceSetup .appearanceNote { font-size: 10px !important; margin-top: 7px !important; }
+.practiceSetup .primary { margin: 0; align-self: end; }
+.lobby { display: flex; flex-direction: column; }
+.lobbyHead { flex: 0 0 auto; align-items: center; gap: 14px; }
+.lobbyHead .eyebrow { font-size: 9px; margin-bottom: 6px; }
+.lobbyHead h1 { font-size: clamp(30px, 5.5dvh, 52px); line-height: .95; }
+.lobbyHead p { margin: 8px 0 0; max-width: none; font-size: 13px; line-height: 1.3; }
+.lobbyHead .secondary { min-height: 40px; padding: 8px 14px; font-size: 10px; }
+.lobbyGrid { flex: 1 1 0; min-height: 0; grid-template-columns: minmax(180px, .38fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.joinCard, .players { min-height: 0; padding: clamp(10px, 2dvh, 20px); border-radius: 12px; }
+.joinCard { display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+.code { font-size: clamp(28px, 4.8vw, 62px); margin: 10px 0; }
+.url { margin: 4px 0; font-size: 10px; line-height: 1.3; }
+.qr { width: min(100%, 180px, 27dvh); height: auto; aspect-ratio: 1; margin-top: 12px; }
+.players { display: flex; flex-direction: column; }
+.playersHead { flex: 0 0 auto; font-size: 10px; padding-bottom: 8px; }
+.players .trackPicker { flex: 0 0 auto; margin-top: 4px; }
+.players .trackPicker label { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px; align-items: center; }
+.players .trackPicker label > span { font-size: 8px; line-height: 1.35; }
+.players .trackPicker select { min-height: 38px; margin-top: 0; padding: 7px 10px; font-size: 13px; }
+.players .trackPicker p { margin-top: 5px; font-size: 10px; line-height: 1.25; }
+.players .assistSetting { flex: 0 0 auto; margin-top: 8px; }
+.players .assistToggle { min-height: 36px; padding: 5px 10px; font-size: 9px; }
+.players .assistToggle strong { min-width: 38px; padding: 4px 6px; }
+.players .assistSetting .fine { margin-top: 4px; }
+.players .primary { flex: 0 0 auto; min-height: 42px; margin-top: 10px; padding: 8px 10px; font-size: 10px; line-height: 1.3; }
+.players > .secondary { flex: 0 0 auto; min-height: 32px; margin-top: 4px; padding: 5px 8px; font-size: 9px; }
+.players .fine { font-size: 10px; line-height: 1.25; margin: 8px 0 0; }
+.lobby > .error, .lobby > [role="status"] { flex: 0 0 auto; margin: 6px 0 0; padding: 6px 10px; font-size: 11px !important; }
+.capacityWarning { flex: 0 0 auto; margin-top: 8px; padding: 8px 10px; font-size: 11px; line-height: 1.3; }
+.capacityWarning p { margin: 3px 0 5px; font-size: 10px; }
+.capacityWarning .secondary { min-height: 28px; font-size: 9px; }
+.phoneShell { overflow: hidden; }
+.phoneShell .phone { flex: 1 1 0; min-height: 0; }
+.phoneWaiting { min-height: 0; padding: 14px 5px; }
+.phoneWaiting p { margin: 12px 0; }
+.phoneWaiting .waitingFlag { margin-bottom: 16px; }
+
+@media (max-height: 680px) {
+  .header { min-height: 46px; padding-top: 7px; padding-bottom: 7px; }
+  .hero, .panel, .lobby { padding-top: 12px; padding-bottom: 12px; }
+  .hero p { margin: 14px 0; font-size: 15px; }
+  .hero .primary, .hero .secondary { min-height: 46px; }
+  .hero .textButton { margin-top: 18px; }
+  .lobbyGrid { margin-top: 10px; gap: 10px; }
+  .lobbyHead p { font-size: 11px; margin-top: 5px; }
+  .lobbyHead .eyebrow { display: none; }
+  .players .fine, .players .trackPicker p { font-size: 9px; }
+  .players .primary { min-height: 36px; margin-top: 6px; }
+  .players .assistSetting { margin-top: 6px; }
+  .panel > p { font-size: 12px; margin: 8px 0; }
+  .panel .back { margin-bottom: 8px; min-height: 24px; }
+  .panel .eyebrow { font-size: 9px; margin-bottom: 6px; }
+  .form { gap: 7px; }
+  .form .colorSwatch { width: 28px; height: 28px; }
+  .form .customColor input { height: 28px; }
+  .form input { padding: 7px 10px; min-height: 38px; }
+  .form label small { font-size: 9px; }
+  .form .appearanceNote { font-size: 9px !important; }
+  .panel .primary { min-height: 40px; }
+}
+@media (max-width: 700px) {
+  .header { min-height: 46px; padding: 8px 16px; }
+  .wordmark { font-size: 23px; }
+  .hero, .panel, .lobby { padding-left: 16px; padding-right: 16px; }
+  .panel h1 { font-size: clamp(32px, 7dvh, 56px); }
+  .panel > p { font-size: 13px; }
+  .lobbyHead { display: flex; align-items: center; }
+  .lobbyHead .secondary { flex-shrink: 0; min-height: 34px; margin: 0; font-size: 8px; padding: 7px; }
+  .lobbyHead h1 { font-size: 30px; }
+  .lobbyHead p { font-size: 11px; }
+  .lobbyGrid { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 8px; margin-top: 10px; }
+  .joinCard { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; column-gap: 12px; align-items: center; justify-items: start; text-align: left; padding: 8px 12px; }
+  .codeLabel { grid-column: 1; font-size: 9px; }
+  .code { grid-column: 1; margin: 5px 0; font-size: 32px; }
+  .url { grid-column: 1; font-size: 9px; margin: 0; }
+  .qr { grid-column: 2; grid-row: 1 / 4; width: 76px; margin: 0; }
+  .players { padding: 10px; }
+  .players .trackPicker label { grid-template-columns: 90px minmax(0, 1fr); }
+  .players .trackPicker p { font-size: 9px; }
+  .players .assistSetting { margin-top: 6px; }
+  .players .fine { font-size: 9px; }
+  .players .primary { font-size: 9px; min-height: 40px; }
+  .practiceSetup { grid-template-columns: minmax(0, 1fr); margin-top: 8px; padding: 9px; gap: 8px; }
+  .practiceSetup .appearancePicker { grid-row: auto; padding: 8px; }
+  .practiceSetup .appearancePreview { float: left; width: 27%; margin: 0 8px 8px 0; gap: 0; }
+  .practiceSetup .appearancePreview > [role="img"] { width: min(55px, 9dvh); }
+  .practiceSetup .appearancePreview > span:last-child { display: none; }
+  .practiceSetup .appearanceFields { grid-template-columns: 1fr; gap: 4px; }
+  .practiceSetup .appearanceFields label { display: grid; grid-template-columns: 38px minmax(0, 1fr); align-items: center; font-size: 9px; gap: 3px; }
+  .practiceSetup .appearanceFields select { min-height: 30px; padding: 6px; font-size: 10px; }
+  .practiceSetup .colorChoices { clear: both; gap: 5px; }
+  .practiceSetup .colorChoices > span { display: none; }
+  .practiceSetup .colorSwatch { width: 27px; height: 27px; }
+  .practiceSetup .customColor input { height: 27px; }
+  .practiceSetup .trackPicker select { min-height: 36px; padding: 7px 10px; margin-top: 4px; font-size: 13px; }
+  .practiceSetup .trackPicker p { margin-top: 4px; font-size: 10px; }
+  .practiceSetup .primary { min-height: 38px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .header { min-height: 40px; padding-top: 5px; padding-bottom: 5px; }
+  .hero { padding-top: 8px; padding-bottom: 8px; }
+  .hero h1 { font-size: clamp(40px, 16dvh, 70px); }
+  .hero .eyebrow { font-size: 9px; margin-bottom: 8px; }
+  .hero p { max-width: 65%; font-size: 12px; margin: 10px 0; }
+  .hero .primary, .hero .secondary { min-height: 36px; font-size: 10px; }
+  .hero .textButton { margin-top: 12px; font-size: 10px; }
+  .panel:has(.form) { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1fr); grid-template-rows: auto auto auto 1fr; gap: 5px 22px; align-content: center; align-items: start; }
+  .panel:has(.form) .back, .panel:has(.form) .eyebrow, .panel:has(.form) h1, .panel:has(.form) > p { grid-column: 1; margin: 0; }
+  .panel:has(.form) .form { grid-column: 2; grid-row: 1 / 5; margin: 0; gap: 5px; }
+  .panel:has(.form) .form label { font-size: 9px; }
+  .panel:has(.form) .form input { min-height: 32px; padding: 5px 8px; margin-top: 3px; }
+  .panel:has(.form) .form .appearancePicker { padding: 5px 8px; }
+  .panel:has(.form) .form .primary { min-height: 34px; font-size: 10px; }
+  .phoneShell .phone { padding-top: 6px; padding-bottom: 8px; }
+  .phoneHead { min-height: 40px; padding-bottom: 6px; }
+  .controller { margin-top: 6px; }
+  .controllerStatus { font-size: 9px; }
+  .controlHint { font-size: 10px; margin: 4px 0; }
+  .controls { gap: 6px 12px; padding-top: 2px; }
+  .pedals { height: min(43dvh, 190px); grid-template-rows: minmax(0, 1fr) 40px; gap: 6px; }
+  .itemControl { min-height: 40px; padding: 5px 8px; }
+}
+
+/* Race navigation owns a row above the cameras; it must never cover P1's name. */
+.race { display: flex; flex-direction: column; }
+.race > :first-child { order: 1; flex: 1 1 0; min-height: 0; height: auto; }
+.raceTop { position: relative; inset: auto; order: 0; flex: 0 0 auto; width: 100%; max-width: none; min-height: 40px; padding: 4px 10px; background: #171528; border-bottom: 1px solid #ffffff20; }
+.raceTop .smallButton { min-height: 30px; }
+@media (max-height: 500px) { .raceTop { min-height: 34px; padding: 2px 8px; font-size: 8px; gap: 6px; } .raceTop .smallButton { min-height: 28px; font-size: 9px; } }
+
+/* Short phones spend space on inputs and choices, not repeated introductions. */
+@media (max-width: 700px) and (max-height: 720px) and (orientation: portrait) {
+  .panel:has(.form), .panel:has(.practiceSetup) { padding-top: 10px; padding-bottom: 10px; }
+  .panel:has(.form) h1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; font-size: 35px; }
+  .panel:has(.form) h1 br { display: none; }
+  .panel:has(.form) > p:not([role="alert"]), .panel:has(.practiceSetup) > p:not([role="alert"]) { display: none; }
+  .form .appearanceNote { display: none; }
+  .panel:has(.practiceSetup) h1 { font-size: 34px; }
+}

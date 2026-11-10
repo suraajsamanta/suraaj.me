@@ -15,7 +15,7 @@ const { BeerioRoomClient } = await import(moduleUrl(transpile(await readFile(new
 const ORIGIN = 'https://beerio.example';
 const ZERO = { steer: 0, accelerate: false, brake: false };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-async function until(check, label, timeout = 6000) {
+async function until(check, label, timeout = 11000) {
   const end = Date.now() + timeout;
   while (!check()) { if (Date.now() > end) throw new Error(`Timed out: ${label}`); await sleep(10); }
 }
@@ -79,8 +79,15 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   const ids = phones.map(c => c.getSnapshot().playerId);
   host.beginCharacterSelection();
   await until(() => phones.every(phone => phone.getSnapshot().selectionPhase === 'selecting'), 'shared character selection');
+  phones.forEach(phone => phone.chooseCharacter({ direction: 'right' }));
+  await until(() => phones.every(phone => phone.getSnapshot().players.find(p => p.id === phone.getSnapshot().playerId)?.characterCursor === 'gorilla'), 'every controller browses a card');
+  phones.forEach((phone, i) => {
+    phone.chooseCharacter({ direction: 'up' });
+    for (let column = 0; column < i % figures.length; column++) phone.chooseCharacter({ direction: 'right' });
+  });
+  await until(() => phones.every((phone, i) => phone.getSnapshot().players.find(p => p.id === phone.getSnapshot().playerId)?.characterCursor === figures[i % figures.length]), 'each controller browses its own guest');
   phones.forEach(phone => phone.chooseCharacter({ confirm: true }));
-  await until(() => phones.every(c => c.getSnapshot().locked && c.getSnapshot().selectionPhase === 'racing'), 'five-second race start');
+  await until(() => phones.every(c => c.getSnapshot().locked && c.getSnapshot().selectionPhase === 'racing'), 'eight-second race start');
   phones[0].setInput({ steer: 1, accelerate: true, brake: false }); phones[0].useItem();
   await until(() => host.getSnapshot().players.find(p => p.id === ids[0]).input.action === 1, 'first item and checkpoint');
 
@@ -98,7 +105,7 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   assert.notEqual(recoveredCode, initialCode);
   assert.deepEqual(phones.map(c => c.getSnapshot().playerId), ids);
   assert.equal(phones.every(c => c.getSnapshot().code === recoveredCode && c.getSnapshot().locked), true);
-  assert.equal(host.getSnapshot().characterSelectionVersion, 2);
+  assert.equal(host.getSnapshot().characterSelectionVersion, 3);
   assert.deepEqual(ids.map(id => host.getSnapshot().players.find(p => p.id === id).character), phones.map((_, i) => figures[i % figures.length]));
   assert.equal(host.getSnapshot().players.every(p => p.vehicle === 'motorcycle' && p.color === '#123456'), true);
   for (const p of host.getSnapshot().players) assert.deepEqual(p.input, ZERO);
@@ -147,10 +154,104 @@ test('ten actual browser clients survive abrupt and graceful relay process resta
   assert.deepEqual(phones.map(c => c.getSnapshot().playerId), ids);
   assert.notEqual(host.getSnapshot().code, recoveredCode);
   assert.deepEqual(ids.map(id => host.getSnapshot().players.find(p => p.id === id).character), phones.map((_, i) => figures[i % figures.length]));
-  assert.ok(phones.every(phone => phone.getSnapshot().characterSelectionVersion === 2));
+  assert.ok(phones.every(phone => phone.getSnapshot().characterSelectionVersion === 3));
   assert.equal(received.some(m => m.type === 'room_closed'), false);
   for (const p of host.getSnapshot().players) assert.deepEqual(p.input, ZERO);
   host.leaveRoom();
   await until(() => phones.every(c => c.getSnapshot().status === 'closed'), 'intentional host leave still ends the room');
   assert.equal(phones.every(c => !c.getSnapshot().canRetryConnection), true);
+});
+
+test('a v3 gathering room recovers confirmed, browsed and untouched null characters after a real relay process crash', async t => {
+  const old = { WebSocket: globalThis.WebSocket, window: globalThis.window, sessionStorage: globalThis.sessionStorage };
+  const received = [];
+  class BrowserSocket extends WebSocket {
+    constructor(url) {
+      super(url, { origin: ORIGIN });
+      this.on('message', data => received.push(JSON.parse(data.toString())));
+    }
+  }
+  globalThis.WebSocket = BrowserSocket;
+  globalThis.window = { location: { protocol: 'http:', hostname: '127.0.0.1' } };
+  globalThis.sessionStorage = { getItem() { return null; }, setItem() { throw new Error('Storage unavailable'); }, removeItem() {} };
+  const relays = [], clients = [];
+  t.after(async () => {
+    for (const client of clients) client.destroy();
+    for (const relay of relays) await relay.stop('SIGKILL');
+    Object.assign(globalThis, old);
+  });
+  let relay = await startRelay(); relays.push(relay);
+  const host = new BeerioRoomClient(); clients.push(host);
+  host.createRoom({ relayUrl: relay.url });
+  await until(() => host.getSnapshot().status === 'connected', 'gathering host connected');
+  const originalCode = host.getSnapshot().code;
+  const phones = Array.from({ length: 3 }, (_, index) => {
+    const phone = new BeerioRoomClient(); clients.push(phone);
+    phone.joinRoom({ relayUrl: relay.url, code: originalCode, name: `Gathering ${index + 1}`, appearance: { character: 'huang', vehicle: 'kart', color: '#123456' } });
+    return phone;
+  });
+  await until(() => phones.every(phone => phone.getSnapshot().status === 'connected'), 'gathering checkpoint-confirmed joins');
+  const ids = phones.map(phone => phone.getSnapshot().playerId);
+  const choices = () => ids.map(id => {
+    const player = host.getSnapshot().players.find(p => p.id === id);
+    return { character: player.character, cursor: player.characterCursor, confirmed: player.characterConfirmed };
+  });
+  phones[0].chooseCharacter({ direction: 'right' });
+  phones[1].chooseCharacter({ direction: 'right' });
+  await until(() => choices()[0].cursor === 'gorilla' && choices()[1].cursor === 'gorilla', 'first two phones browse');
+  phones[0].chooseCharacter({ direction: 'up' });
+  phones[1].chooseCharacter({ direction: 'right' });
+  await until(() => choices()[0].cursor === 'bezos' && choices()[1].cursor === 'tiger', 'independent pre-crash cursors');
+  phones[0].chooseCharacter({ confirm: true });
+  await until(() => choices()[0].confirmed, 'first phone confirms');
+  const expected = [
+    { character: 'bezos', cursor: 'bezos', confirmed: true },
+    { character: null, cursor: 'tiger', confirmed: false },
+    { character: null, cursor: null, confirmed: false },
+  ];
+  assert.deepEqual(choices(), expected);
+  assert.equal(host.getSnapshot().selectionPhase, 'gathering');
+  assert.equal(host.getSnapshot().countdownEndsAt, null);
+  const checkpoint = received.findLast(message => message.type === 'checkpoint').checkpoint;
+  assert.equal(checkpoint.characterSelectionVersion, 3);
+  assert.deepEqual(ids.map(id => {
+    const player = checkpoint.players.find(p => p.id === id);
+    return { character: player.character, cursor: player.characterCursor, confirmed: player.characterConfirmed };
+  }), expected, 'The host checkpoint includes both null character states');
+
+  await relay.stop('SIGKILL');
+  await until(() => host.getSnapshot().status === 'reconnecting', 'gathering host notices crash');
+  for (const client of clients) client.destroy();
+  relay = await startRelay(relay.port); relays.push(relay);
+  const pendingBefore = received.filter(message => message.code === 'recovery_pending').length;
+  for (const phone of phones) phone.retryConnection();
+  await until(() => received.filter(message => message.code === 'recovery_pending').length >= pendingBefore + phones.length, 'phones wait for missing host checkpoint');
+  host.retryConnection();
+  await until(() => clients.every(client => client.getSnapshot().status === 'connected') && host.getSnapshot().players.every(player => player.connected), 'gathering checkpoint accepted after crash');
+  assert.notEqual(host.getSnapshot().code, originalCode);
+  assert.deepEqual(phones.map(phone => phone.getSnapshot().playerId), ids);
+  assert.deepEqual(choices(), expected);
+  assert.equal(host.getSnapshot().selectionPhase, 'gathering');
+  assert.equal(host.getSnapshot().countdownEndsAt, null, 'Recovery cannot arm a race that the host never started');
+  assert.ok(received.every(message => message.code !== 'invalid_recovery'));
+  for (const phone of phones) {
+    assert.equal(phone.getSnapshot().code, host.getSnapshot().code);
+    assert.equal(phone.getSnapshot().characterSelectionVersion, 3);
+  }
+
+  phones[2].chooseCharacter({ confirm: true });
+  await until(() => phones[2].getSnapshot().error !== null, 'untouched null slot still cannot be confirmed');
+  assert.deepEqual(choices(), expected);
+  phones[1].chooseCharacter({ confirm: true });
+  phones[2].chooseCharacter({ direction: 'right' });
+  await until(() => choices()[2].cursor === 'gorilla', 'third phone explicitly chooses after recovery');
+  phones[2].chooseCharacter({ confirm: true });
+  await until(() => choices().every(choice => choice.confirmed), 'all recovered phones selected');
+  assert.equal(host.getSnapshot().selectionPhase, 'gathering');
+  host.beginCharacterSelection();
+  await until(() => host.getSnapshot().selectionPhase === 'countdown', 'host explicitly starts after recovery');
+  assert.ok(host.getSnapshot().countdownEndsAt - Date.now() >= 7800);
+  await until(() => clients.every(client => client.getSnapshot().locked), 'recovered gathering room reaches a real eight-second race');
+  assert.deepEqual(ids.map(id => host.getSnapshot().players.find(p => p.id === id).character), ['bezos', 'tiger', 'gorilla']);
+  assert.ok(host.getSnapshot().players.every(player => player.characterConfirmed && player.inRace));
 });

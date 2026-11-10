@@ -21,10 +21,11 @@ new Function('require', 'module', 'exports', compile('../lobby/CharacterSelectio
   throw new Error(`Unexpected dependency: ${name}`);
 }, selection, selection.exports);
 
-test('all24 supplied portraits have unique Indian first names and match the relay navigation order', () => {
+test('all 24 animals have unique English first names and match the relay navigation order', () => {
   const characters = appearance.exports.ANIMAL_CHARACTERS;
   assert.equal(characters.length, 24);
   assert.equal(new Set(characters.map(c => c.name)).size, 24);
+  assert.deepEqual(characters.map(c => c.name), ['Max', 'Luna', 'Charlie', 'Molly', 'Penny', 'Jack', 'Daisy', 'Leo', 'Milo', 'Bella', 'Rocky', 'Sam', 'Ruby', 'Oliver', 'Teddy', 'Cody', 'Hazel', 'Finn', 'Rosie', 'Oscar', 'Buddy', 'Ben', 'Gigi', 'Riley']);
   assert.deepEqual(appearance.exports.SELECTABLE_CHARACTERS.map(c => c.id), SELECTION_CHARACTERS);
   assert.equal(appearance.exports.SELECTABLE_CHARACTERS.length, 30);
   for (const character of appearance.exports.CHARACTERS) assert.match(character.name, /^[A-Z][a-z]+$/);
@@ -38,35 +39,36 @@ test('shared grid shows all30 choices, long usernames above cards, selected stat
   assert.match(html, /30 characters in 6 columns and 5 rows/);
   assert.match(html, /Huang/); assert.match(html, /Zuckerberg/);
   assert.match(html, new RegExp(players[0].name)); assert.match(html, /RECONNECTING/); assert.match(html, /PICKED ✓/);
-  assert.match(html, /Arjun/); assert.match(html, /Veer/); assert.doesNotMatch(html, /the (Monkey|Bird|Lion)/i);
-  assert.match(html, /background-position:100% 100%/);
+  assert.match(html, /Max/); assert.match(html, /Riley/); assert.doesNotMatch(html, /the (Monkey|Bird|Lion)/i);
+  assert.match(html, /\/beerio\/models\/horse\.png/);
 });
 
 test('phone offers four directions and SELECT with no second ready-up; confirmed pick can be changed', () => {
   const player = { id: 'a', name: 'Arun', character: 'tiger', connected: true, characterConfirmed: false };
   const html = renderToStaticMarkup(React.createElement(selection.exports.CharacterController, { player, onChoose() {} }));
   for (const direction of ['up', 'down', 'left', 'right']) assert.match(html, new RegExp(`Choose character ${direction}`));
-  assert.match(html, />SELECT</); assert.match(html, /Priya/); assert.doesNotMatch(html, /READY UP/);
+  assert.match(html, />SELECT</); assert.match(html, /Luna/); assert.doesNotMatch(html, /READY UP/);
   const selected = renderToStaticMarkup(React.createElement(selection.exports.CharacterController, { player: { ...player, characterConfirmed: true }, onChoose() {} }));
   assert.match(selected, /CHANGE CHARACTER/); assert.doesNotMatch(selected, /selectionJoystick/);
 });
 
 
-test('six original guest SVGs and accessible portraits reflect distinct requested outfits and accessories', () => {
-  const guests = appearance.exports.PUBLIC_FIGURE_CHARACTERS;
-  assert.deepEqual(guests.map(c => c.name), ['Bezos', 'Trump', 'Musk', 'Zuckerberg', 'Ye', 'Huang']);
+test('all animal and guest previews are distinct generated model renders with accessible names', () => {
+  const characters = appearance.exports.CHARACTERS;
+  assert.deepEqual(appearance.exports.PUBLIC_FIGURE_CHARACTERS.map(c => c.name), ['Bezos', 'Trump', 'Musk', 'Zuckerberg', 'Ye', 'Huang']);
   const signatures = new Set();
-  for (const guest of guests) {
-    const svg = readFileSync(new URL(`../../../../public${guest.portraitPath}`, import.meta.url), 'utf8');
-    assert.match(svg, /<title id="title">/); assert.match(svg, /<desc id="desc">/);
-    assert.match(svg, /viewBox="0 0 256 256"/); assert.doesNotMatch(svg, /<script|https?:\/\/[^w]|<foreignObject/);
-    signatures.add(svg);
-    const html = renderToStaticMarkup(React.createElement(selection.exports.CharacterPortrait, { id: guest.id }));
-    assert.match(html, new RegExp(guest.name)); assert.ok(html.includes(guest.portraitPath));
-    assert.ok(html.includes('role="img"')); assert.ok(html.includes(guest.portraitDescription));
-    assert.equal(appearance.exports.validAppearance({ character: guest.id, vehicle: 'kart', color: '#123456' }), true);
+  for (const character of characters) {
+    const path = `/beerio/models/${character.id}.png`;
+    const png = readFileSync(new URL(`../../../../public${path}`, import.meta.url));
+    assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.ok(png.readUInt32BE(16) >= 128 && png.readUInt32BE(20) >= 128, `${character.id} needs a readable preview`);
+    signatures.add(png.toString('base64'));
+    const html = renderToStaticMarkup(React.createElement(selection.exports.CharacterPortrait, { id: character.id }));
+    assert.match(html, new RegExp(character.name)); assert.ok(html.includes(path));
+    assert.ok(html.includes('role="img"')); assert.ok(html.includes(`aria-label="${character.name}"`));
+    assert.equal(appearance.exports.validAppearance({ character: character.id, vehicle: 'kart', color: '#123456' }), true);
   }
-  assert.equal(signatures.size, 6);
+  assert.equal(signatures.size, characters.length);
 });
 
 test('legacy version1 rooms retain the original24-card layout and four rows', () => {

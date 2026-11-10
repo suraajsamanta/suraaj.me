@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ANIMAL_CHARACTERS, CHARACTERS, selectionCharacters, CHARACTER_COLUMNS, type CharacterId } from "../appearance";
+import { CHARACTERS, selectionCharacters, CHARACTER_COLUMNS, type CharacterId } from "../appearance";
 import type { RoomPlayer } from "../room/types";
 import styles from "./character-selection.module.css";
 
@@ -9,10 +9,9 @@ type Direction = "up" | "down" | "left" | "right";
 type Choice = { direction: Direction } | { confirm: boolean };
 
 export function CharacterPortrait({ id, large = false }: { id?: CharacterId; large?: boolean }) {
-  const character = CHARACTERS.find(item => item.id === id) ?? ANIMAL_CHARACTERS[0];
-  if ('portraitPath' in character) return <span className={`${styles.portrait} ${styles.guestPortrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={`${character.name}: ${character.portraitDescription}`} style={{ backgroundImage: `url("${character.portraitPath}")` }} />;
-  if ('portrait' in character) return <span className={`${styles.portrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={character.name} style={{ backgroundPosition: `${(character.portrait % 6) * 20}% ${Math.floor(character.portrait / 6) * 100 / 3}%` }} />;
-  return <span className={`${styles.portrait} ${styles.legacyPortrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={character.name}>{character.icon}</span>;
+  const character = CHARACTERS.find(item => item.id === id);
+  if (!character) return <span className={`${styles.portrait} ${styles.blankPortrait} ${large ? styles.largePortrait : ""}`} aria-label="No character chosen">?</span>;
+  return <span className={`${styles.portrait} ${styles.modelPortrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={character.name} style={{ backgroundImage: `url("/beerio/models/${character.id}.png")` }} />;
 }
 
 export function SelectionCountdown({ endsAt }: { endsAt: number }) {
@@ -30,12 +29,12 @@ export function CharacterGrid({ players, endsAt, version = 2 }: { players: RoomP
   const characters = selectionCharacters(version);
   const rows = Math.ceil(characters.length / CHARACTER_COLUMNS);
   return <section className={styles.selection} aria-label="Choose your character" style={{ "--character-rows": rows } as CSSProperties}>
-    <div className={styles.selectionTitle}><div><span>THE WHOLE CREW</span><h2>Pick your character.</h2><p>Move your phone joystick. Press SELECT to lock in. Last pick starts a five-second countdown.</p></div><strong>{players.filter(p => p.characterConfirmed).length} / {players.length} PICKED</strong></div>
-    <div className={styles.roster} aria-label="Drivers choosing characters">{players.map(player => <span key={player.id} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}<small>{!player.connected ? "RECONNECTING" : player.characterConfirmed ? "PICKED ✓" : "CHOOSING"}</small></span>)}</div>
+    <div className={styles.selectionTitle}><div><span>THE WHOLE CREW</span><h2>Pick your character.</h2><p>Join with your phone, then move the joystick and press SELECT. The host starts the race when everyone is ready.</p></div><strong>{players.filter(p => p.characterConfirmed).length} / {players.length} PICKED</strong></div>
+    <div className={styles.roster} aria-label="Drivers choosing characters">{players.map(player => <span key={player.id} title={player.name} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}<small>{!player.connected ? "RECONNECTING" : player.characterConfirmed ? "PICKED ✓" : "CHOOSING"}</small></span>)}</div>
     <div className={styles.characterGrid} role="list" aria-label={`${characters.length} characters in ${CHARACTER_COLUMNS} columns and ${rows} rows`}>{characters.map(character => {
-      const hovering = players.filter(player => player.character === character.id);
+      const hovering = players.filter(player => (player.characterCursor ?? player.character) === character.id);
       return <article role="listitem" aria-label={character.name} className={`${styles.characterCard} ${hovering.length ? styles.highlighted : ""}`} key={character.id}>
-        <div className={styles.nameFlags}>{hovering.map(player => <span key={player.id} className={!player.connected ? styles.offline : ""} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}{player.characterConfirmed ? " ✓" : ""}</span>)}</div>
+        <div className={styles.nameFlags}>{hovering.map(player => <span key={player.id} title={player.name} className={!player.connected ? styles.offline : ""} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}{player.characterConfirmed ? " ✓" : ""}</span>)}</div>
         <CharacterPortrait id={character.id} /><strong>{character.name}</strong>
       </article>;
     })}</div>
@@ -68,9 +67,10 @@ export function CharacterController({ player, onChoose, endsAt }: { player: Room
     const x = event.clientX - rect.left - rect.width / 2, y = event.clientY - rect.top - rect.height / 2;
     move(Math.hypot(x, y) < rect.width * .13 ? null : Math.abs(x) > Math.abs(y) ? x < 0 ? "left" : "right" : y < 0 ? "up" : "down");
   };
-  const character = CHARACTERS.find(item => item.id === player.character) ?? ANIMAL_CHARACTERS[0];
+  const cursor = player.characterCursor ?? player.character;
+  const character = CHARACTERS.find(item => item.id === cursor);
   return <div className={styles.phoneSelection}>
-    {endsAt ? <SelectionCountdown endsAt={endsAt} /> : <><p className={styles.phoneEyebrow}>{player.characterConfirmed ? "CHARACTER SELECTED" : "LOOK UP AT THE BIG SCREEN"}</p><h1 aria-live="polite" aria-atomic="true">{character.name}</h1>{"title" in character && <span className={styles.characterTitle}>{character.title}</span>}<CharacterPortrait id={player.character} large /><p>{player.characterConfirmed ? "Waiting for the others to choose." : "Tilt the joystick to browse. Hit SELECT when you find your favorite."}</p></>}
+    {endsAt ? <SelectionCountdown endsAt={endsAt} /> : <><p className={styles.phoneEyebrow}>{player.characterConfirmed ? "CHARACTER SELECTED" : "LOOK UP AT THE BIG SCREEN"}</p><h1 aria-live="polite" aria-atomic="true">{character?.name ?? "Choose a character"}</h1>{character && "title" in character && <span className={styles.characterTitle}>{character.title}</span>}<CharacterPortrait id={cursor ?? undefined} large /><p>{player.characterConfirmed ? "Waiting for the others to choose." : "Tilt the joystick to browse. Hit SELECT when you find your favorite."}</p></>}
     <div className={styles.selectionControls}>
       {!player.characterConfirmed && <div className={styles.selectionJoystick} role="group" aria-label="Character selection joystick" onKeyDown={event => {
         const directions: Record<string, Direction> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
@@ -80,7 +80,7 @@ export function CharacterController({ player, onChoose, endsAt }: { player: Room
         {(["up", "left", "right", "down"] as const).map((value, index) => <button type="button" key={value} className={`${styles.direction} ${styles[value]}`} aria-label={`Choose character ${value}`} onClick={event => { if (event.detail === 0) callback.current({ direction: value }); }}>{["▲", "◀", "▶", "▼"][index]}</button>)}
         <span className={`${styles.joystickKnob} ${direction ? styles[`tilt${direction}`] : ""}`} aria-hidden="true" />
       </div>}
-      <button type="button" className={player.characterConfirmed ? styles.changeChoice : styles.selectButton} onClick={() => { stop(); onChoose({ confirm: !player.characterConfirmed }); }}>{player.characterConfirmed ? "CHANGE CHARACTER" : "SELECT"}</button>
+      <button type="button" disabled={!player.characterConfirmed && !cursor} className={player.characterConfirmed ? styles.changeChoice : styles.selectButton} onClick={() => { stop(); onChoose({ confirm: !player.characterConfirmed }); }}>{player.characterConfirmed ? "CHANGE CHARACTER" : "SELECT"}</button>
     </div>
   </div>;
 }

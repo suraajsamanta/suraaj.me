@@ -6,7 +6,8 @@ export type RoomPlayer = {
   id: string;
   name: string;
   color: string;
-  character?: Appearance["character"];
+  character?: Appearance["character"] | null;
+  characterCursor?: Appearance["character"] | null;
   vehicle?: Appearance["vehicle"];
   connected: boolean;
   ready: boolean;
@@ -26,10 +27,11 @@ export type RoomSnapshot = {
   playerId: string | null;
   players: RoomPlayer[];
   maxPlayers: number;
+  publicMatchmaking?: boolean;
   locked: boolean;
   characterSelection?: boolean;
-  /** Version 1 has 24 animals; version2 adds six guest racers. */
-  characterSelectionVersion?: 1 | 2;
+  /** Version 1 has 24 animals; version 2 adds six guests; version 3 supports unselected slots. */
+  characterSelectionVersion?: 1 | 2 | 3;
   selectionPhase?: "gathering" | "selecting" | "countdown" | "racing";
   countdownEndsAt?: number | null;
   /** A restored race waits for its original controllers, unless the host explicitly resumes. */
@@ -41,8 +43,9 @@ export type RoomSnapshot = {
   /** A failed connection can be retried without discarding the current race. */
   canRetryConnection: boolean;
 };
-export type CreateRoomOptions = { name?: string; maxPlayers?: number; relayUrl?: string };
+export type CreateRoomOptions = { name?: string; maxPlayers?: number; publicMatchmaking?: boolean; relayUrl?: string };
 export type JoinRoomOptions = { code: string; name: string; relayUrl?: string; appearance?: Appearance };
+export type RandomJoinOptions = { name: string; relayUrl?: string; appearance?: Appearance };
 export const ZERO_INPUT: Readonly<RoomInput> = Object.freeze({ steer: 0, accelerate: false, brake: false });
 
 export function normalizeInput(input: RoomInput): RoomInput {

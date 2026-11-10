@@ -25,8 +25,8 @@ test('ten grid cards show real character, vehicle, color, complete names and sta
   const html = renderToStaticMarkup(React.createElement(grid.exports.default, { players, maxPlayers: 10 }));
   assert.equal((html.match(/<article/g) || []).length, 10);
   assert.match(html, new RegExp(name));
-  assert.match(html, /Varun/); assert.match(html, /Motorcycle/);
-  assert.match(html, /🐸/); assert.match(html, /🏍️/); assert.match(html, /--driver-color:#123456/);
+  assert.match(html, /Freddy/); assert.match(html, /Motorcycle/);
+  assert.match(html, /🐸/); assert.match(html, /--driver-color:#123456/);
   assert.match(html, /VEHICLE COLOR #123456/);
   assert.match(html, />JOINED</); assert.doesNotMatch(html, />READY</); assert.match(html, />DISCONNECTED</);
 });
@@ -36,6 +36,7 @@ test('empty slots and responsive, wrapping layout are represented', () => {
   assert.equal((html.match(/OPEN SLOT/g) || []).length, 10);
   const css = readFileSync(new URL('../lobby/starting-grid.module.css', import.meta.url), 'utf8');
   assert.match(css, /repeat\(auto-fit, minmax\(min\(100%, 130px\), 1fr\)\)/);
-  assert.doesNotMatch(css, /@media/);
+  assert.match(css, /min-height:\s*0/);
+  assert.match(css, /grid-template-rows:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.match(css, /overflow-wrap:\s*anywhere/);
 });

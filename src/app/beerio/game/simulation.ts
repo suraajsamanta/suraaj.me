@@ -12,7 +12,7 @@ export type KartState = {
   boost: number; bump: number; finishTime: number | null; padCooldown: number; obstacleCooldown: number; power: KartPowerState;
 };
 export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null; powers: PowerWorld };
-export const COUNTDOWN_SECONDS = 3;
+export const COUNTDOWN_SECONDS = 8;
 export const MAX_SPEED = 43;
 export const FINISH_GRACE_SECONDS = 25;
 

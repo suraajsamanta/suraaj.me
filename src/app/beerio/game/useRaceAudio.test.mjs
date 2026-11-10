@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import ts from 'typescript';
+const scoreModule = { exports: {} };
+new Function('exports', ts.transpileModule(readFileSync(new URL('./audioTracks.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText)(scoreModule.exports);
 const source = ts.transpileModule(readFileSync(new URL('./useRaceAudio.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
@@ -25,7 +27,7 @@ async function fixture(t, options = {}) {
   let currentContext = options.context === undefined ? audioContext('running') : options.context;
   let unlock = options.unlock ?? (() => Promise.resolve(currentContext?.state === 'running'));
   const state = [], dependencies = [], cleanups = [], mixes = [];
-  let slot = 0, dirty = false, pending = [], props = {}, result;
+  let slot = 0, dirty = false, pending = [], props = options.props ?? {}, result;
   const changed = (index, values) => !dependencies[index] || !values || values.some((value, item) => !Object.is(value, dependencies[index][item]));
   const hooks = {
     useRef(value) { const index = slot++; if (!(index in state)) state[index] = { current: value }; return state[index]; },
@@ -35,7 +37,8 @@ async function fixture(t, options = {}) {
   };
   class RecordingAudio {
     muted = false; paused = false; disposed = false; retries = 0;
-    constructor(context, options) { this.context = context; this.options = options; mixes.push(this); options.onMusicStatus('ready'); }
+    constructor(context, options) { this.context = context; this.options = options; this.trackId = options.trackId; mixes.push(this); options.onMusicStatus('ready'); }
+    setTrack(value) { this.trackId = value; }
     setMuted(value) { this.muted = value; }
     setPaused(value) { this.paused = value; }
     dispose() { this.disposed = true; }
@@ -47,6 +50,7 @@ async function fixture(t, options = {}) {
     if (name === 'react') return hooks;
     if (name === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };
     if (name.endsWith('.css')) return { default: {} };
+    if (name === './audioTracks') return scoreModule.exports;
     if (name === './audio') return { RaceAudio: RecordingAudio, getRaceAudioContext: () => currentContext, unlockRaceAudio: () => unlock() };
     throw new Error(`Unknown module ${name}`);
   }, compiledModule, compiledModule.exports);
@@ -152,4 +156,24 @@ test('several pending gestures still create only one graph on the latest success
   assert.equal(f.mixes.length, 1); assert.equal(f.label(), 'SOUND ON');
   attempts[0].resolve(false); attempts[1].resolve(true); await f.render();
   assert.equal(f.mixes.length, 1); assert.equal(f.label(), 'SOUND ON');
+});
+
+
+test('selected course reaches initial audio creation and later changes reuse the graph', async t => {
+  const f = await fixture(t, { props: { trackId: 'space' } });
+  assert.equal(f.mixes[0].options.trackId, 'space');
+  assert.match(f.buttons()[0].props.title, /Orbital Anthem/);
+  await f.render({ trackId: 'foundry' });
+  assert.equal(f.mixes.length, 1);
+  assert.equal(f.mixes[0].trackId, 'foundry');
+  assert.match(f.buttons()[0].props.title, /Ironworks Uprising/);
+});
+
+test('track chosen during suspended activation is the one loaded after unlock', async t => {
+  const context = audioContext('suspended'), f = await fixture(t, { context, props: { trackId: 'space' } });
+  assert.equal(f.mixes.length, 0);
+  await f.render({ trackId: 'brewery' });
+  context.setState('running'); await f.render();
+  assert.equal(f.mixes.length, 1);
+  assert.equal(f.mixes[0].options.trackId, 'brewery');
 });

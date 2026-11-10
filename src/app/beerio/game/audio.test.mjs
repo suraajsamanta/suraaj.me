@@ -16,6 +16,7 @@ function load(file) {
 }
 const { RaceAudio, loadOriginalRaceMusic, renderRaceScore } = load('audio.ts');
 const { createRace } = load('simulation.ts');
+const { RACE_SCORES, raceScoreUrl } = load('audioTracks.ts');
 const driver = index => ({ id: `racer-${index}`, name: 'Racer', color: '#ffe199', input: { steer: 0, accelerate: false, brake: false } });
 function audioContext() {
   const sources = [], nodes = [];
@@ -119,19 +120,33 @@ test('safety limiter is monotonic, transparent at normal levels, and bounded wit
   mix.dispose();
 });
 
-test('original WAV exactly matches reproducible score and loops below an audible discontinuity', () => {
-  const data = readFileSync(resolve(directory, '../../../../public/beerio/audio/soda-pop-sprint.wav'));
-  assert.equal(data.toString('ascii', 0, 4), 'RIFF'); assert.equal(data.readUInt32LE(24), 24000);
-  const channels = renderRaceScore(), frames = (data.length - 44) / 4;
-  assert.equal(frames, channels[0].length);
-  let peak = 0, sum = 0;
-  for (let i = 0; i < frames; i++) for (let channel = 0; channel < 2; channel++) {
-    const sample = data.readInt16LE(44 + (i * 2 + channel) * 2) / 32767;
-    assert.ok(Number.isFinite(sample)); assert.ok(Math.abs(sample - channels[channel][i]) <= 1 / 32767);
-    peak = Math.max(peak, Math.abs(sample)); sum += sample * sample;
+test('all six original WAVs match their deterministic scores, with consistent headroom and seamless stereo loops', () => {
+  const signatures = new Set();
+  for (const [trackId, score] of Object.entries(RACE_SCORES)) {
+    const data = readFileSync(resolve(directory, '../../../../public/beerio/audio', score.file));
+    assert.equal(data.toString('ascii', 0, 4), 'RIFF'); assert.equal(data.readUInt32LE(24), 24000);
+    const channels = renderRaceScore(24000, trackId), frames = (data.length - 44) / 4;
+    assert.equal(frames, channels[0].length);
+    assert.ok(Math.abs(frames / 24000 - 16 * 4 * 60 / score.bpm) < 1 / 24000);
+    let peak = 0, sum = 0, mean = 0, stereo = 0;
+    for (let i = 0; i < frames; i++) {
+      stereo += (channels[0][i] - channels[1][i]) ** 2;
+      for (let channel = 0; channel < 2; channel++) {
+        const sample = data.readInt16LE(44 + (i * 2 + channel) * 2) / 32767;
+        assert.ok(Number.isFinite(sample)); assert.ok(Math.abs(sample - channels[channel][i]) <= 1 / 32767);
+        peak = Math.max(peak, Math.abs(sample)); sum += sample * sample; mean += sample;
+      }
+    }
+    const rms = Math.sqrt(sum / frames / 2);
+    assert.ok(peak > 0.45 && peak < 0.73, `${trackId}: clean transients and room for effects`);
+    assert.ok(Math.abs(rms - 0.11) < 0.001, `${trackId}: arrangements have matched levels`);
+    assert.ok(Math.abs(mean / frames / 2) < 0.0001, `${trackId}: negligible DC offset`);
+    assert.ok(Math.sqrt(stereo / frames) > 0.008, `${trackId}: stereo width`);
+    for (const channel of channels) assert.ok(Math.abs(channel[0] - channel.at(-1)) < 0.00001);
+    signatures.add(data.subarray(44, 24044).toString('base64'));
   }
-  assert.ok(peak < 0.73); assert.ok(Math.sqrt(sum / frames / 2) > 0.04);
-  for (const channel of channels) assert.ok(Math.abs(channel[0] - channel.at(-1)) < 0.001);
+  assert.equal(signatures.size, 6, 'Every course has a distinct rendered arrangement');
+  assert.throws(() => renderRaceScore(0), /sample rate/);
 });
 
 test('concurrent score loads share one fetch/decode, and HTTP or invalid audio failures can retry', async t => {
@@ -226,4 +241,82 @@ test('pickup and activation each get distinct audible cues above a briefly ducke
   assert.ok(mix.music.gain.events.some(event => event.value === .48 && event.at === .6), 'Activation also ducks the music');
   mix.update(race); assert.equal(f.sources.length, beforeActivation + 8);
   mix.dispose(); assert.ok(f.sources.every(source => source.stopped && source.disconnected));
+});
+
+
+test('score cache is isolated by course and only requests the selected assets', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  const f = audioContext(), urls = [];
+  globalThis.fetch = async url => { urls.push(url); return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }; };
+  f.context.decodeAudioData = async () => ({ duration: 26 });
+  const [sunset, space, sameSpace] = await Promise.all([
+    loadOriginalRaceMusic(f.context, 'sunset'), loadOriginalRaceMusic(f.context, 'space'), loadOriginalRaceMusic(f.context, 'space'),
+  ]);
+  assert.notEqual(sunset, space); assert.equal(space, sameSpace);
+  assert.deepEqual(urls, [raceScoreUrl('sunset'), raceScoreUrl('space')]);
+  assert.equal(await loadOriginalRaceMusic(f.context, 'sunset'), sunset);
+  assert.equal(urls.length, 2);
+});
+
+test('switching courses cancels old audio and stale decodes cannot replace the selected score', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  const f = audioContext(), first = deferred(), second = deferred(), states = [];
+  const spaceBuffer = { duration: 25.95 }, foundryBuffer = { duration: 25.26 };
+  globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+  let decodes = 0;
+  f.context.decodeAudioData = () => (++decodes === 1 ? first : second).promise;
+  const mix = new RaceAudio(f.context, { trackId: 'space', onMusicStatus: status => states.push(status) });
+  await flush(); mix.setTrack('foundry'); await flush();
+  const race = createRace([driver(0)]); race.countdown = 0; mix.update(race);
+  second.resolve(foundryBuffer); await flush();
+  assert.equal(mix.score, foundryBuffer);
+  assert.equal(f.sources.filter(source => source.buffer === foundryBuffer).length, 1);
+  first.resolve(spaceBuffer); await flush();
+  assert.equal(mix.score, foundryBuffer);
+  assert.equal(f.sources.filter(source => source.buffer === spaceBuffer).length, 0);
+  assert.deepEqual(states, ['loading', 'loading', 'ready']);
+  f.tick(8); mix.setTrack('space');
+  const old = f.sources.find(source => source.buffer === foundryBuffer);
+  assert.equal(old.stopAt, 8.035);
+  await flush();
+  assert.equal(f.sources.filter(source => source.buffer === spaceBuffer).length, 0, 'Wait for a snapshot of the new race');
+  race.elapsed = 0; mix.update(race);
+  assert.equal(f.sources.find(source => source.buffer === spaceBuffer).offset, 0);
+  mix.dispose();
+});
+
+test('course changes during mute or pause stay silent and ignore stale load failures', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  for (const mode of ['mute', 'pause']) {
+    const f = audioContext(), stale = deferred(), states = [];
+    globalThis.fetch = async () => ({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+    let decodes = 0;
+    const buffer = { duration: 26 };
+    f.context.decodeAudioData = () => ++decodes === 1 ? stale.promise : Promise.resolve(buffer);
+    const mix = new RaceAudio(f.context, { trackId: 'space', onMusicStatus: status => states.push(status) });
+    await flush();
+    if (mode === 'mute') mix.setMuted(true); else mix.setPaused(true);
+    mix.setTrack('canyon');
+    const race = createRace([driver(0)]); race.countdown = 0; mix.update(race); await flush();
+    stale.reject(new Error('Obsolete space download failed')); await flush();
+    assert.equal(states.at(-1), 'ready');
+    assert.equal(f.sources.filter(source => source.buffer === buffer).length, 0, mode);
+    if (mode === 'mute') mix.setMuted(false); else mix.setPaused(false);
+    mix.update(race);
+    assert.equal(f.sources.filter(source => source.buffer === buffer).length, 1);
+    mix.dispose();
+  }
+});
+
+
+test('decoded score cache keeps only the three most recently used courses', async t => {
+  const original = globalThis.fetch; t.after(() => { globalThis.fetch = original; });
+  const f = audioContext(), urls = [];
+  globalThis.fetch = async url => { urls.push(url); return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }; };
+  for (const track of ['sunset', 'space', 'canyon', 'sunset', 'foundry']) await loadOriginalRaceMusic(f.context, track);
+  assert.equal(urls.length, 4);
+  await loadOriginalRaceMusic(f.context, 'sunset');
+  assert.equal(urls.length, 4, 'Recently used course remains cached');
+  await loadOriginalRaceMusic(f.context, 'space');
+  assert.equal(urls.length, 5, 'Least-recently-used score is released');
 });

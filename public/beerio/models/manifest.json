@@ -1,0 +1,303 @@
+{
+  "source": "characterShowroomGeometry in game/renderer.ts; shared racing character meshes",
+  "width": 320,
+  "height": 320,
+  "characters": [
+    {
+      "id": "gorilla",
+      "file": "gorilla.png",
+      "color": "#ffce58",
+      "vertices": 6732,
+      "meshSha256": "3c0c232feb12c83211aec8420a61b4371d3177986b915c2a2a70f770a6ef8ba0",
+      "imageSha256": "1babc75f8366191d20ed8d55401cb9de3508cb46797c1e75a4125225047f436c"
+    },
+    {
+      "id": "tiger",
+      "file": "tiger.png",
+      "color": "#4ce4f3",
+      "vertices": 7548,
+      "meshSha256": "934af5c6488e1e2f17bc83afb97ea6d56f5fd6b2c2176fd94082f19dab3b3633",
+      "imageSha256": "e3da5b27acf4dd09489d69db2718014d9383681e0089faafeefdf3f09336ac7a"
+    },
+    {
+      "id": "monkey",
+      "file": "monkey.png",
+      "color": "#ff7479",
+      "vertices": 6864,
+      "meshSha256": "48f3e8125b9d128cd92232e5cefdba758d6d3b570f2fd2e86f3a3c0e8a4e8773",
+      "imageSha256": "894c43ad4fcae92f2aa1d289ce0edf73a6fd226c1cb311129fe1784c6570763b"
+    },
+    {
+      "id": "hippo",
+      "file": "hippo.png",
+      "color": "#bd9aff",
+      "vertices": 5454,
+      "meshSha256": "ec5975336c5c3826bb44c1abf925d5a0dbf898602dabc2dc995c8e60ac36b32f",
+      "imageSha256": "da70c3167da2a5fb193dff36eeff77782249d8edf262649327010958e3efd76d"
+    },
+    {
+      "id": "flamingo",
+      "file": "flamingo.png",
+      "color": "#66e6a2",
+      "vertices": 4266,
+      "meshSha256": "c467357dfbcd1a1bcefba165904b08f9a24ea5c353c8d8debc8a42babfc8ca34",
+      "imageSha256": "0b2a37aa378c9f0fcafedb9c97993071d8b7b4576e2a0fe05e2fde215ae9e9a5"
+    },
+    {
+      "id": "rabbit",
+      "file": "rabbit.png",
+      "color": "#ff9de2",
+      "vertices": 5748,
+      "meshSha256": "6edba66451f66a15cea9f89c4dde3980633497af3f10f128193d6bf6a563499c",
+      "imageSha256": "f0e3832e0a6921a96518e809c7c30a1c5610a6d47db7fabb1e05b730c727f10b"
+    },
+    {
+      "id": "panda",
+      "file": "panda.png",
+      "color": "#ff9648",
+      "vertices": 5766,
+      "meshSha256": "9f84d68edefd37fab91f4864260a7d6ec59db20fc5dffeda5ce7a94915ed585d",
+      "imageSha256": "284a0989d49fad8da91191a7a163266ccd96a79db44b4cbfad4ab8398adc0cb6"
+    },
+    {
+      "id": "zebra",
+      "file": "zebra.png",
+      "color": "#4b72ee",
+      "vertices": 7650,
+      "meshSha256": "c0302de2e3ab6f7e86d1c1612d3389b0f647d037619679cc9261f09427bc3147",
+      "imageSha256": "7d579aedc1e06f358e8e472180b4fb73ce605174f56189721b2b6e1352db90f5"
+    },
+    {
+      "id": "cow",
+      "file": "cow.png",
+      "color": "#ffce58",
+      "vertices": 6774,
+      "meshSha256": "fee3a01b6fe94f9628b94f88990d4819ef5798aa79649371c5f3a3b5a1dbfe82",
+      "imageSha256": "c4c47dd32d19447c0e173a3fba06247e11ac4f75b8e6bd84908960c7601fa97a"
+    },
+    {
+      "id": "sheep",
+      "file": "sheep.png",
+      "color": "#4ce4f3",
+      "vertices": 7590,
+      "meshSha256": "4dbd9b43e2d2d7aa88f56105f20fdefe110d5fb0147b266324af1d669663d86f",
+      "imageSha256": "6b9d26c74766f78e48f7075a9037fe19c20b3435aa732e464097b5c787013f81"
+    },
+    {
+      "id": "lion",
+      "file": "lion.png",
+      "color": "#ff7479",
+      "vertices": 8328,
+      "meshSha256": "3a7cf232c1cc37932d3721b261f4105063b1dcbe3a0477dcdbb038969f48c813",
+      "imageSha256": "a5dfeec7362342990870f69d4aa80b5d1598a0327e732ed063a04dc2b62b1f01"
+    },
+    {
+      "id": "buffalo",
+      "file": "buffalo.png",
+      "color": "#bd9aff",
+      "vertices": 5022,
+      "meshSha256": "4110051491be1de1a6cbf9dd53c521afd0b3314b804d92c6400e2e45cce9362d",
+      "imageSha256": "ea69f9d030babd4912860069cde37875d80986f95ba01f5a14e940b1b3397ad9"
+    },
+    {
+      "id": "orangutan",
+      "file": "orangutan.png",
+      "color": "#66e6a2",
+      "vertices": 6540,
+      "meshSha256": "de04a30aae2f2b877062624bd341a2ced823c2fbdddd4262ec68f1be40eb7c49",
+      "imageSha256": "e4a9a10b7263fd5f0d36a65d92faffd06fc06e3d070e364f30fd460d967314d7"
+    },
+    {
+      "id": "elephant",
+      "file": "elephant.png",
+      "color": "#ff9de2",
+      "vertices": 5766,
+      "meshSha256": "6c0b2d0422243d31ebd93337593b95540604330cbe461f8d2b059646db3f9483",
+      "imageSha256": "a56de8e5803f324dd444cfe925626f316369df6b3395064d042357b24b0ea402"
+    },
+    {
+      "id": "goat",
+      "file": "goat.png",
+      "color": "#ff9648",
+      "vertices": 5205,
+      "meshSha256": "d488cc100ccecc75803a3c65106da95d9db1a281a8a367f88e4c51940a973001",
+      "imageSha256": "40ff487f6ce480cc54df71a4a5a10c55c42a72616c35d4a06bc59c40af566c5f"
+    },
+    {
+      "id": "crocodile",
+      "file": "crocodile.png",
+      "color": "#4b72ee",
+      "vertices": 6030,
+      "meshSha256": "2019561185eb7d03e6118834e59694d626713996d8f5b486ac3e9fe015003cf2",
+      "imageSha256": "bb3a038247aec977bef9c88b9a882b17a1be5926799f768afa3ebc23f091d97b"
+    },
+    {
+      "id": "antelope",
+      "file": "antelope.png",
+      "color": "#ffce58",
+      "vertices": 5358,
+      "meshSha256": "036359183d22abc1f12e50948c106ec42779ca17f0f76babbb94425f91f079be",
+      "imageSha256": "32c95af5825031e234ca85a82e2368ef281caa890b140c096727619de7509592"
+    },
+    {
+      "id": "fish",
+      "file": "fish.png",
+      "color": "#4ce4f3",
+      "vertices": 3261,
+      "meshSha256": "ed1869201342342f927e6e6272ee57734ea3b372f40541928239a55443116f06",
+      "imageSha256": "cd2ffa495eec63b975434b7809bae861b8b578e86399eea72f0f31c14405e0ff"
+    },
+    {
+      "id": "pig",
+      "file": "pig.png",
+      "color": "#ff7479",
+      "vertices": 4878,
+      "meshSha256": "bd4d42119e7cef10dd2916998387503385200e5057162941eca27c506e748300",
+      "imageSha256": "96eac45fa42d52864c3c4601e79f129d1c47dd3002c838f63536e96f261cf2a2"
+    },
+    {
+      "id": "ram",
+      "file": "ram.png",
+      "color": "#bd9aff",
+      "vertices": 8622,
+      "meshSha256": "82a7009d786ca6dacfce1df114c32a8f7ed222b4e64a314a6c94b092ddaa9a1f",
+      "imageSha256": "901f2ff4582da566695cc808c8d236970038f6f7bac8a182af5a179dde31c116"
+    },
+    {
+      "id": "donkey",
+      "file": "donkey.png",
+      "color": "#66e6a2",
+      "vertices": 6246,
+      "meshSha256": "d7d1486a85dad33ffe296cd77c884d0a4757053de3854620a25188d96d159289",
+      "imageSha256": "0cf5e226fc31fb01cd581bc8c40b57dff7b5460a6193c47da102521563d0ea60"
+    },
+    {
+      "id": "bear",
+      "file": "bear.png",
+      "color": "#ff9de2",
+      "vertices": 6432,
+      "meshSha256": "cc41f581323f09ef1b272a02f5260fbc041c28cdbfa6783ce70f23bb683dfbac",
+      "imageSha256": "7f2902a8608caa073aa060e0033dae146d7fb5ac62f21bb1d742170ff60112c8"
+    },
+    {
+      "id": "giraffe",
+      "file": "giraffe.png",
+      "color": "#ff9648",
+      "vertices": 8670,
+      "meshSha256": "5dd9e90c3019430404afea4eb4a6a7abfb8b93e00f671fe46cfd296313f3e0f7",
+      "imageSha256": "11bd8d7e7977140bf55fad82b8f14cf4067f98fd0c1c1f79260c230ca9a11900"
+    },
+    {
+      "id": "horse",
+      "file": "horse.png",
+      "color": "#4b72ee",
+      "vertices": 6246,
+      "meshSha256": "b6c5760ca0965446565ce23eb0785a721c65496c4795de3832ff371cf2d960e4",
+      "imageSha256": "dda8a28f7f208abe340a0c76fc4506ee2124e0cebc2541fdeeedc2021fa5c965"
+    },
+    {
+      "id": "bezos",
+      "file": "bezos.png",
+      "color": "#ffce58",
+      "vertices": 5274,
+      "meshSha256": "f50a7de36e07092c952c71c87babd1cd3cc9abe59862a8c3ab1cd1f536b5eaf7",
+      "imageSha256": "9915487957124b4124be2d3bb2f836cea60d7df58a57e77a337dd4b05a3a0af3"
+    },
+    {
+      "id": "trump",
+      "file": "trump.png",
+      "color": "#4ce4f3",
+      "vertices": 4737,
+      "meshSha256": "489c6640c1aa92948615836c59e4ce0934f2a3e4be6814ea608eaa69a31319fc",
+      "imageSha256": "d4c2e883fbfc15878e63322d758f8f44cfbe43fcd0d96685d323df5419a646e3"
+    },
+    {
+      "id": "musk",
+      "file": "musk.png",
+      "color": "#ff7479",
+      "vertices": 4392,
+      "meshSha256": "deca9a22a9f074dba2a46cf0929b521306047a401a018644f754977be3e047f1",
+      "imageSha256": "6f12abc50dd74b1839a76afc48fb3ca6026182b267070b4078d71f2b896b1951"
+    },
+    {
+      "id": "zuckerberg",
+      "file": "zuckerberg.png",
+      "color": "#bd9aff",
+      "vertices": 3924,
+      "meshSha256": "3cf83182c1652ec3267c6c65305b4aab6fe585cf477d8e49ce98f843db439777",
+      "imageSha256": "1c1bb0feebe7fee568c332584544c764cf16ce2e36a33ed09b575b2e4ea04cb2"
+    },
+    {
+      "id": "ye",
+      "file": "ye.png",
+      "color": "#66e6a2",
+      "vertices": 5496,
+      "meshSha256": "37368893033e9e3e5ca631b116ce0449b7c12207c365d093ee95193e1aaec9d6",
+      "imageSha256": "155310df2c60d273e8f2c9d96e8334ce8ef9e449511de94ce482d30c91ced823"
+    },
+    {
+      "id": "huang",
+      "file": "huang.png",
+      "color": "#ff9de2",
+      "vertices": 5634,
+      "meshSha256": "ffa632c2f40657ba61610edb351db15c8d852aa0068248cee7f92174b7cf784a",
+      "imageSha256": "de6b0ae53db47545d907dcc984930ececcc7943e1b6d3560625df8c3ea3e857b"
+    },
+    {
+      "id": "fox",
+      "file": "fox.png",
+      "color": "#ff9648",
+      "vertices": 3384,
+      "meshSha256": "2497048e68fcb452a10100d80123e4e30be14e54df680f0a42c49c805334509e",
+      "imageSha256": "eca1ac16085907d5986fdb0eb83f82274f8af9c659ee38dfe72e43e6974c9282"
+    },
+    {
+      "id": "robot",
+      "file": "robot.png",
+      "color": "#4b72ee",
+      "vertices": 2016,
+      "meshSha256": "48047e6f7e1065da37150e90ac6557e20829e88f9f237b1a69b1e5db8670cefe",
+      "imageSha256": "47640ddddcee0e27aadc8bca9ebbdb1db7049db1fccee7b47633b783c2870d92"
+    },
+    {
+      "id": "frog",
+      "file": "frog.png",
+      "color": "#ffce58",
+      "vertices": 3888,
+      "meshSha256": "7c530c649879e2b9f2e7c8a0dfc03161b45dcf463882aefc5b1dff5faf0a09cf",
+      "imageSha256": "3eade9b9e3cd7c0424ade42412d99e3aadc60f6ae22300d8f17b46a6c24ea66f"
+    },
+    {
+      "id": "cat",
+      "file": "cat.png",
+      "color": "#4ce4f3",
+      "vertices": 3480,
+      "meshSha256": "8b6d4603dec9787de27602b084cdc83b23de8bac1d349d9f3834aa0937f3cc22",
+      "imageSha256": "80c16b2f6a358043505be6bd93a171e204d9f3cb3dea59ae7cc2428efd920dc6"
+    },
+    {
+      "id": "alien",
+      "file": "alien.png",
+      "color": "#ff7479",
+      "vertices": 3288,
+      "meshSha256": "9fbcf7a58377442c38f677008753f6da4184a20c10e6f3e615006636c5a12c78",
+      "imageSha256": "037e38e19e572970f07b2de2c5fbdd7c0f3ec165d61b2048a586b3696c47c59a"
+    },
+    {
+      "id": "bird",
+      "file": "bird.png",
+      "color": "#bd9aff",
+      "vertices": 2937,
+      "meshSha256": "b70a1c988048ca3bb6946cb5e964c04cdfc8909da9f521cb555b6b9f37d353d4",
+      "imageSha256": "47568bb22ee90c356a1fbe100d1c03cebaa090bcaff8dd35ea50539c401b005b"
+    },
+    {
+      "id": "blob",
+      "file": "blob.png",
+      "color": "#66e6a2",
+      "vertices": 4032,
+      "meshSha256": "19252a7f290abc8a34df22615df98c2245ba486033cbe63719290c7278c492d0",
+      "imageSha256": "5f378a455d9146fdead33a6d4341553202fa68d37e83ba29e0e527fbb8fddcd3"
+    }
+  ]
+}

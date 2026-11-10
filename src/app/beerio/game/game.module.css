@@ -1,5 +1,5 @@
-.game { position: relative; width: 100%; height: 100%; min-height: 360px; overflow: hidden; isolation: isolate; background: #11151f; color: #fff; font-family: Arial, Helvetica, sans-serif; }
-.canvas { display: block; width: 100%; height: 100%; min-height: 360px; }
+.game { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; isolation: isolate; background: #11151f; color: #fff; font-family: Arial, Helvetica, sans-serif; }
+.canvas { display: block; width: 100%; height: 100%; min-height: 0; }
 .hudGrid { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(var(--game-columns), minmax(0, 1fr)); grid-template-rows: repeat(var(--game-rows), minmax(0, 1fr)); pointer-events: none; }
 /* Every camera is its own size container. Header, center and footer occupy
    separate rows, keeping maps/items/names apart at every grid density. */
@@ -50,14 +50,6 @@
 .warning, .hitNotice { position: absolute; left: 50%; transform: translateX(-50%); max-width: 90%; width: max-content; text-align: center; border-radius: 6px; padding: 4px 7px; font-weight: 900; font-size: clamp(8px, 2.6cqw, 14px); letter-spacing: .04em; }
 .warning { top: 0; color: #fff2b0; background: #6e1c32eb; border: 1px solid #ffd36c; }
 .hitNotice { top: 30%; color: #fff; background: #302344db; }
-.itemNotice { position: absolute; top: 58%; left: 50%; display: flex; align-items: center; gap: clamp(5px, 2cqw, 12px); width: max-content; max-width: 88%; padding: clamp(5px, 1.6cqw, 12px) clamp(7px, 2.5cqw, 18px); transform: translate(-50%, -50%); border: 2px solid var(--item-color); border-radius: 12px; background: #101b2af2; box-shadow: 0 0 22px color-mix(in srgb, var(--item-color) 35%, transparent), 0 6px 20px #0005; animation: itemNoticePop .22s ease-out both; }
-.noticeIcon { color: var(--item-color); font-size: clamp(22px, 8cqw, 48px); font-weight: 900; line-height: 1; }
-.itemNotice small, .itemNotice strong, .itemNotice em { display: block; }
-.itemNotice small { font-size: clamp(6px, 2cqw, 11px); font-weight: 900; letter-spacing: .08em; color: var(--item-color); }
-.itemNotice strong { font-size: clamp(10px, 3.8cqw, 24px); line-height: 1.15; margin: 3px 0; }
-.itemNotice em { font-style: normal; font-size: clamp(7px, 2.2cqw, 12px); color: #e7edfa; }
-@keyframes itemNoticePop { from { opacity: .4; transform: translate(-50%, -50%) scale(.8); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
-@media (prefers-reduced-motion: reduce) { .itemNotice { animation: none; } }
 .drift { display: flex; align-items: center; gap: 4px; color: #a1f9ff; font-size: clamp(7px, 2cqw, 11px); font-weight: 900; }
 .driftTrack { width: clamp(22px, 10cqw, 65px); height: 5px; border-radius: 4px; background: #ffffff55; overflow: hidden; }
 .driftTrack i { display: block; height: 100%; background: linear-gradient(90deg, #6be7ff, #ffa657); }

@@ -1,0 +1,96 @@
+/* Every vignette is local to its camera. Only transform and opacity animate:
+   no extra rendering loop, SVG filters, or full-screen flashes for ten racers. */
+.notice { position: absolute; top: 55%; left: 50%; display: flex; align-items: center; gap: clamp(5px, 1.8cqw, 12px); width: min(88%, 410px); box-sizing: border-box; padding: clamp(6px, 1.6cqw, 12px) clamp(9px, 2.4cqw, 18px) clamp(6px, 1.6cqw, 12px) 0; transform: translate(-50%, -50%); border: 1px solid color-mix(in srgb, var(--item-color) 60%, transparent); border-left: 3px solid var(--item-color); border-radius: 5px 18px 5px 18px; background: linear-gradient(110deg, color-mix(in srgb, var(--item-color) 19%, #0c1728), #0c1728f5 65%); color: #fff; box-shadow: 0 5px 18px #0006, inset 0 1px #ffffff24; text-shadow: none; pointer-events: none; animation: reveal .4s cubic-bezier(.16, .85, .25, 1) both; }
+.notice::after { content: ''; position: absolute; left: 18%; right: 12%; bottom: -1px; height: 2px; background: linear-gradient(90deg, transparent, var(--item-color), transparent); transform-origin: left; animation: underline .55s .1s ease-out both; }
+.art { position: relative; flex: 0 0 30%; min-width: 0; color: var(--item-color); align-self: center; }
+.halo { position: absolute; inset: 5% 17%; border-radius: 50%; background: radial-gradient(ellipse, color-mix(in srgb, var(--item-color) 24%, transparent), transparent 70%); animation: haloReveal .65s ease-out both; }
+.scene { position: relative; display: block; width: 100%; height: auto; overflow: visible; }
+.heldIcon { display: block; text-align: center; font-size: clamp(20px, 8cqw, 48px); font-weight: 900; }
+.copy { min-width: 0; padding: 0; }
+.eyebrow { display: block; color: var(--item-color); font-size: clamp(6px, 1.7cqw, 9px); font-weight: 900; line-height: 1.2; letter-spacing: .1em; }
+.title { display: block; margin: 3px 0; font-size: clamp(11px, 3.6cqw, 23px); line-height: 1.05; letter-spacing: -.035em; }
+.effect { display: block; color: #e1eaf7; font-size: clamp(7px, 2.1cqw, 11px); line-height: 1.3; }
+.prompt { display: block; width: max-content; max-width: 100%; margin-top: 5px; color: #fff; font-size: clamp(7px, 1.9cqw, 10px); font-weight: 800; }
+.prompt span { color: var(--item-color); }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* Finite animation beats settle into an illustration until simulation expiry. */
+.speedTrails, .jetTrails { animation: trails .55s ease-out 3 both; }
+.fizzKart { animation: surge .7s ease-out 2 both; }
+.fizzBubbles { animation: bubbles 1.1s ease-out both; }
+.guardShield { transform-origin: 78px 44px; animation: shield .8s ease-out both; }
+.guardImpact { animation: deflect 1.3s ease-out both; }
+.slickPuddle { transform-origin: 46px 66px; animation: puddle .8s .15s ease-out both; }
+.slickDrop { animation: drop .55s ease-in both; }
+.slickKart { animation: pullAway .8s ease-out both; }
+.boltBubble { animation: chase 1.2s .1s ease-in-out both; }
+.boltImpact { transform-origin: 108px 50px; animation: impact .45s 1s ease-out both; }
+.danceDancer { animation: dance .45s ease-in-out 4 both; }
+.twerkDancer { transform-origin: 0 10px; animation: twerk .45s ease-in-out 4 both; }
+.musicNotes { animation: notes .85s ease-out 2 both; }
+.flaskBottle { transform-origin: 70px 68px; animation: bottle .7s ease-in-out 2 both; }
+.flaskCap { animation: cap .6s ease-out both; }
+.flaskFizz { animation: bubbles .8s .15s ease-out 2 both; }
+.flaskBoost { animation: trails .65s ease-out 2 both; }
+.prismAura { transform-origin: 72px 43px; animation: prism 1.5s ease-in-out both; }
+.prismKart { animation: surge .7s ease-out 2 both; }
+.prismStars { animation: notes .9s ease-out 2 both; }
+.berrySplat { transform-origin: 72px 45px; animation: splat .6s cubic-bezier(.2, .9, .3, 1.2) both; }
+.jetRocket { animation: jet .85s ease-in-out 2 both; }
+.jetFlame { transform-origin: 52px 44px; animation: thrust .35s ease-in-out 4 both; }
+.crownComet { animation: comet 1.1s ease-in both; }
+.crownImpact { transform-origin: 107px 53px; animation: impact .5s .85s ease-out both; }
+.stormBolts { transform-origin: 72px 25px; animation: strike .7s ease-out both; }
+.stormKarts { transform-origin: 72px 78px; animation: slowdown .7s .3s ease-out both; }
+.notice[data-kind='full'] { border-color: #ffffff40; }
+.notice[data-paused] *, .notice[data-paused], .notice[data-paused]::after { animation-play-state: paused; }
+@keyframes reveal { from { opacity: 0; transform: translate(-50%, calc(-50% + 14px)) scale(.86) rotate(-2deg); } 65% { opacity: 1; transform: translate(-50%, calc(-50% - 2px)) scale(1.02) rotate(.4deg); } to { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); } }
+@keyframes underline { from { opacity: 0; transform: scaleX(.2); } to { opacity: 1; transform: scaleX(1); } }
+@keyframes haloReveal { from { opacity: 0; transform: scale(.5); } to { opacity: 1; transform: scale(1); } }
+@keyframes trails { from { opacity: 0; transform: translateX(12px); } 25% { opacity: .9; } to { opacity: .25; transform: translateX(-9px); } }
+@keyframes surge { 0% { transform: translateX(-14px) rotate(-3deg); } 65% { transform: translateX(5px) rotate(-3deg); } 100% { transform: translateX(0) rotate(0); } }
+@keyframes bubbles { from { opacity: 0; transform: translateY(17px) scale(.85); } 35% { opacity: .9; } to { opacity: .5; transform: translateY(-4px); } }
+@keyframes shield { from { opacity: 0; transform: scale(.45); } 55% { opacity: 1; transform: scale(1.08); } to { opacity: .9; transform: scale(1); } }
+@keyframes deflect { 0%, 25% { opacity: 0; transform: translateX(-15px); } 40% { opacity: 1; transform: translateX(6px); } 100% { opacity: .4; transform: translateX(-4px); } }
+@keyframes puddle { from { opacity: 0; transform: scale(.1); } to { opacity: .85; transform: scale(1); } }
+@keyframes drop { from { opacity: 1; transform: translateY(-10px); } 75% { opacity: 1; } to { opacity: 0; transform: translateY(20px) scale(.8); } }
+@keyframes pullAway { from { transform: translateX(-20px); } to { transform: translateX(5px); } }
+@keyframes chase { 0% { transform: translate(0, 0) scale(.7); } 40% { transform: translate(30px, -22px) scale(.9); } 80% { transform: translate(67px, 0) scale(.75); opacity: 1; } 100% { transform: translate(67px, 0) scale(.25); opacity: .15; } }
+@keyframes impact { from { opacity: .9; transform: scale(.2); } to { opacity: 0; transform: scale(1.4); } }
+@keyframes dance { 0%, 100% { transform: translateY(0) rotate(-8deg); } 50% { transform: translateY(-7px) rotate(10deg); } }
+@keyframes twerk { 0%, 100% { transform: translate(-3px, 1px) rotate(-10deg); } 50% { transform: translate(5px, -1px) rotate(9deg); } }
+@keyframes notes { from { opacity: .35; transform: translateY(5px) rotate(-3deg); } 50% { opacity: 1; } to { opacity: .6; transform: translateY(-4px) rotate(4deg); } }
+@keyframes bottle { 0%, 100% { transform: rotate(-6deg); } 50% { transform: rotate(9deg) translateY(-3px); } }
+@keyframes cap { from { transform: translateY(4px); } to { transform: translate(7px, -8px) rotate(8deg); } }
+@keyframes prism { from { opacity: 0; transform: scale(.5) rotate(-90deg); } 50% { opacity: 1; } to { opacity: .85; transform: scale(1) rotate(90deg); } }
+@keyframes splat { from { opacity: 0; transform: scale(.05) rotate(-20deg); } 65% { opacity: .95; transform: scale(1.1) rotate(3deg); } to { opacity: .9; transform: scale(1) rotate(0); } }
+@keyframes jet { 0%, 100% { transform: translateX(0) rotate(-3deg); } 45% { transform: translateX(13px) rotate(-3deg); } }
+@keyframes thrust { 0%, 100% { transform: scaleX(.65); opacity: .75; } 50% { transform: scaleX(1.15); opacity: 1; } }
+@keyframes comet { 0% { transform: translate(-15px, -15px); } 60% { transform: translate(38px, -3px); opacity: 1; } to { transform: translate(56px, 20px) scale(.8); opacity: .2; } }
+@keyframes strike { from { opacity: 0; transform: scaleY(.1); } 45% { opacity: 1; transform: scaleY(1.08); } to { opacity: .85; transform: scaleY(1); } }
+@keyframes slowdown { from { transform: scale(1); } to { transform: scale(.83, .72); } }
+@container (max-width: 360px) {
+  .notice { width: 93%; gap: 4px; padding: 6px 7px 6px 0; border-radius: 4px 12px 4px 12px; }
+  .art { flex-basis: 28%; }
+  .eyebrow { letter-spacing: .03em; }
+  .title { margin: 2px 0; }
+  .prompt { margin-top: 3px; }
+}
+@container (max-height: 240px) {
+  .notice { top: 52%; padding-top: 4px; padding-bottom: 4px; }
+  .art { flex-basis: 25%; }
+  .title { font-size: clamp(10px, 3.3cqw, 16px); margin: 2px 0; }
+  .eyebrow { font-size: 6px; }
+  .effect, .prompt { font-size: clamp(6px, 1.9cqw, 9px); }
+  .prompt { margin-top: 2px; }
+}
+@container (max-width: 180px) {
+  .notice { width: 96%; gap: 1px; padding-right: 4px; }
+  .art { flex-basis: 23%; }
+  .title { font-size: 9px; }
+  .eyebrow { font-size: 5px; letter-spacing: 0; }
+  .effect, .prompt { font-size: 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notice, .notice::after, .notice * { animation: none; }
+  .boltImpact, .crownImpact, .slickDrop { display: none; }
+}

@@ -13,7 +13,7 @@
 .nameFlags { min-height: 22px; display: flex; justify-content: center; flex-wrap: wrap; gap: 3px; width: 100%; }
 .nameFlags > span { max-width: 100%; background: var(--driver-color); color: #171528; padding: 3px 6px; font-size: 10px; font-weight: 900; border-radius: 4px; overflow-wrap: anywhere; }
 .offline { opacity: .5; }
-.portrait { display: block; flex-shrink: 0; width: min(100%, 100px); aspect-ratio: 1; background: white url('/beerio/characters.jpg') no-repeat; background-size: 600% 400%; border-radius: 16px; margin: 7px auto; }
+.portrait { display: block; flex-shrink: 0; width: min(100%, 100px); aspect-ratio: 1; background: transparent; border-radius: 16px; margin: 7px auto; }
 .largePortrait { width: 128px; }
 .characterCard > strong { font-size: 13px; }
 .countdown { padding: 20px; text-align: center; border: 2px solid #ffce58; background: #171528ee; border-radius: 24px; display: flex; flex-direction: column; align-items: center; color: #ffce58; }
@@ -49,3 +49,220 @@
 .characterTitle { display: block; color: #ffce58; font-size: 11px; letter-spacing: .04em; margin: -2px 0 8px; }
 .direction:focus-visible, .selectButton:focus-visible, .changeChoice:focus-visible { outline: 3px solid #fff; outline-offset: 4px; }
 .characterCard > strong { overflow-wrap: anywhere; max-width: 100%; }
+
+
+/* Viewport-bound selection: every racer stays visible, including the last row. */
+.hostScreen {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  padding: clamp(8px, 1.8dvh, 18px) clamp(12px, 2vw, 32px);
+  overflow: hidden;
+}
+.hostHeader { flex: 0 0 auto; width: 100%; max-width: none; min-height: 36px; margin-bottom: 10px; }
+.hostHeader > strong { font-size: clamp(21px, 2.4vw, 28px); }
+.hostHeader > div { min-width: 0; gap: 8px; }
+.hostHeader b { font-size: clamp(18px, 2vw, 24px); }
+.hostScreen .selection {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+}
+.hostScreen .selectionTitle { flex: 0 0 auto; gap: 12px; }
+.hostScreen .selectionTitle h2 { margin: 3px 0 5px; font-size: clamp(22px, 3.3dvh, 34px); }
+.hostScreen .selectionTitle p { font-size: clamp(10px, 1.6dvh, 13px); line-height: 1.35; }
+.hostScreen .selectionTitle > strong { font-size: clamp(11px, 1.8vw, 16px); }
+.hostScreen .roster { flex: 0 0 auto; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; margin: 9px 0; }
+.hostScreen .roster:empty { margin: 5px 0; }
+.hostScreen .roster > span { min-width: 0; padding: 4px 6px; font-size: 11px; line-height: 1.15; }
+.hostScreen .roster small { margin-left: auto; font-size: 8px; }
+.hostScreen .characterGrid {
+  flex: 1 1 0;
+  min-height: 0;
+  grid-template-rows: repeat(var(--character-rows, 5), minmax(0, 1fr));
+  gap: clamp(4px, 1dvh, 10px);
+}
+.hostScreen .characterCard {
+  position: relative;
+  container-type: size;
+  min-height: 0;
+  padding: 4px;
+  justify-content: flex-end;
+  border-radius: 10px;
+}
+.hostScreen .nameFlags { position: absolute; top: 4px; left: 4px; right: 4px; width: auto; min-height: 0; gap: 2px; }
+.hostScreen .nameFlags > span { padding: 2px 4px; font-size: clamp(7px, 1.3dvh, 10px); line-height: 1.1; max-width: 100%; }
+.hostScreen .portrait {
+  width: min(100cqw, max(10px, calc(100cqh - 37px)));
+  height: auto;
+  max-height: none;
+  margin: auto auto 3px;
+  border-radius: 10px;
+}
+.hostScreen .characterCard > strong { flex: 0 0 auto; font-size: clamp(9px, 1.65dvh, 14px); line-height: 1.1; }
+.hostScreen > .offlineNotice, .hostScreen > [role="alert"], .hostScreen > [role="status"] { flex: 0 0 auto; margin: 6px 0 0; padding: 6px 10px; font-size: 11px; }
+.hostScreen > button { flex: 0 0 auto; min-height: 32px; margin-top: 6px; }
+.blankPortrait { display: grid; place-items: center; background: #ffffff08; border: 2px dashed #8d819c; color: #bcb0cd; font-size: 40px; }
+.selectButton:disabled { opacity: .45; }
+
+/* Phone selection shares the same finite viewport as the driving controller. */
+.phoneSelection { display: flex; flex: 1 1 0; flex-direction: column; justify-content: center; align-items: center; min-height: 0; margin: 0; padding: 10px 0; }
+.phoneSelection .phoneEyebrow { margin: 0 0 5px; font-size: 10px; }
+.phoneSelection h1 { flex: 0 0 auto; margin: 3px 0 6px; font-size: clamp(25px, 4.5dvh, 34px); line-height: 1.1; }
+.phoneSelection .largePortrait { width: min(120px, 17dvh); margin: 4px auto; }
+.phoneSelection > p:not(.phoneEyebrow) { margin: 8px auto; font-size: 12px; line-height: 1.35; }
+.selectionControls { flex: 0 0 auto; width: 100%; gap: 16px; margin: 10px auto 6px; }
+.selectionJoystick { width: min(47vw, 29dvh, 210px); }
+.selectButton { width: min(32vw, 22dvh, 150px); font-size: clamp(17px, 4vw, 26px); }
+.phoneSelection > .countdown { padding: 12px; }
+.phoneSelection > .countdown strong { font-size: clamp(56px, 12dvh, 100px); }
+
+@media (max-width: 700px) {
+  .hostHeader { flex-wrap: nowrap; gap: 8px; margin-bottom: 8px; }
+  .hostHeader > div { flex-wrap: wrap; justify-content: flex-end; font-size: 9px; gap: 4px; }
+  .hostHeader > div:last-child { max-width: 40%; }
+  .hostHeader > div button { min-height: 28px; padding: 4px 6px; font-size: 8px; }
+  .hostScreen .selectionTitle span { font-size: 9px; }
+  .hostScreen .selectionTitle h2 { font-size: 23px; }
+  .hostScreen .roster { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .hostScreen .roster > span { display: block; font-size: 9px; padding: 3px; }
+  .hostScreen .roster small { display: block; font-size: 7px; margin-top: 2px; }
+  .hostScreen .characterCard { border-radius: 7px; padding: 3px; }
+  .hostScreen .portrait { width: min(100cqw, max(10px, calc(100cqh - 35px))); border-radius: 7px; }
+  .hostScreen .characterCard > strong { font-size: 9px; }
+  .hostScreen .nameFlags { top: 3px; left: 2px; right: 2px; }
+  .hostScreen .nameFlags > span { font-size: 7px; padding: 2px; }
+}
+@media (max-height: 560px) and (min-width: 701px) {
+  .hostHeader { min-height: 30px; margin-bottom: 5px; }
+  .hostScreen .selectionTitle span { display: none; }
+  .hostScreen .selectionTitle h2 { font-size: 24px; }
+  .hostScreen .roster { margin: 5px 0; }
+  .hostScreen .roster > span { padding: 3px 5px; font-size: 10px; }
+  .hostScreen .portrait { width: min(100cqw, max(8px, calc(100cqh - 29px))); }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .phoneSelection { display: grid; grid-template-columns: 1fr 1.6fr; grid-template-rows: auto auto auto; align-content: center; gap: 2px 12px; padding: 4px 0; }
+  .phoneSelection .phoneEyebrow, .phoneSelection > p:not(.phoneEyebrow) { display: none; }
+  .phoneSelection h1 { grid-column: 1; margin: 0; font-size: 24px; }
+  .phoneSelection .characterTitle { grid-column: 1; margin: 2px 0; }
+  .phoneSelection .largePortrait { grid-column: 1; width: min(100px, 29dvh); }
+  .selectionControls { grid-column: 2; grid-row: 1 / 4; margin: 0; }
+  .selectionJoystick { width: min(30vw, 49dvh, 190px); }
+  .selectButton { width: min(20vw, 34dvh, 130px); }
+  .phoneSelection > .countdown { grid-column: 1; grid-row: 1 / 4; padding: 8px; }
+  .phoneSelection > .countdown strong { font-size: 54px; }
+}
+
+/* Joining and choosing share one screen; the room controls never leave view. */
+.hostWorkspace { display: grid; flex: 1 1 0; min-height: 0; grid-template-columns: clamp(190px, 23vw, 280px) minmax(0, 1fr); gap: clamp(12px, 2vw, 28px); }
+.hostSidebar { display: flex; flex-direction: column; min-height: 0; gap: 12px; padding: 14px; border: 1px solid #ffffff1c; border-radius: 16px; background: #211d33; }
+.joinDetails { display: flex; flex: 1 1 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.joinDetails > span { font-size: 10px; letter-spacing: .14em; }
+.joinDetails > strong { margin: 8px 0; font-size: clamp(24px, 3.3vw, 44px); line-height: 1; letter-spacing: .08em; color: #ffce58; font-weight: 950; }
+.joinDetails > small { margin: 4px 0; max-width: 100%; overflow-wrap: anywhere; font-size: 10px; line-height: 1.3; }
+.joinDetails > img { flex: 0 1 auto; min-height: 0; width: min(150px, 21dvh); height: auto; max-height: 100%; aspect-ratio: 1; margin-top: 10px; object-fit: contain; }
+.hostSidebar > div:not(.joinDetails) { flex: 0 0 auto; display: grid; gap: 10px; }
+.hostSidebar > div:not(.joinDetails) > div { margin: 0; }
+.hostSidebar > div:not(.joinDetails) label > span { font-size: 9px; }
+.hostSidebar > div:not(.joinDetails) select { min-height: 38px; margin-top: 5px; padding: 7px 9px; font-size: 12px; }
+.hostSidebar > div:not(.joinDetails) p { margin: 5px 0 0; font-size: 10px; line-height: 1.25; }
+.hostSidebar > div:not(.joinDetails) button { min-height: 36px; padding: 6px 9px; font-size: 9px; }
+.hostSidebar > div:not(.joinDetails) button strong { min-width: 32px; padding: 4px 6px; }
+.hostStart { flex: 0 0 auto; min-height: 44px; width: 100%; padding: 8px 10px; font-size: 10px; line-height: 1.3; }
+.hostHelp { flex: 0 0 auto; margin: 0; color: #aaa1be; font-size: 10px; line-height: 1.35; text-align: center; }
+.hostSidebar > [role="status"], .hostSidebar > [role="alert"] { margin: 0; font-size: 10px; }
+.hostWorkspace .selectionTitle > strong { font-size: 12px; }
+.hostWorkspace .selectionTitle h2 { font-size: clamp(21px, 3.3dvh, 32px); }
+.hostWorkspace .selectionTitle p { max-width: 620px; }
+.hostWorkspace .roster > span { display: block; font-size: 10px; }
+.hostWorkspace .roster small { display: block; margin: 2px 0 0; font-size: 8px; }
+@media (max-height: 660px) and (min-width: 761px) {
+  .hostSidebar { padding: 10px; gap: 8px; }
+  .joinDetails > img { width: min(110px, 18dvh); margin-top: 6px; }
+  .joinDetails > strong { margin: 5px 0; font-size: 30px; }
+  .hostSidebar > div:not(.joinDetails) { gap: 6px; }
+  .hostSidebar > div:not(.joinDetails) select { min-height: 32px; font-size: 11px; }
+  .hostSidebar > div:not(.joinDetails) p, .hostHelp { font-size: 9px; }
+  .hostStart { min-height: 38px; font-size: 9px; }
+}
+@media (max-width: 760px) {
+  .hostWorkspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
+  .hostSidebar { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1fr); grid-template-rows: auto auto; gap: 6px 12px; padding: 9px; border-radius: 12px; }
+  .joinDetails { grid-column: 1; grid-row: 1 / 5; }
+  .joinDetails > span { font-size: 8px; }
+  .joinDetails > strong { font-size: clamp(23px, 4.5vw, 32px); margin: 5px 0; }
+  .joinDetails > small { font-size: 8px; margin: 2px 0; }
+  .joinDetails > img { width: min(76px, 10dvh); margin-top: 5px; }
+  .hostSidebar > div:not(.joinDetails) { grid-column: 2; gap: 6px; }
+  .hostSidebar > div:not(.joinDetails) label > span { font-size: 8px; }
+  .hostSidebar > div:not(.joinDetails) select { min-height: 30px; margin-top: 3px; padding: 5px 6px; font-size: 10px; }
+  .hostSidebar > div:not(.joinDetails) p { font-size: 8px; margin-top: 3px; }
+  .hostSidebar > div:not(.joinDetails) button { min-height: 30px; font-size: 8px; padding: 4px 6px; }
+  .hostSidebar > div:not(.joinDetails) button strong { padding: 3px; font-size: 8px; }
+  .hostStart { grid-column: 2; min-height: 32px; padding: 5px; font-size: 8px; }
+  .hostHelp { grid-column: 2; font-size: 8px; text-align: left; }
+  .hostWorkspace .selectionTitle h2 { font-size: 21px; }
+  .hostWorkspace .selectionTitle p { font-size: 9px; }
+  .hostWorkspace .selectionTitle span { font-size: 8px; }
+  .hostWorkspace .selectionTitle > strong { font-size: 10px; }
+  .hostWorkspace .roster { margin: 6px 0; gap: 3px; }
+  .hostWorkspace .roster > span { font-size: 8px; }
+  .hostWorkspace .roster small { font-size: 6px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .hostWorkspace { grid-template-columns: minmax(180px, .3fr) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 10px; }
+  .hostSidebar { display: flex; padding: 8px; gap: 5px; }
+  .joinDetails { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto auto; column-gap: 6px; flex: 1 1 0; align-content: center; }
+  .joinDetails > span { grid-column: 1; font-size: 7px; }
+  .joinDetails > strong { grid-column: 1; font-size: 21px; margin: 4px 0; }
+  .joinDetails > small { grid-column: 1; font-size: 7px; margin: 0; }
+  .joinDetails > img { grid-column: 2; grid-row: 1 / 4; width: 52px; margin: 0; }
+  .hostSidebar > div:not(.joinDetails) { gap: 4px; }
+  .hostSidebar > div:not(.joinDetails) label > span { font-size: 8px; }
+  .hostSidebar > div:not(.joinDetails) select { min-height: 28px; margin-top: 3px; font-size: 10px; padding: 5px; }
+  .hostSidebar > div:not(.joinDetails) p { font-size: 8px; margin-top: 2px; }
+  .hostSidebar > div:not(.joinDetails) button { min-height: 28px; padding: 4px 6px; font-size: 8px; }
+  .hostSidebar > div:not(.joinDetails) button strong { padding: 2px 5px; }
+  .hostStart { min-height: 30px; padding: 5px; font-size: 8px; }
+  .hostHelp { font-size: 8px; }
+  .hostWorkspace .selectionTitle span { display: none; }
+  .hostWorkspace .selectionTitle h2 { font-size: 21px; margin-top: 0; }
+  .hostWorkspace .selectionTitle p { font-size: 9px; }
+  .hostWorkspace .roster { margin: 4px 0; gap: 3px; }
+  .hostWorkspace .roster > span { font-size: 8px; padding: 2px 3px; }
+  .hostWorkspace .roster small { font-size: 6px; }
+}
+
+.modelPortrait { background-color: transparent; background-size: contain; background-position: center; background-repeat: no-repeat; border-radius: 0; }
+.joinDetails { gap: 7px; }
+.joinDetails > span, .joinDetails > small { color: #bdb5c8; }
+.joinDetails > img { image-rendering: pixelated; }
+.hostSidebar > button { flex: 0 0 auto; width: 100%; min-height: 40px; padding: 8px 10px; font-size: 10px; line-height: 1.3; }
+.hostSidebar > button[role="switch"] { min-height: 36px; padding: 6px 9px; font-size: 9px; }
+.hostSidebar > button[role="switch"] strong { min-width: 32px; padding: 4px 6px; }
+.hostSidebar > p { flex: 0 0 auto; margin: 0; font-size: 10px; line-height: 1.3; color: #aaa1be; }
+@media (max-width: 760px) {
+  .joinDetails { gap: 5px; }
+  .hostSidebar > button { grid-column: 2; min-height: 32px; padding: 5px; font-size: 8px; }
+  .hostSidebar > button[role="switch"] { min-height: 30px; font-size: 8px; padding: 4px 6px; }
+  .hostSidebar > button[role="switch"] strong { padding: 3px; font-size: 8px; }
+  .hostSidebar > p { grid-column: 2; font-size: 8px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .joinDetails > strong { grid-row: 2; }
+  .joinDetails > small { grid-row: 3; }
+  .hostSidebar > button { min-height: 30px; padding: 5px; font-size: 8px; }
+  .hostSidebar > button[role="switch"] { min-height: 28px; padding: 4px 6px; font-size: 8px; }
+  .hostSidebar > button[role="switch"] strong { padding: 2px 5px; }
+  .hostSidebar > p { font-size: 8px; }
+}
+
+/* Long names remain in the accessible label without growing the game board. */
+.hostScreen .roster > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.hostScreen .nameFlags { flex-wrap: nowrap; }
+.hostScreen .nameFlags > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

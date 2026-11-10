@@ -1,5 +1,6 @@
 import { MAX_SPEED, type RaceState } from './simulation';
-import { ROAD_HALF_WIDTH, TRACK_LENGTH } from './track';
+import { ROAD_HALF_WIDTH, TRACK_LENGTH, type TrackId } from './track';
+import { raceScoreUrl } from './audioTracks';
 export { createOriginalRaceMusic, renderRaceScore, SCORE_DURATION } from './audioScore';
 
 /** All music and effects are synthesized here. No recordings or third-party compositions. */
@@ -46,18 +47,26 @@ export function soundEvents(previous: AudioSnapshot | null, next: AudioSnapshot)
 }
 
 export type MusicStatus = 'loading' | 'ready' | 'unavailable';
-const musicLoads = new WeakMap<BaseAudioContext, Promise<AudioBuffer>>();
+const musicLoads = new WeakMap<BaseAudioContext, Map<TrackId, Promise<AudioBuffer>>>();
 /** A local original WAV keeps mobile startup smooth and preserves gapless loops.
  * Decoding and loading are asynchronous; source synthesis runs only at build time.
  */
-export function loadOriginalRaceMusic(context: BaseAudioContext): Promise<AudioBuffer> {
-  const cached = musicLoads.get(context);
-  if (cached) return cached;
-  const load = fetch('/beerio/audio/soda-pop-sprint.wav')
+export function loadOriginalRaceMusic(context: BaseAudioContext, trackId: TrackId = 'sunset'): Promise<AudioBuffer> {
+  let tracks = musicLoads.get(context);
+  if (!tracks) { tracks = new Map(); musicLoads.set(context, tracks); }
+  const cached = tracks.get(trackId);
+  if (cached) {
+    // Refresh recency. Three decoded tracks bound retained mobile memory when
+    // players tour all six courses, without refetching ordinary rematches.
+    tracks.delete(trackId); tracks.set(trackId, cached); return cached;
+  }
+  const load = fetch(raceScoreUrl(trackId))
     .then(response => { if (!response.ok) throw new Error('Race music could not load'); return response.arrayBuffer(); })
     .then(bytes => context.decodeAudioData(bytes))
-    .catch(error => { musicLoads.delete(context); throw error; });
-  musicLoads.set(context, load);
+    .then(buffer => { if (!Number.isFinite(buffer.duration) || buffer.duration <= 0) throw new Error('Invalid race music'); return buffer; })
+    .catch(error => { if (tracks.get(trackId) === load) tracks.delete(trackId); throw error; });
+  tracks.set(trackId, load);
+  if (tracks.size > 3) tracks.delete(tracks.keys().next().value!);
   return load;
 }
 
@@ -92,8 +101,11 @@ export class RaceAudio {
   private lastEvent = new Map<RaceSoundEvent, number>();
   private score: AudioBuffer | null;
   private loadingMusic = false;
+  private trackId: TrackId;
+  private musicGeneration = 0;
   private onMusicStatus?: (status: MusicStatus) => void;
-  constructor(private context: BaseAudioContext, options: { musicBuffer?: AudioBuffer; onMusicStatus?: (status: MusicStatus) => void } = {}) {
+  constructor(private context: BaseAudioContext, options: { trackId?: TrackId; musicBuffer?: AudioBuffer; onMusicStatus?: (status: MusicStatus) => void } = {}) {
+    this.trackId = options.trackId ?? 'sunset';
     this.score = options.musicBuffer ?? null;
     this.onMusicStatus = options.onMusicStatus;
     this.master = this.keep(context.createGain()); this.master.gain.value = 0;
@@ -128,15 +140,24 @@ export class RaceAudio {
     if (!this.score) this.retryMusic();
     else this.onMusicStatus?.('ready');
   }
+  setTrack(trackId: TrackId) {
+    if (this.disposed || trackId === this.trackId) return;
+    this.musicGeneration++;
+    this.clearCues(); this.stopMusic(true);
+    this.trackId = trackId; this.score = null; this.loadingMusic = false;
+    this.previous = null; this.lastEvent.clear();
+    this.retryMusic();
+  }
   retryMusic() {
     if (this.disposed || this.loadingMusic || this.score) return;
+    const generation = ++this.musicGeneration;
     this.loadingMusic = true; this.onMusicStatus?.('loading');
-    void loadOriginalRaceMusic(this.context).then(buffer => {
-      if (this.disposed) return;
+    void loadOriginalRaceMusic(this.context, this.trackId).then(buffer => {
+      if (this.disposed || generation !== this.musicGeneration) return;
       this.score = buffer; this.loadingMusic = false; this.onMusicStatus?.('ready');
       if (this.previous && this.previous.countdown === 0 && !this.previous.complete && !this.paused && !this.muted && this.context.state === 'running') this.startMusic();
     }, () => {
-      if (this.disposed) return;
+      if (this.disposed || generation !== this.musicGeneration) return;
       this.loadingMusic = false; this.onMusicStatus?.('unavailable');
     });
   }

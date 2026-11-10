@@ -172,6 +172,8 @@ export default function Beerio() {
   const [mode, setMode] = useState<Mode>("home");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
+  const [publicRoom, setPublicRoom] = useState(false);
+  const [randomJoin, setRandomJoin] = useState(false);
   const [racing, setRacing] = useState(false);
   const [raceKey, setRaceKey] = useState(0);
   const [starting, setStarting] = useState(false);
@@ -268,7 +270,7 @@ export default function Beerio() {
     if (!starting || room.status === "connected") return;
     queueMicrotask(() => { setStarting(false); setStartError("Connection interrupted while opening character selection. Reconnect and try again if the grid did not open."); });
   }, [starting, room.status]);
-  // The relay owns the entire five-second countdown and freezes the roster.
+  // The relay owns the countdown and freezes the roster.
   // Only an acknowledged racing lock starts a simulation, never a local timer.
   useEffect(() => {
     if (mode !== "host" || racing || !selectionArmed.current || room.status !== "connected" || !room.locked || room.selectionPhase !== "racing") return;
@@ -323,7 +325,7 @@ export default function Beerio() {
   const lobby = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; needsLobbyUnlock.current = true; setStarting(false); setStartError(""); setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
   const players = mode === "practice" ? [{ id: "practice", name: "YOU", ...appearance, input: practiceInput }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
-    return { ...driver, connected: current?.connected === true, input: current?.connected ? current.input : neutral };
+    return { ...driver, character: driver.character ?? undefined, connected: current?.connected === true, input: current?.connected ? current.input : neutral };
   });
   const activePlayers = room.players.filter((player) => player.connected);
   const choosingCharacters = room.selectionPhase === "selecting" || room.selectionPhase === "countdown";
@@ -344,7 +346,7 @@ export default function Beerio() {
   };
 
   if (mode === "practice" || (mode === "host" && racing)) return <main className={styles.race}>
-    <GameView initialCountdown={mode === "host" ? 0 : 3} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
+    <GameView initialCountdown={mode === "host" ? 0 : 8} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
       onInventoryChange={mode === "host" ? (inventory: PlayerInventory[]) => { if (acceptInventory.current && room.status === "connected" && !room.recovering) room.publishState({ type: "inventory", inventory }); } : undefined}
       onFinish={(results) => { acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
       onRematch={mode === "practice" ? practice : undefined} onLobby={mode === "practice" ? exit : lobby}
@@ -364,7 +366,7 @@ export default function Beerio() {
     // arrives in welcome/resume snapshots even when a phone misses the start.
     const canDrive = room.status === "connected" && room.hostConnected && room.locked && !room.recovering && self?.inRace === true;
     const player = room.players.find((driver) => driver.id === room.playerId);
-    const canChoose = room.status === "connected" && room.hostConnected && !room.locked && !room.recovering && Boolean(player) && choosingCharacters;
+    const canChoose = room.status === "connected" && room.hostConnected && !room.locked && !room.recovering && Boolean(player) && (choosingCharacters || (room.characterSelectionVersion ?? 1) >= 3 && room.selectionPhase === "gathering");
     const ended = room.status === "closed" || room.status === "error";
     const waitingTitle = room.status === "closed" ? "Room closed." : ended && room.canRetryConnection ? "Connection paused." : ended ? "Room unavailable." : room.status !== "connected" ? "Reconnecting…" : !room.hostConnected ? "Host reconnecting…" : room.recovering ? "Waiting for drivers…" : room.locked && !player?.inRace ? "Race in progress." : phonePhase === "results" ? "Race finished!" : "You’re in!";
     const waitingDetail = ended && room.canRetryConnection ? "Try reconnecting to return to your racer." : ended ? "Leave this room to join another race." : room.status !== "connected" ? "Your controls are paused. We’ll reconnect you automatically." : !room.hostConnected ? "Keep this screen open. Controls will return when the host reconnects." : room.recovering ? "The race is paused while drivers reconnect. Controls return when the race resumes." : room.locked && !player?.inRace ? "You reconnected after the start. Join the next race." : phonePhase === "results" ? "Nice race! The host will open character selection for the next one." : "Eyes on the big screen. Once everyone has joined, the host opens character selection. No ready-up needed.";
@@ -385,6 +387,23 @@ export default function Beerio() {
     </main>;
   }
 
+  if (mode === "host" && room.code && (room.characterSelectionVersion ?? 1) >= 3) return <main className={selectionStyles.hostScreen}>
+    <header className={selectionStyles.hostHeader}><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b></div><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></header>
+    <div className={selectionStyles.hostWorkspace}>
+      <aside className={selectionStyles.hostSidebar}>
+        <div className={selectionStyles.joinDetails}><span>SCAN TO JOIN</span>{qr && <Image src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}<strong>{room.code}</strong><small>{joinUrl}</small></div>
+        <TrackPicker value={selectedTrack} onChange={chooseTrack} />
+        <button type="button" role="switch" aria-checked={steeringAssist} className={styles.assistToggle} onClick={toggleSteeringAssist}><span>STEERING ASSIST</span><strong>{steeringAssist ? "ON" : "OFF"}</strong></button>
+        <button className={styles.primary} disabled={starting || !activePlayers.length || room.players.some(player => !player.connected || !player.characterConfirmed) || room.status !== "connected" || choosingCharacters} onClick={start}>{starting ? "STARTING…" : choosingCharacters ? "RACE STARTING…" : "START RACE ↗"}</button>
+        <p className={styles.fine}>Everyone picks a character, then the host starts the race.</p>
+        {room.players.some(player => !player.connected) && <button className={styles.smallButton} disabled={room.status !== "connected"} onClick={room.skipOfflineDrivers}>CONTINUE WITHOUT DISCONNECTED DRIVERS</button>}
+        {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}
+        {room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}
+      </aside>
+      <CharacterGrid version={room.characterSelectionVersion} players={room.players} endsAt={room.status === "connected" && room.hostConnected ? room.countdownEndsAt : null} />
+    </div>
+  </main>;
+
   if (mode === "host" && room.code && choosingCharacters) return <main className={selectionStyles.hostScreen}>
     <header className={selectionStyles.hostHeader}><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b><small>{TRACKS.find(track => track.id === raceTrack)?.name}</small></div><div><button type="button" className={styles.smallButton} disabled={room.status !== "connected"} onClick={() => { selectionArmed.current = false; needsLobbyUnlock.current = true; room.setLocked(false); }}>BACK TO JOINING</button><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></div></header>
     <CharacterGrid version={room.characterSelectionVersion ?? 1} players={room.players} endsAt={room.status === "connected" && room.hostConnected ? room.countdownEndsAt : null} />
@@ -400,18 +419,19 @@ export default function Beerio() {
       {mode === "home" && <section className={styles.hero}>
         <div className={styles.eyebrow}>THE PARTY RACING GAME</div><h1>READY.<br /><em>SET.</em> RACE.</h1>
         <p>One big screen. Your phones as controllers. Up to ten friends racing for the glory.</p>
-        <div className={styles.actions}><button className={styles.primary} onClick={() => setMode("host")}>HOST A RACE <span>↗</span></button><button className={styles.secondary} onClick={() => setMode("join")}>JOIN WITH A CODE</button></div>
+        <div className={styles.actions}><button className={styles.primary} onClick={() => setMode("host")}>HOST A RACE <span>↗</span></button><button className={styles.secondary} onClick={() => { setRandomJoin(false); setMode("join"); }}>JOIN WITH A CODE</button><button className={styles.secondary} onClick={() => { setRandomJoin(true); setMode("join"); }}>JOIN A RANDOM ROOM</button></div>
         <button className={styles.textButton} onClick={() => setMode("solo")}>Set up a solo practice race →</button>
         <div className={styles.checkers} aria-hidden="true" /><div className={styles.bigStar} aria-hidden="true">✳</div>
       </section>}
       {mode === "solo" && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>SOLO PRACTICE</div><h1>Make a<br /><em>practice run.</em></h1><p>Choose your racer, ride, and track for a practice race. A keyboard is required: use the arrow keys or WASD.</p><div className={styles.practiceSetup}><AppearancePicker value={appearance} onChange={chooseAppearance} /><TrackPicker value={selectedTrack} onChange={chooseTrack} label="SOLO PRACTICE TRACK" /><button className={styles.primary} onClick={practice}>START SOLO PRACTICE ↗</button></div></section>}
-      {mode === "host" && !room.code && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>THE HOST SCREEN</div><h1>Get the gang<br /><em>together.</em></h1><p>Open this page on the laptop connected to your TV. Create a room, then have everyone join on their phones.</p><button className={styles.primary} disabled={room.status === "connecting"} onClick={() => room.createRoom({ maxPlayers: 10 })}>{room.status === "connecting" ? "CONNECTING..." : "CREATE ROOM ↗"}</button>{room.error && <p role="alert" className={styles.error}>{room.error}</p>}<p className={styles.fine}>The host screen runs the race. Players join from any network using a room code.</p></section>}
+      {mode === "host" && !room.code && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>THE HOST SCREEN</div><h1>Get the gang<br /><em>together.</em></h1><p>Open this page on the laptop connected to your TV. Create a room, then have everyone join on their phones.</p><div className={styles.assistSetting}><button type="button" role="switch" aria-checked={publicRoom} className={styles.assistToggle} disabled={room.status === "connecting"} onClick={() => setPublicRoom(!publicRoom)}><span>ALLOW RANDOM PLAYERS</span><strong>{publicRoom ? "ON" : "OFF"}</strong></button><p className={styles.fine}>When on, anyone can join this room while it is open. Players need to see the host screen to race.</p></div><button className={styles.primary} disabled={room.status === "connecting"} onClick={() => room.createRoom({ maxPlayers: 10, publicMatchmaking: publicRoom })}>{room.status === "connecting" ? "CONNECTING..." : "CREATE ROOM ↗"}</button>{room.error && <p role="alert" className={styles.error}>{room.error}</p>}<p className={styles.fine}>The host screen runs the race. Players join from any network using a room code.</p></section>}
       {mode === "host" && room.code && <section className={styles.lobby}><div className={styles.lobbyHead}><div><div className={styles.eyebrow}>THE STARTING GRID</div><h1>Join the race<span>.</span></h1><p>Everyone joins with a name and color. Then choose your characters together.</p></div><button className={styles.secondary} onClick={exit}>CLOSE ROOM</button></div>
+        {publicRoom && !room.publicMatchmaking && <p role="alert" className={styles.error}>This relay does not support random joining yet. This room is code-only.</p>}
         {room.maxPlayers < 10 && <div className={styles.capacityWarning} role="status"><strong>This older room holds only {room.maxPlayers} players.</strong><p>To race with 10, create a new room. This closes the current room and everyone will need to rejoin with the new code.</p><button type="button" className={styles.secondary} disabled={room.status !== "connected" || room.locked || starting} onClick={() => {
           if (room.players.length > 0 && !window.confirm("Create a 10-player room? This closes the current room and disconnects everyone. Players will need the new code to rejoin.")) return;
-          room.createRoom({ maxPlayers: 10, relayUrl: room.relayUrl });
+          room.createRoom({ maxPlayers: 10, ...(room.publicMatchmaking ? { publicMatchmaking: true } : {}), relayUrl: room.relayUrl });
         }}>CREATE 10-PLAYER ROOM ↗</button></div>}
-        <div className={styles.lobbyGrid}><div className={styles.joinCard}><div className={styles.codeLabel}>ROOM CODE</div><div className={styles.code}>{room.code}</div><p className={styles.url}>{joinUrl}</p>{qr && <Image className={styles.qr} src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}</div>
+        <div className={styles.lobbyGrid}><div className={styles.joinCard}><div className={styles.codeLabel}>ROOM CODE</div><p className={styles.fine}>{room.publicMatchmaking ? "OPEN TO RANDOM PLAYERS" : "CODE-ONLY ROOM"}</p><div className={styles.code}>{room.code}</div><p className={styles.url}>{joinUrl}</p>{qr && <Image className={styles.qr} src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}</div>
           <div className={styles.players}><div className={styles.playersHead}>DRIVERS <span>{activePlayers.length} / {room.maxPlayers}</span></div>
             {!choosingCharacters && <><StartingGrid players={room.players} maxPlayers={room.maxPlayers} /><TrackPicker value={selectedTrack} onChange={chooseTrack} /><div className={styles.assistSetting}><button type="button" role="switch" aria-checked={steeringAssist} className={styles.assistToggle} onClick={toggleSteeringAssist}><span>STEERING ASSIST</span><strong>{steeringAssist ? "ON" : "OFF"}</strong></button><p className={styles.fine}>{steeringAssist ? "Follows the bends. Drivers steer to pass and dodge." : "Full control. Drivers must steer through every bend."}</p></div><button className={styles.primary} disabled={starting || !activePlayers.length || room.status !== "connected"} onClick={start}>{starting ? "OPENING…" : "EVERYONE’S IN · CHOOSE CHARACTERS ↗"}</button><p className={styles.fine}>Invite everyone first, then open the character grid. No ready-up. Last character pick starts the five-second countdown.</p></>}
             {choosingCharacters && <><p className={styles.fine}>Racing on {TRACKS.find(track => track.id === raceTrack)?.name}. Use your phone joystick to choose, then SELECT.</p><button className={styles.secondary} disabled={room.status !== "connected"} onClick={() => { selectionArmed.current = false; needsLobbyUnlock.current = true; room.setLocked(false); }}>BACK TO JOINING</button></>}
@@ -419,7 +439,7 @@ export default function Beerio() {
           </div></div>
           {choosingCharacters && <CharacterGrid version={room.characterSelectionVersion ?? 1} players={room.players} endsAt={room.hostConnected ? room.countdownEndsAt : null} />}
           {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
-      {mode === "join" && !room.playerId && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>GRAB THE WHEEL</div><h1>You&apos;re<br /><em>driving.</em></h1><p>Enter the code, your name, and your color. You’ll pick your character together on the big screen.</p><form className={styles.form} onSubmit={(event) => { event.preventDefault(); if (Array.from(name.trim()).length <= 64) room.joinRoom({ code: code.trim().toUpperCase(), name: name.trim(), appearance }); }}><label>ROOM CODE<input required autoCapitalize="characters" autoCorrect="off" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABC123" /></label><label>DRIVER NAME <span>(up to 64 Unicode characters)</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" aria-invalid={Array.from(name.trim()).length > 64} aria-describedby="driver-name-help" /><small id="driver-name-help">{Array.from(name.trim()).length > 64 ? "Name is too long. Use 64 characters or fewer." : `${Array.from(name.trim()).length} / 64 characters`}</small></label><AppearancePicker value={appearance} onChange={chooseAppearance} colorOnly /><button className={styles.primary} disabled={room.status === "connecting" || !name.trim() || Array.from(name.trim()).length > 64 || !code.trim()}>{room.status === "connecting" ? "CONNECTING..." : "JOIN THE RACE ↗"}</button></form>{(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
+      {mode === "join" && !room.playerId && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>GRAB THE WHEEL</div><h1>You&apos;re<br /><em>driving.</em></h1><p>{randomJoin ? "Join an open public room. You’ll need to see the host’s screen to follow the race." : "Enter the code, your name, and your color. You’ll pick your character together on the big screen."}</p><form className={styles.form} onSubmit={(event) => { event.preventDefault(); if (Array.from(name.trim()).length <= 64) { if (randomJoin) room.joinRandomRoom({ name: name.trim(), appearance }); else room.joinRoom({ code: code.trim().toUpperCase(), name: name.trim(), appearance }); } }}>{!randomJoin && <label>ROOM CODE<input required autoCapitalize="characters" autoCorrect="off" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABC123" /></label>}<label>DRIVER NAME <span>(up to 64 Unicode characters)</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" aria-invalid={Array.from(name.trim()).length > 64} aria-describedby="driver-name-help" /><small id="driver-name-help">{Array.from(name.trim()).length > 64 ? "Name is too long. Use 64 characters or fewer." : `${Array.from(name.trim()).length} / 64 characters`}</small></label><AppearancePicker value={appearance} onChange={chooseAppearance} colorOnly /><button className={styles.primary} disabled={room.status === "connecting" || !name.trim() || Array.from(name.trim()).length > 64 || (!randomJoin && !code.trim())}>{room.status === "connecting" ? "CONNECTING..." : randomJoin ? "FIND A ROOM ↗" : "JOIN THE RACE ↗"}</button></form>{(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
     </div>
   </main>;
 }

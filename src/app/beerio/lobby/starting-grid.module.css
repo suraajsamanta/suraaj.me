@@ -12,3 +12,22 @@
 .empty { border-style: dashed; border-color: #5b556c; background: #242132; color: #8c849c; align-items: center; justify-content: center; gap: 0.35rem; box-shadow: none; }
 .empty span { font-size: 2rem; opacity: 0.6; }
 .empty strong, .empty small { font-size: 0.65rem; letter-spacing: 0.08em; }
+
+
+/* A joining roster is a compact list, not a garage of assigned racers. */
+.grid { grid-template-columns: repeat(5, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); flex: 1 1 0; min-height: 0; gap: 6px; margin: 8px 0; }
+.card { min-height: 0; border-radius: 9px; box-shadow: none; }
+.cardTop { flex: 0 0 auto; padding: 5px 6px 2px; font-size: 8px; gap: 4px; }
+.cardTop > span:first-child { font-size: 7px; }
+.status { padding: 2px 3px; font-size: 7px; }
+.art { display: none; }
+.details { display: flex; flex: 1 1 0; flex-direction: column; justify-content: center; min-height: 0; padding: 4px 6px; background: #17152275; }
+.details strong { font-size: clamp(10px, 1.3vw, 14px); line-height: 1.1; }
+.details small { margin-top: 3px; font-size: 8px; line-height: 1.15; }
+.color { margin-top: 4px; font-size: 7px; gap: 4px; }
+.color span { flex-basis: 8px; width: 8px; height: 8px; }
+.empty { gap: 3px; }
+.empty span { display: none; }
+.empty strong, .empty small { font-size: 8px; letter-spacing: .04em; }
+@media (max-height: 680px) { .details small { display: none; } .color { font-size: 6px; } }
+@media (max-width: 700px) { .grid { gap: 4px; } .card { border-radius: 6px; } .cardTop { padding: 3px; justify-content: center; } .cardTop > span:first-child { display: none; } .details { padding: 3px; } .details strong { font-size: 9px; } .details small { display: none; } .color { font-size: 0; } .color span { margin: 0 auto; } .empty strong { font-size: 7px; } .empty small { font-size: 6px; } }

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { RaceRenderer } from './renderer';
+import { PowerUpNotice } from './PowerUpNotice';
 import { useRaceAudio } from './useRaceAudio';
 import { actionSequence, itemNoticeText, racerAhead, POWER_UPS, type ItemNotice, type PowerUp } from './powerups';
 import { mergeControllerAction } from './actionMerge';
-import { createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
+import { COUNTDOWN_SECONDS, createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
 import { selectTrack, shortcutPose, TRACKS, trackPose, type TrackId } from './track';
 import { createCircuitMap, mapPoint } from './minimap';
 import styles from './game.module.css';
@@ -15,7 +16,7 @@ export type PlayerInventory = { id: string; item: PowerUp | null; feedback?: str
 export type GameViewProps = {
   players: GamePlayer[];
   laps?: number;
-  /** The room already runs its shared countdown; solo keeps its local countdown. */
+  /** Zero skips an already completed room countdown; local countdowns last at least eight seconds. */
   initialCountdown?: number;
   /** Circuit is selected in the lobby; changing it starts a fresh race. */
   trackId?: TrackId;
@@ -42,7 +43,10 @@ export type GameViewProps = {
 type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
 const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike']);
-const EMPTY_HUD: Hud = { countdown: 3, elapsed: 0, complete: false, karts: [], results: [] };
+const EMPTY_HUD: Hud = { countdown: COUNTDOWN_SECONDS, elapsed: 0, complete: false, karts: [], results: [] };
+const INTRO_NAME_HOLD_SECONDS = 3;
+const INTRO_NAME_FADE_SECONDS = 1;
+const GO_LABEL_SECONDS = 0.85;
 const KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'Space', 'ShiftLeft', 'ShiftRight']);
 
 function snapshot(race: RaceState, players: GamePlayer[]): Hud {
@@ -65,7 +69,7 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to ten chase cameras. */
-export function GameView({ players, laps = 3, initialCountdown = 3, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
+export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECONDS, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
@@ -81,10 +85,12 @@ export function GameView({ players, laps = 3, initialCountdown = 3, trackId = 's
   const selectedTrack = TRACKS.find((track) => track.id === trackId) ?? TRACKS[0];
   const circuitMap = useMemo(() => createCircuitMap(selectedTrack), [selectedTrack]);
   const roster = players.slice(0, 10);
-  const { audioRef, updateAudio, soundControls } = useRaceAudio({ paused: paused || Boolean(error) || roster.length === 0 });
+  const { audioRef, updateAudio, soundControls } = useRaceAudio({ trackId, paused: paused || Boolean(error) || roster.length === 0 });
   const rosterKey = JSON.stringify(roster.map((player) => player.id));
   const totalLaps = Number.isFinite(laps) ? Math.max(1, Math.min(9, Math.round(laps))) : 3;
-  const countdownSeconds = Number.isFinite(initialCountdown) ? Math.max(0, Math.min(5, initialCountdown)) : 3;
+  const countdownSeconds = Number.isFinite(initialCountdown)
+    ? initialCountdown <= 0 ? 0 : Math.max(COUNTDOWN_SECONDS, Math.min(30, initialCountdown))
+    : COUNTDOWN_SECONDS;
   const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : roster.length <= 6 ? 3 : 4;
   const rows = Math.max(1, Math.ceil(roster.length / columns));
   const spareCells = columns * rows - roster.length;
@@ -274,6 +280,10 @@ export function GameView({ players, laps = 3, initialCountdown = 3, trackId = 's
   }, [rosterKey, totalLaps, countdownSeconds, trackId, raceKey, restart, audioRef, updateAudio]);
 
   const gridStyle = { '--game-columns': columns, '--game-rows': rows } as CSSProperties;
+  // The host joins this view at GO after the shared lobby countdown, so hold
+  // its names as long as solo names. Simulation time keeps the intro paused
+  // during disconnects and hidden tabs rather than spending its readable time.
+  const introNameOpacity = hud.countdown > 0 ? 1 : Math.max(0, Math.min(1, 1 - (hud.elapsed - INTRO_NAME_HOLD_SECONDS) / INTRO_NAME_FADE_SECONDS));
   return (
     <div className={styles.game} style={gridStyle} aria-label={`${selectedTrack.name}, ${roster.length} racers, ${totalLaps} laps`}>
       <canvas className={styles.canvas} ref={canvasRef} aria-label="3D split-screen race with a behind-the-kart camera for each player" />
@@ -317,20 +327,17 @@ export function GameView({ players, laps = 3, initialCountdown = 3, trackId = 's
                 </div>
               </div>
               <div className={styles.raceCenter}>
-                {!error && (hud.countdown > 0 || hud.elapsed < 0.85) && <div className={`${styles.countdown} ${hud.countdown === 0 ? styles.go : ''}`}>
-                  <div className={styles.countdownIdentity} style={{ opacity: hud.countdown > 0 ? 1 : Math.max(0, 1 - hud.elapsed / 0.65) }} aria-label={`Player ${index + 1}: ${player.name}`}>
+                {!error && (hud.countdown > 0 || hud.elapsed < INTRO_NAME_HOLD_SECONDS + INTRO_NAME_FADE_SECONDS) && <div className={`${styles.countdown} ${hud.countdown === 0 ? styles.go : ''}`}>
+                  <div className={styles.countdownIdentity} style={{ opacity: introNameOpacity }} aria-label={`Player ${index + 1}: ${player.name}`}>
                     <span className={styles.countdownPlayer}>PLAYER {index + 1}</span>
                     <strong className={styles.countdownName} style={{ '--name-size': player.name.length > 32 ? '3.5cqw' : player.name.length > 20 ? '6cqw' : '9cqw' } as CSSProperties}>{player.name}</strong>
                   </div>
-                  <strong className={styles.countdownNumber}>{hud.countdown > 0 ? Math.ceil(hud.countdown) : 'GO!'}</strong>
+                  {(hud.countdown > 0 || hud.elapsed < GO_LABEL_SECONDS) && <strong className={styles.countdownNumber}>{hud.countdown > 0 ? Math.ceil(hud.countdown) : 'GO!'}</strong>}
                   {hud.countdown > 0 && <span className={styles.countdownPrompt}>GET READY</span>}
                 </div>}
                 {kart?.leaderWarning && <div className={styles.warning} role="status">CROWN COMET INCOMING!</div>}
                 {kart?.hitLabel && <div className={styles.hitNotice}>{kart.hitLabel}</div>}
-                {kart?.notice && !kart.finished && <div key={`${kart.notice.kind}:${kart.noticeKey}`} className={styles.itemNotice} style={{ '--item-color': POWER_UPS[kart.notice.item].color } as CSSProperties} role="status" aria-atomic="true">
-                  <span className={styles.noticeIcon} aria-hidden="true">{POWER_UPS[kart.notice.item].icon}</span>
-                  <span><small>{kart.notice.kind === 'activate' ? 'POWER-UP ACTIVATED!' : kart.notice.kind === 'pickup' ? 'POWER-UP COLLECTED!' : 'ITEM ALREADY HELD'}</small><strong>{POWER_UPS[kart.notice.item].name}</strong><em>{kart.notice.kind === 'activate' ? 'Let’s go!' : index === 0 && localKeyboard ? 'Press E to use' : 'Double-tap GO to use'}</em></span>
-                </div>}
+                {kart?.notice && !kart.finished && <PowerUpNotice key={`${kart.notice.kind}:${kart.noticeKey}`} item={kart.notice.item} kind={kart.notice.kind} keyboard={index === 0 && localKeyboard} playerName={player.name} paused={paused} />}
                 {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
               </div>
               <div className={styles.bottomHud}>

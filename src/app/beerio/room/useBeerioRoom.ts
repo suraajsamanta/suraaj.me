@@ -32,6 +32,7 @@ export function useBeerioRoom({ autoResume = true }: { autoResume?: boolean } = 
     ...snapshot,
     createRoom: client.createRoom,
     joinRoom: client.joinRoom,
+    joinRandomRoom: client.joinRandomRoom,
     setInput: client.setInput,
     useItem: client.useItem,
     resetInput: client.resetInput,

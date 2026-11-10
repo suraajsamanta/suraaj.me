@@ -64,7 +64,7 @@ async function fixture(t, initialProps = {}) {
       }
     },
   };
-  const jsx = (type, props) => ({ type, props });
+  const jsx = (type, props) => typeof type === 'function' ? type(props) : ({ type, props });
   const renderers = [], mixes = [], finishes = [];
   const context = { ...eventTarget(), state: 'running' };
   class RecordingRenderer {
@@ -80,7 +80,8 @@ async function fixture(t, initialProps = {}) {
     disposed = false;
     updates = [];
     pauses = [];
-    constructor() { mixes.push(this); }
+    constructor(_context, options) { this.trackId = options.trackId; mixes.push(this); }
+    setTrack(value) { this.trackId = value; }
     setPaused(value) { this.paused = value; this.pauses.push(value); }
     setMuted(value) { this.muted = value; }
     update(race) { this.updates.push(race); }
@@ -106,7 +107,7 @@ async function fixture(t, initialProps = {}) {
         unlockRaceAudio: () => Promise.resolve(context.state === 'running'),
       };
       assert.ok(name.startsWith('.'), `Unexpected dependency ${name}`);
-      const extension = name === './useRaceAudio' ? '.tsx' : '.ts';
+      const extension = ['./useRaceAudio', './PowerUpNotice'].includes(name) ? '.tsx' : '.ts';
       return load(resolve(dirname(file), name + extension));
     }, compiledModule, compiledModule.exports);
     cache.set(file, compiledModule.exports);
@@ -591,21 +592,55 @@ test('map highlights the next eligible racer in absolute progress, across laps a
   assert.equal(f.renderers.length, 1, 'Controller reconnect must not reset the race');
 });
 
-test('large full names persist through countdown, fade at GO, and return on a fresh race', async t => {
+test('large full names stay fully visible through countdown and three seconds after GO, then fade for one second', async t => {
   const players = Array.from({ length: 10 }, (_, i) => ({ ...player(), id: `intro-${i}`, name: i % 2 ? `UnbrokenLongPlayerName${i + 1}` : 'W'.repeat(64) }));
   const f = await fixture(t, { players }); await f.frame(100);
   const names = () => findNodes(f.tree(), node => node.props?.className === 'countdownName');
   const identities = () => findNodes(f.tree(), node => node.props?.className === 'countdownIdentity');
+  const numbers = () => findNodes(f.tree(), node => node.props?.className === 'countdownNumber');
+  assert.equal(f.race().countdown, 8);
+  assert.ok(numbers().every(node => node.props.children === 8));
   assert.deepEqual(names().map(node => node.props.children), players.map(p => p.name));
   assert.equal(names()[0].props.style['--name-size'], '3.5cqw', 'Very long wide names get a compact fitting size');
   f.race().countdown = 1; await f.frame(200);
   assert.equal(names().length, 10); assert.ok(identities().every(node => node.props.style.opacity === 1));
   f.race().countdown = 0; f.race().elapsed = .2; await f.frame(300);
-  assert.ok(identities().every(node => node.props.style.opacity > 0 && node.props.style.opacity < 1));
+  assert.ok(identities().every(node => node.props.style.opacity === 1));
+  assert.ok(numbers().every(node => node.props.children === 'GO!'));
   f.race().elapsed = 1; await f.frame(400);
+  assert.equal(names().length, 10, 'Names remain readable well beyond the old sub-second intro');
+  assert.ok(identities().every(node => node.props.style.opacity === 1));
+  assert.equal(numbers().length, 0, 'The GO label clears while names remain visible');
+  f.race().elapsed = 2.8; await f.frame(500);
+  assert.ok(identities().every(node => node.props.style.opacity === 1));
+  f.race().elapsed = 3.2; await f.frame(600);
+  assert.equal(names().length, 10);
+  assert.ok(identities().every(node => node.props.style.opacity > 0 && node.props.style.opacity < 1));
+  f.race().elapsed = 4; await f.frame(700);
   assert.equal(names().length, 0, 'No big name overlays remain during the race');
-  await f.setProps({ raceKey: 'rematch' }); await f.frame(500);
+  await f.setProps({ raceKey: 'rematch' }); await f.frame(800);
   assert.equal(names().length, 10); assert.ok(identities().every(node => node.props.style.opacity === 1));
+});
+
+test('host names get the same four-second intro without an extra countdown and pause without fading away', async t => {
+  const f = await fixture(t, { initialCountdown: 0 }); await f.frame(100);
+  const identities = () => findNodes(f.tree(), node => node.props?.className === 'countdownIdentity');
+  assert.equal(f.race().countdown, 0);
+  assert.equal(identities().length, 1);
+  assert.equal(identities()[0].props.style.opacity, 1);
+  f.race().elapsed = 2.5; await f.frame(200);
+  await f.setProps({ paused: true });
+  for (const now of [1000, 60000, 600000]) await f.frame(now);
+  assert.equal(identities()[0].props.style.opacity, 1, 'Paused time does not consume readable name time');
+  await f.setProps({ paused: false }); await f.frame(900000);
+  assert.equal(identities()[0].props.style.opacity, 1);
+  f.race().elapsed = 3.5; await f.frame(900100);
+  assert.ok(identities()[0].props.style.opacity > 0 && identities()[0].props.style.opacity < 1);
+  f.race().elapsed = 4; await f.frame(900200);
+  assert.equal(identities().length, 0);
+  await f.setProps({ raceKey: 'host-rematch' }); await f.frame(900300);
+  assert.equal(f.renderers.at(-1).race.countdown, 0);
+  assert.equal(identities()[0].props.style.opacity, 1, 'A host rematch restores the full name intro');
 });
 
 test('purple blot covers significantly more area without obscuring the HUD layer', () => {
@@ -668,16 +703,22 @@ test('pickup and activation notices publish to phones even after the item was co
   assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: null }]);
 });
 
-test('host can skip an already completed room countdown while solo retains its countdown', async t => {
+test('host skips its completed room countdown while all local countdowns allow at least eight seconds', async t => {
   const f = await fixture(t, { initialCountdown: 0 });
   await f.frame(100);
   assert.equal(f.race().countdown, 0);
-  await f.setProps({ raceKey: 'solo', initialCountdown: 3 });
+  await f.setProps({ raceKey: 'solo', initialCountdown: 8 });
   await f.frame(200);
-  assert.equal(f.renderers.at(-1).race.countdown, 3);
-  await f.setProps({ raceKey: 'invalid', initialCountdown: Number.NaN });
-  await f.frame(300);
-  assert.equal(f.renderers.at(-1).race.countdown, 3);
+  assert.equal(f.renderers.at(-1).race.countdown, 8);
+  let now = 200;
+  for (const initialCountdown of [3, Number.NaN, Infinity]) {
+    await f.setProps({ raceKey: `fallback-${now}`, initialCountdown });
+    await f.frame(now += 100);
+    assert.equal(f.renderers.at(-1).race.countdown, 8);
+  }
+  await f.setProps({ raceKey: 'longer-countdown', initialCountdown: 10 });
+  await f.frame(now += 100);
+  assert.equal(f.renderers.at(-1).race.countdown, 10, 'A longer requested countdown must not be cut to the old five-second maximum');
 });
 
 test('each racer gets a bounded item confirmation with the correct item and accessible status', async t => {
@@ -685,12 +726,54 @@ test('each racer gets a bounded item confirmation with the correct item and acce
   await f.frame(100); const race = f.race(); race.countdown = 0; race.elapsed = 10;
   race.karts[0].power.notice = { kind: 'activate', item: 'fizz', remaining: 2 };
   await f.frame(200);
-  const notices = () => findNodes(f.tree(), node => node.props?.className === 'itemNotice');
+  const notices = () => findNodes(f.tree(), node => node.props?.className === 'notice');
   const text = node => typeof node === 'string' ? node : Array.isArray(node) ? node.map(text).join(' ') : text(node?.props?.children ?? []);
   assert.equal(notices().length, 1); assert.equal(notices()[0].props.role, 'status');
-  assert.match(text(notices()[0]), /POWER-UP ACTIVATED!/); assert.match(text(notices()[0]), /Fizz Boost/);
+  assert.match(text(notices()[0]), /POWER-UP ACTIVATED/); assert.match(text(notices()[0]), /Fizz Boost/);
   race.karts[0].power.notice = null; await f.frame(300);
   assert.equal(notices().length, 0, 'Expired notices do not hang over the driving view');
   race.karts[0].power.notice = { kind: 'pickup', item: 'guard', remaining: 2 }; await f.frame(400);
-  assert.match(text(notices()[0]), /POWER-UP COLLECTED!/); assert.match(text(notices()[0]), /Double-tap GO to use/);
+  assert.match(text(notices()[0]), /POWER-UP COLLECTED/); assert.match(text(notices()[0]), /Double-tap GO to use/);
+});
+
+test('ten popup vignettes stay scoped to their racer and follow host pause, expiry and finish', async t => {
+  const items = ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'jet', 'twerk'];
+  const players = items.map((_, i) => ({ ...player(), id: `p${i}`, name: `Driver ${i}` }));
+  const f = await fixture(t, { players, initialCountdown: 0 });
+  await f.frame(100);
+  f.race().elapsed = 5;
+  f.race().karts.forEach((kart, i) => { kart.power.notice = { kind: 'pickup', item: items[i], remaining: 2 }; });
+  await f.frame(200);
+  const notices = () => findNodes(f.tree(), node => node.props?.className === 'notice');
+  assert.equal(notices().length, 10);
+  findNodes(f.tree(), node => node.type === 'section').forEach((section, i) => {
+    const [notice] = findNodes(section, node => node.props?.className === 'notice');
+    assert.equal(notice.props['data-item'], items[i]);
+    assert.equal(findNodes(notice, node => node.type === 'svg').length, 1);
+    const prompt = findNodes(notice, node => node.props?.className === 'prompt')[0].props.children[0];
+    assert.equal(prompt, i === 0 ? 'Press E to use' : 'Double-tap GO to use');
+  });
+  await f.setProps({ paused: true });
+  assert.ok(notices().every(node => node.props['data-paused'] === true));
+  await f.frame(100000);
+  assert.equal(notices().length, 10, 'Pause retains current notices instead of spending their lifetime');
+  await f.setProps({ paused: false });
+  await f.frame(200000);
+  assert.ok(notices().every(node => node.props['data-paused'] === undefined));
+  f.race().karts[0].finishTime = 5;
+  f.race().karts[1].power.notice = null;
+  await f.frame(200100);
+  assert.equal(notices().length, 8, 'Finished and expired notices leave no overlays');
+});
+
+test('the selected course reaches the sound graph on first race, course change and rematch', async t => {
+  const f = await fixture(t, { trackId: 'space' }); await f.frame(100);
+  assert.equal(f.mixes.length, 1);
+  assert.equal(f.mixes[0].trackId, 'space');
+  await f.setProps({ trackId: 'foundry' }); await f.frame(200);
+  assert.equal(f.mixes.length, 1, 'Course change reuses the existing audio graph');
+  assert.equal(f.mixes[0].trackId, 'foundry');
+  await f.setProps({ raceKey: 'foundry-rematch' }); await f.frame(300);
+  assert.equal(f.mixes.length, 1);
+  assert.equal(f.mixes[0].trackId, 'foundry');
 });

@@ -95,10 +95,12 @@ async function fixture(t, count = 1) {
   const startRace = async () => {
     host.beginCharacterSelection();
     await until(() => phones.every(phone => phone.getSnapshot().selectionPhase === 'selecting'), 'character selection open on every phone');
+    phones.forEach(phone => phone.chooseCharacter({ direction: 'right' }));
+    await until(() => phones.every(phone => phone.getSnapshot().players.find(p => p.id === phone.getSnapshot().playerId)?.characterCursor === 'gorilla'), 'every phone browses a character');
     phones.forEach(phone => phone.chooseCharacter({ confirm: true }));
     await until(() => host.getSnapshot().selectionPhase === 'countdown', 'every character selected');
-    assert.equal(host.getSnapshot().locked, false, 'Driving remains locked out during the five-second countdown');
-    clockOffset += 5001; relay.rooms.sweep();
+    assert.equal(host.getSnapshot().locked, false, 'Driving remains locked out during the eight-second countdown');
+    clockOffset += 8001; relay.rooms.sweep();
     await until(() => host.getSnapshot().locked && phones.every(phone => phone.getSnapshot().locked), 'race started on every phone');
   };
   await startRace();

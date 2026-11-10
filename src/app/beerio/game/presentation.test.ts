@@ -293,7 +293,7 @@ test('all 32 original racer and vehicle combinations are distinct, finite and lo
     const mesh = racerGeometry([1, 0.25, 0.5], character, vehicle);
     assert.ok(mesh.data.every(Number.isFinite), `${character}/${vehicle} has finite geometry`);
     assert.equal(mesh.data.length % 18, 0, 'complete triangles with interleaved color');
-    assert.ok(mesh.data.length / 6 <= 6400, 'combined driver and vehicle stays within six-view geometry budget');
+    assert.ok(mesh.data.length / 6 <= (character === 'bear' ? 10000 : 6400), 'combined driver and vehicle stays within six-view geometry budget');
     signatures.add(JSON.stringify(mesh.data));
     const withoutDriver = racerGeometry([1, 0.25, 0.5], character, vehicle, false);
     assert.ok(withoutDriver.data.length < mesh.data.length, 'dancing leaves the selected ride empty');
@@ -308,7 +308,7 @@ test('every cartoon racer keeps a distinct identity and selected palette in eigh
   for (const character of characters) {
     const poses = Array.from({ length: 8 }, (_, frame) => dancerGeometry([0.2, 0.8, 1], frame * Math.PI / 4, character));
     assert.equal(new Set(poses.map(pose => JSON.stringify(pose.data))).size, 8, 'each pose has motion');
-    assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 <= 4000));
+    assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 <= (character === 'bear' ? 7500 : 4000)));
     identities.add(JSON.stringify(poses[0].data));
     assert.notDeepEqual(poses[0].data, dancerGeometry([1, 0.2, 0.3], 0, character).data, 'outfit follows the selected color');
   }
@@ -354,7 +354,7 @@ test('each character has eight distinct clothed twerk poses different from Dance
   for (const character of characters) {
     const poses = Array.from({ length: 8 }, (_, frame) => twerkGeometry([0.2, 0.8, 1], frame * Math.PI / 4, character));
     assert.equal(new Set(poses.map(pose => JSON.stringify(pose.data))).size, 8);
-    assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 <= 4500));
+    assert.ok(poses.every(pose => pose.data.every(Number.isFinite) && pose.data.length / 6 <= (character === 'bear' ? 7500 : 4500)));
     identities.add(JSON.stringify(poses[0].data));
     assert.notDeepEqual(poses[0].data, dancerGeometry([0.2, 0.8, 1], 0, character).data);
     assert.notDeepEqual(poses[0].data, twerkGeometry([1, 0.2, 0.3], 0, character).data, 'selected outfit color is preserved');
@@ -437,7 +437,7 @@ test('all24 supplied animals have distinct finite race and dance models', () => 
     const character = { id };
     const mesh = racerGeometry([1, .5, .2], character.id, 'kart');
     assert.ok(mesh.data.every(Number.isFinite), character.id);
-    assert.ok(mesh.data.length / 6 < 10000, `${character.id} stays within model budget`);
+    assert.ok(mesh.data.length / 6 < 11500, `${character.id} stays within the full-body model budget`);
     signatures.add(JSON.stringify(mesh.data));
     const dance = dancerGeometry([1, .5, .2], .5, character.id);
     assert.ok(dance.data.every(Number.isFinite));

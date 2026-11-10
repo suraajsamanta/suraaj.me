@@ -3,13 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { getRaceAudioContext, RaceAudio, unlockRaceAudio, type MusicStatus } from './audio';
 import type { RaceState } from './simulation';
+import type { TrackId } from './track';
+import { raceScore } from './audioTracks';
 import styles from './audio.module.css';
 
 type SoundStatus = 'locked' | 'on' | 'off' | 'suspended' | 'unavailable';
 /** Context creation is primed by Start/Practice clicks; gestures can resume it.
  * One graph survives pauses/rematches, but never an unmounted host screen.
  */
-export function useRaceAudio({ paused = false }: { paused?: boolean } = {}) {
+export function useRaceAudio({ paused = false, trackId = 'sunset' }: { paused?: boolean; trackId?: TrackId } = {}) {
+  const trackRef = useRef(trackId);
   const pausedRef = useRef(paused);
   const audioRef = useRef<RaceAudio | null>(null);
   const mutedRef = useRef(false);
@@ -55,6 +58,7 @@ export function useRaceAudio({ paused = false }: { paused?: boolean } = {}) {
       }
       try {
         if (!audioRef.current) audioRef.current = new RaceAudio(context, {
+          trackId: trackRef.current,
           onMusicStatus: status => { if (mountedRef.current && generation === generationRef.current) setMusic(status); },
         });
         audioRef.current.setMuted(mutedRef.current);
@@ -70,6 +74,10 @@ export function useRaceAudio({ paused = false }: { paused?: boolean } = {}) {
     return promise;
   }, [bindContext]);
   useEffect(() => { activationRef.current = activate; return () => { activationRef.current = null; }; }, [activate]);
+  useEffect(() => {
+    trackRef.current = trackId;
+    audioRef.current?.setTrack(trackId);
+  }, [trackId]);
   useEffect(() => {
     pausedRef.current = paused;
     audioRef.current?.setPaused(paused || document.hidden || contextRef.current?.state !== 'running');
@@ -128,7 +136,7 @@ export function useRaceAudio({ paused = false }: { paused?: boolean } = {}) {
   const soundControls = <div className={styles.controls}>
     <button type="button" className={styles.sound} onClick={() => void toggle()} aria-pressed={enabled}
       aria-label={enabled ? 'Mute race music and sound effects' : 'Enable race music and sound effects'}
-      title={sound === 'unavailable' ? 'Sound is unavailable in this browser. Tap to retry.' : sound === 'suspended' ? 'Your browser paused audio. Tap to resume.' : 'Original music, soft engine, and arcade sound effects'}>
+      title={sound === 'unavailable' ? 'Sound is unavailable in this browser. Tap to retry.' : sound === 'suspended' ? 'Your browser paused audio. Tap to resume.' : `${raceScore(trackId).title}: ${raceScore(trackId).character}. Original score and arcade effects.`}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M11 4 5 9H2v6h3l6 5V4Z" />{enabled ? <path d="M15 8a6 6 0 0 1 0 8M18 4a11 11 0 0 1 0 16" /> : <path d="m16 9 6 6m0-6-6 6" />}</svg>
       <span>{label}</span>
     </button>
