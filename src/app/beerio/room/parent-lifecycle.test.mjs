@@ -70,7 +70,7 @@ async function fixture(t, host = true) {
     if (name === './lobby/CharacterSelection') return { CharacterGrid: 'CharacterGrid', CharacterController: 'CharacterController' };
     if (name === './lobby/StartingGrid') return { default: 'StartingGrid' };
     if (name === './game/GameView') return { default: 'GameView' };
-    if (name === './game/powerups') return { POWER_UPS: { fizz: { name: 'Fizz Boost' }, dance: { name: 'Dance Break' } } };
+    if (name === './game/powerups') return { POWER_UPS: { fizz: { name: 'Fizz Boost' }, dance: { name: 'Dance Break' }, diddy: { name: 'Diddy Mode' } } };
     if (name === './game/audio') return { unlockRaceAudio: () => Promise.resolve() };
     if (name === './game/track') return { TRACKS: ['sunset', 'canyon', 'brewery'].map(id => ({ id, name: id, description: id })) };
     if (name === './room/useBeerioRoom') return { useBeerioRoom: () => room };
@@ -376,6 +376,10 @@ test('phone shows only its own valid item and clears stale inventory at boundari
   assert.equal(controller().item, undefined);
   f.emit({ type: 'inventory', inventory: [{ id: 'b', item: 'dance' }, { id: 'a', item: 'fizz' }] });
   tree = await f.render(); assert.equal(controller().item, 'fizz');
+  f.emit({ type: 'inventory', inventory: [{ id: 'a', item: 'diddy', feedback: 'Diddy Mode collected!' }] });
+  tree = await f.render(); assert.equal(controller().item, 'diddy'); assert.equal(controller().itemFeedback, 'Diddy Mode collected!');
+  f.emit({ type: 'inventory', inventory: [{ id: 'a', item: null, feedback: 'Diddy Mode activated!' }] });
+  tree = await f.render(); assert.equal(controller().item, null); assert.equal(controller().itemFeedback, 'Diddy Mode activated!');
   f.emit({ type: 'inventory', inventory: [{ id: 'a', item: null }] });
   tree = await f.render(); assert.equal(controller().item, null);
   f.emit({ type: 'inventory', inventory: [{ id: 'a', item: 'not-a-real-item' }] });
@@ -398,7 +402,7 @@ test('phone reports only its own valid no-target feedback and clears it at inven
     f.emit({ type: 'inventory', inventory: [{ id: 'b', item: 'dance', feedback: 'No racer behind' }, { id: 'a', item, feedback: label }] });
     tree = await f.render();
   };
-  for (const label of ['No racer ahead', 'No racer behind', 'No rivals to strike']) {
+  for (const label of ['No racer ahead', 'No racer behind', 'No rivals to strike', 'No rivals to oil', 'Wait until back on track']) {
     await feedback(label);
     assert.equal(controller().item, 'dance', 'An unavailable target does not consume the held item');
     assert.equal(controller().itemFeedback, label);

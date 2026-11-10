@@ -21,7 +21,7 @@ function minimumRadius(points: TrackPoint[]) {
 
 test('Foundry is a longer, technically varied original course with safe geometry and a smooth start seam', () => {
   selectTrack('foundry');
-  assert.equal(TRACKS.length, 6);
+  assert.equal(TRACKS.length, 7);
   assert.equal(FOUNDRY_COURSE.controlPoints.length, 35);
   assert.equal(FOUNDRY_COURSE.elevations?.length, 35);
   assert.ok(TRACK_LENGTH > 2200 && TRACK_LENGTH < 2300);
@@ -51,7 +51,7 @@ test('Foundry is a longer, technically varied original course with safe geometry
   const before = trackPose(TRACK_LENGTH - .001), after = trackPose(.001);
   assert.ok(Math.hypot(...before.position.map((v, i) => v-after.position[i])) < .003);
   assert.ok(Math.abs(headingDelta(before.yaw, after.yaw)) < .06);
-  assert.deepEqual(TRACKS.filter(t => t.id !== 'foundry').map(t=>t.id), ['sunset','canyon','brewery','seattle','space']);
+  assert.deepEqual(TRACKS.filter(t => t.id !== 'foundry').map(t=>t.id), ['sunset','canyon','brewery','seattle','space','rainbow']);
 });
 
 test('maintenance bypass saves distance, has drivable bends, and never crosses another road', () => {

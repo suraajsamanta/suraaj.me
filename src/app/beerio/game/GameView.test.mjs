@@ -589,6 +589,9 @@ test('map highlights the next eligible racer in absolute progress, across laps a
   await f.setProps({ players }); await f.frame(400);
   highlighted = findNodes(firstSection(), node => node.type === 'g' && node.props?.['data-ahead']);
   assert.equal(highlighted[0].props['data-racer-id'], 'racer-2');
+  race.karts[2].respawnGrace = 1; await f.frame(500);
+  highlighted = findNodes(firstSection(), node => node.type === 'g' && node.props?.['data-ahead']);
+  assert.equal(highlighted[0].props['data-racer-id'], 'racer-4', 'Recovering racers are not eligible attack targets');
   assert.equal(f.renderers.length, 1, 'Controller reconnect must not reset the race');
 });
 
@@ -776,4 +779,49 @@ test('the selected course reaches the sound graph on first race, course change a
   await f.setProps({ raceKey: 'foundry-rematch' }); await f.frame(300);
   assert.equal(f.mixes.length, 1);
   assert.equal(f.mixes[0].trackId, 'foundry');
+});
+
+test('Diddy Mode covers only rival cameras and leaves HUD/maps outside its visual layer', async t => {
+  const players = Array.from({ length: 10 }, (_, i) => ({ ...player(), id: `oil-${i}`, name: `Oil racer ${i}` }));
+  const f = await fixture(t, { players, localKeyboard: false, initialCountdown: 0 });
+  await f.frame(100); const race = f.race(); race.elapsed = 10;
+  race.powers.boxes = [];
+  race.karts[0].power.item = 'diddy';
+  await f.setProps({ players: players.map((p, i) => ({ ...p, input: { ...p.input, action: i === 0 ? 1 : 0 } })) });
+  await f.frame(200);
+  const sections = () => findNodes(f.tree(), node => node.type === 'section');
+  const oils = section => findNodes(section, node => node.props?.['aria-label'] === 'Baby oil obscuring this view');
+  assert.equal(oils(sections()[0]).length, 0);
+  for (const section of sections().slice(1)) {
+    assert.equal(oils(section).length, 1);
+    assert.equal(oils(section)[0].props.style.opacity, 1);
+    assert.equal(findNodes(oils(section)[0], node => node.type === 'i').length, 5, 'Only five streak elements per camera');
+    assert.equal(findNodes(oils(section)[0], node => ['hudHeader', 'bottomHud', 'miniMap'].includes(node.props?.className)).length, 0);
+    assert.equal(findNodes(section, node => node.props?.className === 'miniMap').length, 1);
+    assert.equal(findNodes(section, node => node.props?.className === 'bottomHud').length, 1);
+  }
+  await f.setProps({ paused: true }); await f.frame(300);
+  const before = race.karts[1].power.oil;
+  assert.equal(oils(sections()[1])[0].props['data-paused'], true);
+  await f.frame(10000);
+  assert.equal(race.karts[1].power.oil, before, 'Pause cannot spend the oil timer');
+  await f.setProps({ paused: false }); await f.frame(10100);
+  race.karts[1].power.oil = .3; await f.frame(10200);
+  assert.ok(oils(sections()[1])[0].props.style.opacity < .5, 'Simulation time drives the final fade');
+  race.karts[1].finishTime = race.elapsed; await f.frame(10300);
+  assert.equal(oils(sections()[1]).length, 0, 'Finishing removes obscuration');
+  for (const kart of race.karts) kart.power.oil = 0;
+  await f.frame(10400);
+  assert.equal(findNodes(f.tree(), node => node.props?.className === 'oil').length, 0);
+  await f.setProps({ raceKey: 'rematch' }); await f.frame(10500);
+  assert.ok(f.race().karts.every(kart => kart.power.oil === 0));
+});
+
+test('baby oil is translucent, viewport-clipped, below readable HUD, and reduced-motion safe', () => {
+  const css = readFileSync(resolve(directory, 'game.module.css'), 'utf8');
+  assert.match(css, /\.oil\s*\{[^}]*z-index:\s*0;[^}]*overflow:\s*hidden;[^}]*pointer-events:\s*none/);
+  assert.doesNotMatch(css.match(/\.oil[^}]*}/g).join(' '), /(?:backdrop-)?filter:/, 'Oil never filters the ten-camera WebGL canvas');
+  for (const selector of ['hudHeader', 'bottomHud', 'raceCenter']) assert.match(css, new RegExp(`\\.${selector}\\s*\\{[^}]*z-index:\\s*1`));
+  assert.match(css, /\.oil\[data-paused\] i\s*\{[^}]*animation-play-state:\s*paused/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce[^}]*\.oil i[^}]*animation:\s*none/);
 });

@@ -1,7 +1,7 @@
 import { ACTIVE_SHORTCUT, circularDistance, clamp, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, TRACK_LENGTH, wrap } from './track';
 
 /** Original party-racing items. Only the host mutates these states. */
-export type PowerUp = 'fizz' | 'guard' | 'slick' | 'bolt' | 'dance' | 'flask' | 'prism' | 'splat' | 'jet' | 'crown' | 'lightning' | 'twerk';
+export type PowerUp = 'fizz' | 'guard' | 'slick' | 'bolt' | 'dance' | 'flask' | 'prism' | 'splat' | 'jet' | 'crown' | 'lightning' | 'twerk' | 'diddy';
 export const POWER_UPS: Record<PowerUp, { name: string; icon: string; color: string; description: string }> = {
   fizz: { name: 'Fizz Boost', icon: '↗', color: '#ffd364', description: 'A sparkling burst of speed. Clears a sticky slowdown.' },
   guard: { name: 'Foam Guard', icon: '◈', color: '#69eddd', description: 'A foamy shield that blocks the next item or obstacle hit.' },
@@ -14,6 +14,7 @@ export const POWER_UPS: Record<PowerUp, { name: string; icon: string; color: str
   jet: { name: 'Jet Keg', icon: '➤', color: '#ff835d', description: 'A rear-pack rescue: protected automatic driving for up to five seconds. BRAKE cancels.' },
   crown: { name: 'Crown Comet', icon: '♜', color: '#7ebdff', description: 'Warn the leader, then send a comet after them. A guard can block it.' },
   lightning: { name: 'Storm Spark', icon: 'ϟ', color: '#a8dfff', description: 'Strike every other racer with lightning and slow them for 2.5 seconds. Guards and protection block it.' },
+  diddy: { name: 'Diddy Mode', icon: '💧', color: '#ffe4a0', description: 'Splash every rival’s view with glossy baby oil for four seconds. Guards and protection block it.' },
   twerk: { name: 'Twerk Trap', icon: '♫', color: '#f7a7d8', description: 'Make the racer immediately behind in race order hop out and twerk. A guard can block it.' },
 };
 export type ItemNotice = { kind: 'pickup' | 'activate' | 'full'; item: PowerUp; remaining: number };
@@ -37,6 +38,8 @@ export type KartPowerState = {
   flaskCooldown: number;
   prism: number;
   splatter: number;
+  /** Host-owned visibility effect. Never changes driving inputs or covers the HUD. */
+  oil: number;
   jet: number;
   leaderWarning: number;
   /** Short feedback shown only while flash is positive. */
@@ -59,6 +62,7 @@ export type PowerWorld = { boxes: ItemBox[]; hazards: PowerHazard[]; projectiles
 
 type PowerKart = {
   id: string; distance: number; lane: number; speed: number; onShortcut?: boolean;
+  fall?: { elapsed: number } | null; respawnGrace?: number;
   boost: number; bump: number; finishTime: number | null; power: KartPowerState;
 };
 type PowerRace = { karts: PowerKart[]; powers: PowerWorld; countdown?: number; complete?: boolean; laps?: number };
@@ -76,6 +80,7 @@ export const FLASK_PULSE_SECONDS = 1;
 export const FLASK_COOLDOWN_SECONDS = 0.35;
 export const PRISM_SECONDS = 6;
 export const SPLATTER_SECONDS = 3.5;
+export const OIL_SECONDS = 4;
 export const JET_SECONDS = 5;
 export const JET_MAX_SPEED = 64;
 export const CROWN_WARNING_SECONDS = 1.25;
@@ -88,7 +93,7 @@ export function actionSequence(value: unknown): number {
 export function createPowerState(initialAction = 0): KartPowerState {
   return {
     notice: null, item: null, shield: 0, slow: 0, flash: 0, hitCooldown: 0, dance: 0, danceStyle: 'dance', lightning: 0, lightningStrikes: 0,
-    flask: 0, flaskCooldown: 0, prism: 0, splatter: 0, jet: 0, leaderWarning: 0, hitLabel: '',
+    flask: 0, flaskCooldown: 0, prism: 0, splatter: 0, oil: 0, jet: 0, leaderWarning: 0, hitLabel: '',
     lastAction: actionSequence(initialAction), collected: 0, used: 0,
   };
 }
@@ -131,8 +136,10 @@ export function absorbPowerHit(kart: PowerKart): boolean {
   kart.power.hitCooldown = 0.65;
   return true;
 }
+export const canInteract = (kart: Pick<PowerKart, 'fall' | 'respawnGrace'>) => !kart.fall && !(kart.respawnGrace && kart.respawnGrace > 0);
+
 function hit(kart: PowerKart, strength: number, label: string): void {
-  if (kart.finishTime !== null || kart.power.hitCooldown > 0 || absorbPowerHit(kart)) return;
+  if (!canInteract(kart) || kart.finishTime !== null || kart.power.hitCooldown > 0 || absorbPowerHit(kart)) return;
   kart.speed *= strength;
   kart.boost = 0;
   kart.bump = Math.max(kart.bump, 0.35);
@@ -159,7 +166,7 @@ export function racerBehind<T extends RankedKart>(kart: T, karts: T[], activeIds
   return adjacentRacer(kart, karts, 1, activeIds);
 }
 function forceDance(target: PowerKart, style: 'dance' | 'twerk'): void {
-  if (target.power.hitCooldown > 0 || absorbPowerHit(target)) return;
+  if (!canInteract(target) || target.power.hitCooldown > 0 || absorbPowerHit(target)) return;
   target.power.dance = DANCE_SECONDS;
   target.power.danceStyle = style;
   target.speed = 0;
@@ -169,7 +176,7 @@ function forceDance(target: PowerKart, style: 'dance' | 'twerk'): void {
   feedback(target, style === 'twerk' ? 'Twerk Trap!' : 'Dance Break!', DANCE_SECONDS);
 }
 function lightningHit(target: PowerKart): void {
-  if (target.power.hitCooldown > 0 || absorbPowerHit(target)) return;
+  if (!canInteract(target) || target.power.hitCooldown > 0 || absorbPowerHit(target)) return;
   target.speed *= 0.5;
   target.boost = 0;
   target.bump = Math.max(target.bump, 0.35);
@@ -231,16 +238,16 @@ function spawnProjectile(race: PowerRace, kart: PowerKart, kind: 'bolt' | 'crown
 
 function activateItem(race: PowerRace, kart: PowerKart, activeIds: ReadonlySet<string>, braking: boolean): void {
   let item = kart.power.item;
-  if (!item || kart.finishTime !== null) return;
+  if (!item || !canInteract(kart) || kart.finishTime !== null) return;
   if (item === 'flask' && kart.power.flask > 0) { flaskPulse(kart); return; }
-  const activeKarts = race.karts.filter(other => activeIds.has(other.id));
+  const activeKarts = race.karts.filter(other => activeIds.has(other.id) && canInteract(other));
   const danceTarget = item === 'dance' ? racerAhead(kart, activeKarts) : item === 'twerk' ? racerBehind(kart, activeKarts) : undefined;
   if ((item === 'dance' || item === 'twerk') && !danceTarget) {
     feedback(kart, item === 'dance' ? 'No racer ahead' : 'No racer behind');
     return; // Keep the item, but the input sequence is already consumed.
   }
-  if (item === 'lightning' && !activeKarts.some(other => other.id !== kart.id && other.finishTime === null)) {
-    feedback(kart, 'No rivals to strike');
+  if ((item === 'lightning' || item === 'diddy') && !activeKarts.some(other => other.id !== kart.id && other.finishTime === null)) {
+    feedback(kart, item === 'diddy' ? 'No rivals to oil' : 'No rivals to strike');
     return;
   }
   // A saved rear-pack item never becomes a free autopilot for a leader. Keep the
@@ -279,6 +286,7 @@ function activateItem(race: PowerRace, kart: PowerKart, activeIds: ReadonlySet<s
     kart.power.slow = 0;
     kart.power.lightning = 0;
     kart.power.splatter = 0;
+    kart.power.oil = 0;
     kart.boost = Math.max(kart.boost, 0.2);
   } else if (item === 'splat') {
     for (const rival of runningByProgress(activeKarts)) {
@@ -286,11 +294,18 @@ function activateItem(race: PowerRace, kart: PowerKart, activeIds: ReadonlySet<s
       rival.power.splatter = SPLATTER_SECONDS;
       feedback(rival, 'Berry Blot!', 0.65);
     }
+  } else if (item === 'diddy') {
+    for (const rival of runningByProgress(activeKarts)) {
+      if (rival.id === kart.id || absorbPowerHit(rival)) continue;
+      rival.power.oil = OIL_SECONDS;
+      feedback(rival, 'Diddy Mode! Baby oil!', 0.85);
+    }
   } else if (item === 'jet') {
     kart.power.jet = JET_SECONDS;
     kart.power.slow = 0;
     kart.power.lightning = 0;
     kart.power.splatter = 0;
+    kart.power.oil = 0;
     kart.boost = 0;
   } else if (item === 'crown' && leader) {
     spawnProjectile(race, kart, 'crown', leader.id);
@@ -307,7 +322,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
   const step = Math.min(dt, 0.1);
   const activePlayers = new Map(players.filter(player => player.connected !== false).map(player => [player.id, player]));
   const activeIds = new Set(activePlayers.keys());
-  const activeKarts = race.karts.filter(kart => activeIds.has(kart.id));
+  const activeKarts = race.karts.filter(kart => activeIds.has(kart.id) && canInteract(kart));
   const pending: { kart: PowerKart; player: PowerPlayer }[] = [];
   for (const box of race.powers.boxes) box.cooldown = Math.max(0, box.cooldown - step);
   for (const kart of race.karts) {
@@ -326,6 +341,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
     kart.power.flaskCooldown = Math.max(0, kart.power.flaskCooldown - step);
     kart.power.prism = Math.max(0, kart.power.prism - step);
     kart.power.splatter = Math.max(0, kart.power.splatter - step);
+    kart.power.oil = Math.max(0, (kart.power.oil ?? 0) - step);
     kart.power.leaderWarning = Math.max(0, kart.power.leaderWarning - step);
     if (hadFlask && kart.power.flask <= 0 && kart.power.item === 'flask') kart.power.item = null;
     const player = activePlayers.get(kart.id);
@@ -343,18 +359,19 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
       kart.power.lastAction = sequence;
       // Capture eligibility before resolving this tick's attacks. Simultaneous
       // fresh presses cannot be cancelled solely by the attacker's ID ordering.
-      if (player && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0) pending.push({ kart, player });
+      if (player && kart.power.item && !canInteract(kart)) feedback(kart, 'Wait until back on track', 0.8);
+      if (player && canInteract(kart) && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0) pending.push({ kart, player });
     }
   }
   // Simultaneous defenses resolve before attacks, then stable IDs break ties.
   // Reordering a room roster must not decide who gets protected from a splash.
-  const priority = (kart: PowerKart) => ['guard', 'prism', 'jet'].includes(kart.power.item ?? '') ? 0 : ['splat', 'dance', 'twerk', 'lightning'].includes(kart.power.item ?? '') ? 2 : 1;
+  const priority = (kart: PowerKart) => ['guard', 'prism', 'jet'].includes(kart.power.item ?? '') ? 0 : ['splat', 'diddy', 'dance', 'twerk', 'lightning'].includes(kart.power.item ?? '') ? 2 : 1;
   pending.sort((a, b) => priority(a.kart) - priority(b.kart) || a.kart.id.localeCompare(b.kart.id));
   for (const { kart, player } of pending) activateItem(race, kart, activeIds, player.input.brake === true);
   for (const hazard of race.powers.hazards) {
     hazard.life -= step;
     if (hazard.life <= 0) continue;
-    const targets = race.karts.filter(kart => kart.id !== hazard.ownerId && kart.finishTime === null && sameRoute(kart, hazard) && Math.abs(circularDistance(kart.distance, hazard.distance)) / routeScale(hazard.onShortcut) < 2.5 && Math.abs(kart.lane - hazard.lane) < 1.8)
+    const targets = race.karts.filter(kart => kart.id !== hazard.ownerId && canInteract(kart) && kart.finishTime === null && sameRoute(kart, hazard) && Math.abs(circularDistance(kart.distance, hazard.distance)) / routeScale(hazard.onShortcut) < 2.5 && Math.abs(kart.lane - hazard.lane) < 1.8)
       .sort((a, b) => Math.abs(circularDistance(a.distance, hazard.distance)) - Math.abs(circularDistance(b.distance, hazard.distance)) || a.id.localeCompare(b.id));
     if (targets[0]) { hit(targets[0], 0.58, 'Citrus Slick!'); hazard.life = 0; }
   }
@@ -362,7 +379,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
     projectile.life -= step;
     if (projectile.life <= 0) continue;
     if (projectile.kind === 'crown') {
-      const target = race.karts.find(kart => kart.id === projectile.targetId && kart.finishTime === null && activeIds.has(kart.id));
+      const target = race.karts.find(kart => kart.id === projectile.targetId && canInteract(kart) && kart.finishTime === null && activeIds.has(kart.id));
       if (!target) { projectile.life = 0; continue; }
       target.power.leaderWarning = Math.max(target.power.leaderWarning, 0.2);
       if ((projectile.warning ?? 0) > 0) {
@@ -377,7 +394,7 @@ export function stepPowers(race: PowerRace, players: PowerPlayer[], dt: number):
       }
       continue;
     }
-    const candidates = race.karts.filter(kart => kart.id !== projectile.ownerId && kart.finishTime === null);
+    const candidates = race.karts.filter(kart => kart.id !== projectile.ownerId && canInteract(kart) && kart.finishTime === null);
     const ahead = candidates.filter(kart => sameRoute(kart, projectile))
       .map(kart => ({ kart, gap: circularDistance(kart.distance, projectile.distance) / routeScale(projectile.onShortcut) }))
       .filter(({ gap }) => gap > -2 && gap < 65).sort((a, b) => a.gap - b.gap || a.kart.id.localeCompare(b.kart.id));
@@ -404,9 +421,9 @@ function itemFor(kart: PowerKart, box: ItemBox, karts: PowerKart[]): PowerUp {
   // Solo practice (or the sole remaining active racer) must never receive an
   // attack that needs a rival. Otherwise no-target retention locks inventory.
   const choices: PowerUp[] = ranked.length < 2 ? ['fizz', 'guard', 'flask', 'prism'] : rearPack(kart, karts)
-    ? ['fizz', 'guard', 'bolt', 'flask', 'flask', 'prism', 'splat', 'jet', 'crown', 'dance', 'slick', 'lightning', 'twerk']
-    : rank > 0 ? ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'crown', 'twerk']
-      : ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'twerk'];
+    ? ['fizz', 'guard', 'bolt', 'flask', 'flask', 'prism', 'splat', 'jet', 'crown', 'dance', 'slick', 'lightning', 'twerk', 'diddy']
+    : rank > 0 ? ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'crown', 'twerk', 'diddy']
+      : ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'twerk', 'diddy'];
   let seed = box.id * 11 + kart.power.collected * 7;
   for (const char of kart.id) seed = (seed * 31 + char.charCodeAt(0)) >>> 0;
   // Mix before reducing: correlated box rows and pickup counts must not lock
@@ -438,10 +455,10 @@ function boxContact(from: number, to: number, fromLane: number, toLane: number, 
 /** Run after driving physics; swept collection also works across the lap boundary. */
 export function collectPowerups(race: PowerRace, previousDistances: ReadonlyMap<string, number>, activeIds?: ReadonlySet<string>, previousRoutes?: ReadonlyMap<string, boolean>, previousLanes?: ReadonlyMap<string, number>): void {
   if (race.complete || (race.countdown ?? 0) > 0) return;
-  const activeKarts = activeIds ? race.karts.filter(kart => activeIds.has(kart.id)) : race.karts;
+  const activeKarts = activeIds ? race.karts.filter(kart => activeIds.has(kart.id) && canInteract(kart)) : race.karts;
   for (const box of race.powers.boxes) {
     if (box.cooldown > 0) continue;
-    const contacts = activeKarts.filter(kart => !kart.onShortcut && !previousRoutes?.get(kart.id) && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0)
+    const contacts = activeKarts.filter(kart => canInteract(kart) && !kart.onShortcut && !previousRoutes?.get(kart.id) && kart.finishTime === null && kart.power.dance <= 0 && kart.power.jet <= 0)
       .map(kart => ({ kart, contact: boxContact(previousDistances.get(kart.id) ?? kart.distance, kart.distance, previousLanes?.get(kart.id) ?? kart.lane, kart.lane, box) }))
       .filter((entry): entry is { kart: PowerKart; contact: number } => entry.contact !== null);
     for (const { kart, contact } of contacts) {

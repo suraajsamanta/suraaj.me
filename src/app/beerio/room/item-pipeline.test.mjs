@@ -379,7 +379,7 @@ test('Fizz Flask fresh pulses cross real WebSockets without heartbeat or reconne
 
 test('ten controllers receive all new item names with owner mapping and cannot forge host inventory', async t => {
   const f = await fixture(t, 10);
-  const kinds = ['flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'twerk', 'dance'];
+  const kinds = ['flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'twerk', 'dance', 'diddy'];
   const received = f.phones.map(() => []);
   f.phones.forEach((phone, index) => phone.onState(state => received[index].push(state)));
   const inventory = f.race.karts.map((kart, index) => {
@@ -447,4 +447,35 @@ test('Twerk Trap reaches only the racer behind through real controller transport
   await wait(120); f.step();
   assert.equal(owner.power.used, 1);
   assert.ok(near.power.dance < 3.5);
+});
+
+test('Diddy Mode crosses real phone transport, oils nine rival views once, and clears on expiry', async t => {
+  const f = await fixture(t, 10);
+  const [phone] = f.phones;
+  f.pickup(0, 0, 'diddy'); f.race.powers.boxes = [];
+  const received = [];
+  phone.onState(state => received.push(state));
+  f.host.publishState({ type: 'inventory', inventory: f.race.karts.map(kart => ({ id: kart.id, item: kart.power.item })) });
+  await until(() => received.length === 1, 'oil inventory reaches its controller');
+  assert.equal(received[0].inventory.find(entry => entry.id === phone.getSnapshot().playerId).item, 'diddy');
+  f.race.karts.forEach((kart, index) => { kart.distance = 40 + index * 20; kart.speed = 30; });
+  phone.useItem(); await until(() => f.input(0).action === 1, 'oil press reaches host'); f.step();
+  const [owner, ...rivals] = f.race.karts;
+  assert.equal(owner.power.oil, 0); assert.equal(owner.power.used, 1); assert.equal(owner.power.item, null);
+  assert.ok(rivals.every(kart => kart.power.oil === 4 && kart.power.slow === 0));
+  await wait(240); f.step();
+  assert.equal(owner.power.used, 1);
+  assert.ok(rivals.every(kart => kart.power.oil < 4 && kart.power.oil > 3.9), 'Heartbeat never reapplies the oil');
+  const remaining = rivals[0].power.oil;
+  f.sockets.at(-1).terminate();
+  await until(() => f.phones[9].getSnapshot().status === 'reconnecting', 'affected rival disconnects');
+  await until(() => f.phones[9].getSnapshot().status === 'connected', 'affected rival reconnects');
+  f.step();
+  assert.ok(rivals.every(kart => kart.power.oil < remaining), 'Reconnect neither resets nor spreads the effect');
+  f.host.publishState({ type: 'inventory', inventory: [{ id: owner.id, item: null, feedback: 'Diddy Mode activated!' }] });
+  await until(() => received.length === 2, 'activation feedback reaches the phone');
+  assert.equal(received[1].inventory[0].feedback, 'Diddy Mode activated!');
+  for (let i = 0; i < 250; i++) f.step();
+  assert.ok(rivals.every(kart => kart.power.oil === 0));
+  assert.equal(owner.power.used, 1);
 });

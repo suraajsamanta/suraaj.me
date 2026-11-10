@@ -138,7 +138,7 @@ test('left and right controls move visually left and right around the full circu
     }
   }
 });
-test('auto-steer is on by default and manual driving preserves heading through bends', () => {
+test('assist is on by default but hands-off driving preserves world heading through bends', () => {
   const players = [driver('a')];
   const assisted = createRace(players), explicit = createRace(players), manual = createRace(players);
   for (const race of [assisted, explicit, manual]) {
@@ -152,8 +152,86 @@ test('auto-steer is on by default and manual driving preserves heading through b
   assert.deepEqual(assisted, explicit);
   const manualYaw = trackPose(manual.karts[0].distance).yaw + manual.karts[0].heading;
   assert.ok(Math.abs(Math.atan2(Math.sin(manualYaw - startYaw), Math.cos(manualYaw - startYaw))) < 0.00001);
-  assert.ok(Math.abs(manual.karts[0].heading) > Math.abs(assisted.karts[0].heading) + 0.03);
-  assert.ok(Math.abs(manual.karts[0].lane) > Math.abs(assisted.karts[0].lane) + 0.1);
+  assert.deepEqual(assisted, manual, 'Neutral steering gets no automatic course following');
+  assert.ok(Math.abs(assisted.karts[0].heading) > 0.03);
+  assert.ok(Math.abs(assisted.karts[0].lane) > 0.1);
+});
+test('assist helps deliberate steering, then stops immediately when the driver releases it', () => {
+  const players = [driver('active', 0.5)];
+  const assisted = createRace(players), manual = createRace(players);
+  for (const race of [assisted, manual]) {
+    race.countdown = 0;
+    Object.assign(race.karts[0], { distance: 120, lane: 0, speed: 20 });
+  }
+  advance(assisted, players, 0.3, true);
+  advance(manual, players, 0.3, false);
+  assert.ok(Math.abs(assisted.karts[0].heading) < Math.abs(manual.karts[0].heading), 'Active steering is easier to control');
+  const released = structuredClone(assisted);
+  players[0].input.steer = 0;
+  advance(assisted, players, 0.6, true);
+  advance(released, players, 0.6, false);
+  assert.deepEqual(assisted, released, 'No lingering assistance after release');
+});
+test('controller noise inside the steering dead zone never engages assist', () => {
+  for (const steer of [-0.12, -0.04, 0.04, 0.12, Number.NaN]) {
+    const players = [driver('noise', steer)];
+    const assisted = createRace(players), manual = createRace(players);
+    for (const race of [assisted, manual]) {
+      race.countdown = 0;
+      Object.assign(race.karts[0], { distance: 120, lane: 0, speed: 20 });
+    }
+    advance(assisted, players, 0.5, true);
+    advance(manual, players, 0.5, false);
+    assert.deepEqual(assisted, manual);
+  }
+});
+test('letting go at a bend reaches a wall or falls off instead of auto-following it', async () => {
+  const track = await import('./track');
+  try {
+    for (const definition of track.TRACKS) {
+      track.selectTrack(definition.id);
+      let bend = 0;
+      for (let sample = 1; sample < 256; sample++) {
+        const distance = track.TRACK_LENGTH * sample / 256;
+        if (Math.abs(track.trackCurve(distance)) > Math.abs(track.trackCurve(bend))) bend = distance;
+      }
+      for (const accelerate of [false, true]) {
+        const players = [driver('hands-off')], race = createRace(players);
+        players[0].input.accelerate = accelerate;
+        race.countdown = 0;
+        race.powers.boxes = [];
+        const kart = race.karts[0];
+        Object.assign(kart, { distance: bend, lane: 0, speed: MAX_SPEED, obstacleCooldown: 10 });
+        let leftRoad = false;
+        for (let frame = 0; frame < 240; frame++) {
+          stepRace(race, players, 1 / 60, true);
+          if (kart.fall || Math.abs(kart.lane) >= track.BARRIER_OFFSET - 1.15 - 1e-6) { leftRoad = true; break; }
+        }
+        assert.ok(leftRoad, `${definition.name}, throttle=${accelerate}: a released steering control must hit a wall or fall instead of following the bend`);
+      }
+    }
+  } finally { track.selectTrack('sunset'); }
+});
+test('hands-off wall contact cannot rail-ride a lap, but steering away restores control', () => {
+  const limit = BARRIER_OFFSET - 1.15;
+  for (const autoSteer of [true, false]) {
+    for (const side of [-1, 1]) {
+      const players = [driver('stalled')], race = createRace(players);
+      race.countdown = 0; race.powers.boxes = [];
+      const kart = race.karts[0];
+      Object.assign(kart, { distance: 120, lane: side * limit, speed: MAX_SPEED, heading: side * 0.8, obstacleCooldown: 60 });
+      const start = kart.distance;
+      advance(race, players, 30, autoSteer);
+      assert.ok(kart.distance - start < 80, 'The rail cannot carry a hands-off driver around the course');
+      assert.ok(kart.speed < 1, 'Holding only GO against a rail does not drive the route');
+      assert.equal(kart.finishTime, null);
+      players[0].input.steer = side;
+      const stoppedAt = kart.distance;
+      advance(race, players, 2, autoSteer);
+      assert.ok(kart.distance > stoppedAt + 3, 'The driver can accelerate away without resetting the race');
+      assert.ok(kart.lane * side < limit - 0.2, 'Turning away exits the wall');
+    }
+  }
 });
 test('switching steering modes mid-race keeps progress and honors manual input', () => {
   const players = [driver('a', 1)], race = createRace(players); race.countdown = 0;

@@ -1,20 +1,63 @@
 import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, stepPowers, powerDrivingState, type KartPowerState, type PowerWorld } from './powerups';
-import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, shortcutPose, trackCurve, trackPose, TRACK_LENGTH, wrap } from './track';
+import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, clamp, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, shortcutPose, trackCurve, trackPose, TRACK_LENGTH, wrap, type TrackPose, type Vec3 } from './track';
 
 export type DriverInput = { steer: number; accelerate: boolean; brake: boolean; drift?: boolean; action?: number };
 export type GamePlayer = { id: string; name: string; color: string; character?: string; vehicle?: string; connected?: boolean; input: DriverInput };
 export type RaceResult = { id: string; name: string; color: string; place: number; time: number | null; finished: boolean; itemsUsed: number };
+export type KartFall = { elapsed: number; origin: Vec3; velocity: Vec3; yaw: number };
 export type KartState = {
   id: string; name: string; color: string; distance: number; lane: number; speed: number; lateral: number;
   /** World yaw relative to the local track tangent, also used by the renderer. */
   heading: number;
   driftCharge: number; drifting: boolean; onShortcut: boolean;
+  /** Race progress freezes during a physical fall, then resumes at this route's center. */
+  fall: KartFall | null; respawnGrace: number;
   boost: number; bump: number; finishTime: number | null; padCooldown: number; obstacleCooldown: number; power: KartPowerState;
 };
 export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null; powers: PowerWorld };
 export const COUNTDOWN_SECONDS = 8;
 export const MAX_SPEED = 43;
 export const FINISH_GRACE_SECONDS = 25;
+export const FALL_SECONDS = 1.8;
+export const RESPAWN_GRACE_SECONDS = 1.25;
+export const FALL_GRAVITY = 26;
+
+/** The renderer shares the simulation's falling position, never a second timer. */
+export function kartWorldPose(kart: KartState, height = 0): TrackPose {
+  if (!kart.fall) return (kart.onShortcut ? shortcutPose : trackPose)(kart.distance, kart.lane, height);
+  const { origin, velocity, elapsed, yaw } = kart.fall;
+  return {
+    position: [origin[0] + velocity[0] * elapsed, origin[1] + velocity[1] * elapsed - FALL_GRAVITY * elapsed * elapsed / 2 + height, origin[2] + velocity[2] * elapsed],
+    yaw, forward: [Math.sin(yaw), 0, Math.cos(yaw)], right: [Math.cos(yaw), 0, -Math.sin(yaw)],
+  };
+}
+
+function beginFall(kart: KartState): void {
+  if (kart.fall || kart.finishTime !== null || ACTIVE_TRACK.edgeBehavior !== 'fall' || Math.abs(kart.lane) <= ROAD_HALF_WIDTH) return;
+  const pose = kartWorldPose(kart);
+  const forwardSpeed = kart.speed * Math.cos(kart.heading);
+  kart.fall = {
+    elapsed: 0, origin: pose.position, yaw: pose.yaw + kart.heading,
+    velocity: [pose.forward[0] * forwardSpeed + pose.right[0] * kart.lateral, Math.min(0, pose.forward[1] * forwardSpeed), pose.forward[2] * forwardSpeed + pose.right[2] * kart.lateral],
+  };
+  kart.speed = 0; kart.lateral = 0; kart.boost = 0; kart.driftCharge = 0; kart.drifting = false;
+  kart.power.jet = 0; kart.power.prism = 0; kart.power.dance = 0;
+  kart.power.notice = null;
+  kart.power.hitLabel = 'Fell off! Returning to track'; kart.power.flash = FALL_SECONDS;
+}
+
+function stepFall(kart: KartState, dt: number): void {
+  if (!kart.fall) return;
+  kart.fall.elapsed += dt;
+  if (kart.fall.elapsed + 1e-9 < FALL_SECONDS) return;
+  kart.fall = null;
+  kart.lane = 0; kart.heading = 0; kart.speed = 0; kart.lateral = 0;
+  kart.boost = 0; kart.driftCharge = 0; kart.drifting = false;
+  kart.respawnGrace = RESPAWN_GRACE_SECONDS;
+  kart.power.slow = 0; kart.power.lightning = 0; kart.power.leaderWarning = 0;
+  kart.power.hitCooldown = Math.max(kart.power.hitCooldown, RESPAWN_GRACE_SECONDS);
+  kart.power.hitLabel = 'Back on track'; kart.power.flash = 0.8;
+}
 
 export function createRace(players: GamePlayer[], laps = 3): RaceState {
   return {
@@ -24,6 +67,7 @@ export function createRace(players: GamePlayer[], laps = 3): RaceState {
       id: player.id, name: player.name, color: player.color, distance: -6 - Math.floor(i / 2) * 4.5,
       lane: i % 2 === 0 ? -2.1 : 2.1, speed: 0, lateral: 0, heading: 0,
       driftCharge: 0, drifting: false, onShortcut: false, boost: 0, bump: 0, finishTime: null, padCooldown: 0, obstacleCooldown: 0, power: createPowerState(player.input.action),
+      fall: null, respawnGrace: 0,
     })),
   };
 }
@@ -46,25 +90,35 @@ export function raceResults(race: RaceState): RaceResult[] {
 }
 
 export function stepRace(race: RaceState, players: GamePlayer[], dt: number, autoSteer = true): void {
-  if (race.complete) return;
+  if (race.complete || !Number.isFinite(dt) || dt < 0) return;
   if (race.countdown > 0) {
     race.countdown = Math.max(0, race.countdown - dt);
     return;
   }
   race.elapsed += dt;
+  for (const kart of race.karts) beginFall(kart);
   stepPowers(race, players, dt);
   const previousDistances = new Map(race.karts.map((kart) => [kart.id, kart.distance]));
   const previousLanes = new Map(race.karts.map((kart) => [kart.id, kart.lane]));
   const previousRoutes = new Map(race.karts.map((kart) => [kart.id, kart.onShortcut]));
   for (const kart of race.karts) {
+    kart.respawnGrace = Math.max(0, kart.respawnGrace - dt);
+    // Falling drivers cannot accelerate, use a shortcut, collect a box, or cross a lap gate.
+    if (kart.fall) { stepFall(kart, dt); continue; }
+    beginFall(kart);
+    if (kart.fall) continue;
     const input = players.find((player) => player.id === kart.id)?.input;
     const finished = kart.finishTime !== null;
     const driving = powerDrivingState(kart);
     const steer = driving.autoDrive ? 0 : clamp(Number.isFinite(input?.steer) ? input!.steer : 0, -1, 1);
     const accelerating = !finished && (driving.autoDrive || input?.accelerate === true);
     const braking = !finished && !driving.autoDrive && input?.brake === true;
-    const assisted = autoSteer || driving.autoDrive;
-    const offRoad = Math.abs(kart.lane) > ROAD_HALF_WIDTH - 0.5;
+    // Assist helps deliberate turns, not hands-off driving. Releasing the stick
+    // (or tiny controller noise) keeps the current world heading through bends,
+    // so the driver must keep steering. Jet Keg is the explicit autopilot item.
+    const steeringActive = Math.abs(steer) > 0.12;
+    const assisted = driving.autoDrive || (autoSteer && steeringActive);
+    const offRoad = ACTIVE_TRACK.edgeBehavior !== 'fall' && Math.abs(kart.lane) > ROAD_HALF_WIDTH - 0.5;
     kart.boost = Math.max(0, kart.boost - dt);
     kart.bump = Math.max(0, kart.bump - dt);
     kart.padCooldown = Math.max(0, kart.padCooldown - dt);
@@ -102,7 +156,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       // The track's positive lane axis points LEFT in a chase camera. Controller
       // input stays conventional (+1 right), so invert only at this boundary.
       const laneSteer = finished || driving.autoDrive ? clamp(-kart.lane * 0.2, -1, 1) : -steer;
-      // Assisted driving follows the track, with a little outward drift on bends.
+      // While actively steering, assist eases the bend with a little outward drift.
       const branchCurve = () => {
         const a = shortcutPose(kart.distance - 3).yaw, b = shortcutPose(kart.distance + 3).yaw;
         return Math.atan2(Math.sin(b - a), Math.cos(b - a)) / 6;
@@ -113,7 +167,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       kart.lane += kart.lateral * dt * Math.min(1, kart.speed / 4);
       kart.heading = Math.atan2(kart.lateral, Math.max(8, kart.speed)) * 0.65;
     } else {
-      // Manual mode steers a heading rather than a lane. Releasing the controls
+      // Manual or hands-off driving steers a heading rather than a lane. Release
       // keeps the kart pointed forward in the world instead of following bends.
       // Limit the angle for arcade handling: no reversing or spinning in place.
       const turnRate = (kart.drifting ? 1.25 : 1) * (1.4 + kart.speed * 0.025) * Math.min(1, kart.speed / 6);
@@ -122,16 +176,23 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       kart.lane += kart.lateral * dt;
       forwardFraction = Math.cos(kart.heading);
     }
-    if (Math.abs(kart.lane) > BARRIER_OFFSET - 1.15) {
+    // Open edges have no invisible rail. Start the fall before awarding progress.
+    beginFall(kart);
+    if (kart.fall) continue;
+    if (ACTIVE_TRACK.edgeBehavior !== 'fall' && Math.abs(kart.lane) > BARRIER_OFFSET - 1.15) {
       const side = Math.sign(kart.lane);
       kart.lane = side * (BARRIER_OFFSET - 1.15);
       // Remove only motion into the rail, preserving forward travel and any
       // steering away from it. Reflecting either value makes the kart bounce.
       if (kart.lateral * side > 0) kart.lateral = 0;
-      if (kart.heading * side > 0) kart.heading = 0;
+      const railGuidance = finished || driving.autoDrive || steeringActive;
+      // A held turn can slide along a rail. A released control must not gain
+      // a new tangent every frame and use the barrier as free autopilot.
+      if (railGuidance && kart.heading * side > 0) kart.heading = 0;
       forwardFraction = assisted || finished ? 1 : Math.cos(kart.heading);
-      // A scrape adds mild continuous friction, not repeated 30% impact cuts.
-      kart.speed = Math.max(0, kart.speed - 3 * dt);
+      // Intentional wall sliding stays forgiving. Hands-off impacts scrub speed
+      // until the driver steers away instead of completing a lap on the rail.
+      kart.speed = Math.max(0, kart.speed - (railGuidance ? 3 : 45) * dt);
       kart.bump = Math.max(kart.bump, 0.08);
     }
     // Entrance can only be crossed forward from the indicated side. On the
@@ -218,7 +279,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
   for (let i = 0; i < race.karts.length; i++) {
     for (let j = i + 1; j < race.karts.length; j++) {
       const a = race.karts[i], b = race.karts[j];
-      if (a.finishTime !== null || b.finishTime !== null || powerDrivingState(a).collisionImmune || powerDrivingState(b).collisionImmune) continue;
+      if (a.fall || b.fall || a.respawnGrace > 0 || b.respawnGrace > 0 || a.finishTime !== null || b.finishTime !== null || powerDrivingState(a).collisionImmune || powerDrivingState(b).collisionImmune) continue;
       // Branch progress is scaled, not physical metres. Compare both routes
       // in world coordinates so a close pair collides at joins and on the
       // branch, but distant roads with similar progress do not collide.
@@ -256,8 +317,10 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
         const aDancing = a.power.dance > 0, bDancing = b.power.dance > 0;
         if (!aDancing) a.lane += sideA * push * (bDancing ? 2 : 1);
         if (!bDancing) b.lane += sideB * push * (aDancing ? 2 : 1);
-        if (!aDancing) a.lane = clamp(a.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
-        if (!bDancing) b.lane = clamp(b.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
+        if (ACTIVE_TRACK.edgeBehavior !== 'fall') {
+          if (!aDancing) a.lane = clamp(a.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
+          if (!bDancing) b.lane = clamp(b.lane, -BARRIER_OFFSET + 1.15, BARRIER_OFFSET - 1.15);
+        }
         if (a.bump <= 0 && b.bump <= 0 && !(aDancing && bDancing)) {
           const average = (a.speed + b.speed) * 0.46;
           if (!aDancing) a.speed = average;
@@ -267,6 +330,8 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       }
     }
   }
+  // Contact can push a kart off an edge even with neutral steering.
+  for (const kart of race.karts) beginFall(kart);
   if (race.karts.every((kart) => kart.finishTime !== null) ||
       (race.firstFinish !== null && race.elapsed - race.firstFinish >= FINISH_GRACE_SECONDS)) race.complete = true;
 }

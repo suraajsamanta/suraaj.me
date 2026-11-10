@@ -1,15 +1,18 @@
 import { SPACE_COURSE } from './spaceCourse';
 import { FOUNDRY_COURSE } from './foundryCourse';
+import { RAINBOW_COURSE } from './rainbowCourse';
 
 /** Original closed circuit. Distances are world metres, not screen coordinates. */
 export type Vec3 = [number, number, number];
 export type TrackPoint = { x: number; y: number; z: number; distance: number };
 export type TrackPose = { position: Vec3; forward: Vec3; right: Vec3; yaw: number };
 
-export type TrackId = 'sunset' | 'canyon' | 'brewery' | 'seattle' | 'space' | 'foundry';
+export type TrackId = 'sunset' | 'canyon' | 'brewery' | 'seattle' | 'space' | 'foundry' | 'rainbow';
 export type TrackObstacle = { fraction: number; lane: number; kind: 'barrel' | 'oil' };
 export type TrackDefinition = {
   id: TrackId; name: string; description: string;
+  /** Omitted courses keep their existing shoulder and collision rails. */
+  edgeBehavior?: 'fall';
   controlPoints: [number, number][]; elevations?: number[]; samples?: number; obstacles: TrackObstacle[];
   shortcut: { start: number; end: number; side: -1 | 1; handle?: number };
 };
@@ -64,6 +67,7 @@ export const TRACKS: TrackDefinition[] = [
   },
   SPACE_COURSE,
   FOUNDRY_COURSE,
+  RAINBOW_COURSE,
 ];
 export const ROAD_HALF_WIDTH = 7;
 export const BARRIER_OFFSET = 10.2;

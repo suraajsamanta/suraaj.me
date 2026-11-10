@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { RaceRenderer } from './renderer';
 import { PowerUpNotice } from './PowerUpNotice';
 import { useRaceAudio } from './useRaceAudio';
-import { actionSequence, itemNoticeText, racerAhead, POWER_UPS, type ItemNotice, type PowerUp } from './powerups';
+import { actionSequence, canInteract, itemNoticeText, racerAhead, POWER_UPS, type ItemNotice, type PowerUp } from './powerups';
 import { mergeControllerAction } from './actionMerge';
 import { COUNTDOWN_SECONDS, createRace, currentLap, lapProgress, raceResults, rankKarts, stepRace, type GamePlayer, type RaceResult, type RaceState } from './simulation';
 import { selectTrack, shortcutPose, TRACKS, trackPose, type TrackId } from './track';
@@ -40,9 +40,9 @@ export type GameViewProps = {
   rematchDisabled?: boolean;
 };
 
-type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
+type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; falling: boolean; respawning: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; oil: number; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
-const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike']);
+const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike', 'No rivals to oil', 'Wait until back on track']);
 const EMPTY_HUD: Hud = { countdown: COUNTDOWN_SECONDS, elapsed: 0, complete: false, karts: [], results: [] };
 const INTRO_NAME_HOLD_SECONDS = 3;
 const INTRO_NAME_FADE_SECONDS = 1;
@@ -59,7 +59,7 @@ function snapshot(race: RaceState, players: GamePlayer[]): Hud {
       const { position } = (kart.onShortcut ? shortcutPose : trackPose)(kart.distance, kart.lane);
       return { notice: kart.power.notice ? { ...kart.power.notice } : null, noticeKey: `${kart.power.collected}:${kart.power.used}`, id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
         lap: currentLap(kart, race.laps), progress: lapProgress(kart), speed: Math.round(kart.speed * 3.6),
-        boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts, activeIds)?.id ?? null };
+        falling: Boolean(kart.fall), respawning: kart.respawnGrace > 0, boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, oil: kart.finishTime === null ? kart.power.oil : 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts.filter(canInteract), activeIds)?.id ?? null };
     }),
   };
 }
@@ -294,6 +294,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
           return (
             <section className={styles.viewport} key={player.id} style={{ '--driver-color': player.color } as CSSProperties} aria-label={`${player.name}'s racing view`}>
               {kart?.splatter && <div className={styles.splatter} role="img" aria-label="Berry blot on this view"><i /><i /><i /><i /></div>}
+              {Boolean(kart?.oil) && <div className={styles.oil} style={{ opacity: Math.min(1, (kart?.oil ?? 0) / 0.75) }} data-paused={paused || undefined} role="img" aria-label="Baby oil obscuring this view"><i /><i /><i /><i /><i /></div>}
               <div className={styles.hudHeader}>
                 <div className={styles.hudLeft}>
                   <div className={styles.topHud}>
@@ -343,7 +344,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
               <div className={styles.bottomHud}>
                 <div className={styles.position}>{place}<span>{suffix(place)}</span></div>
                 <div className={styles.driverStatus}>
-                  {kart?.dance ? <span className={styles.boost}>{kart.danceStyle === 'twerk' ? 'TWERK TRAP!' : 'DANCE BREAK!'}</span> : kart?.prism ? <span className={styles.boost}>PRISM PARTY</span> : kart?.jet ? <span className={styles.boost}>JET KEG</span> : kart?.flask ? <span className={styles.boost}>FIZZ FLASK</span> : kart?.shield ? <span className={styles.boost}>FOAM GUARD</span> : kart?.lightning ? <span className={styles.offRoad}>LIGHTNING!</span> : kart?.slow ? <span className={styles.offRoad}>SLOWED</span> : kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>OFF ROAD</span> : null}
+                  {kart?.falling ? <span className={styles.offRoad}>FELL OFF · RESPAWNING</span> : kart?.respawning ? <span className={styles.boost}>BACK ON TRACK</span> : kart?.dance ? <span className={styles.boost}>{kart.danceStyle === 'twerk' ? 'TWERK TRAP!' : 'DANCE BREAK!'}</span> : kart?.prism ? <span className={styles.boost}>PRISM PARTY</span> : kart?.jet ? <span className={styles.boost}>JET KEG</span> : kart?.flask ? <span className={styles.boost}>FIZZ FLASK</span> : kart?.shield ? <span className={styles.boost}>FOAM GUARD</span> : kart?.lightning ? <span className={styles.offRoad}>LIGHTNING!</span> : kart?.slow ? <span className={styles.offRoad}>SLOWED</span> : kart?.boost ? <span className={styles.boost}>BOOST!</span> : kart?.offRoad ? <span className={styles.offRoad}>{trackId === 'rainbow' ? 'EDGE!' : 'OFF ROAD'}</span> : null}
                   {kart?.drifting && <div className={styles.drift} aria-label={`Drift charge ${kart.driftCharge >= 2 ? 3 : kart.driftCharge >= 1.2 ? 2 : kart.driftCharge >= 0.6 ? 1 : 0} of 3`}><span>DRIFT</span><div className={styles.driftTrack}><i style={{ width: `${Math.min(100, kart.driftCharge / 2 * 100)}%` }} /></div></div>}
                   <div className={styles.speed}><strong>{kart?.speed || 0}</strong><span>km/h</span></div>
                 </div>

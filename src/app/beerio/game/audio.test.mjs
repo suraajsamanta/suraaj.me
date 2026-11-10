@@ -145,7 +145,9 @@ test('all six original WAVs match their deterministic scores, with consistent he
     for (const channel of channels) assert.ok(Math.abs(channel[0] - channel.at(-1)) < 0.00001);
     signatures.add(data.subarray(44, 24044).toString('base64'));
   }
-  assert.equal(signatures.size, 6, 'Every course has a distinct rendered arrangement');
+  assert.equal(signatures.size, 6, 'Six original arrangements; Prism Skyway shares Orbital Anthem');
+  assert.equal(raceScoreUrl('rainbow'), raceScoreUrl('space'));
+  assert.equal(Object.keys(RACE_SCORES).length, 7);
   assert.throws(() => renderRaceScore(0), /sample rate/);
 });
 

@@ -12,6 +12,7 @@ const EFFECTS: Record<PowerUp, string> = {
   flask: 'Tap again for bursts for 7 seconds.',
   prism: '6 seconds of speed + protection.',
   splat: 'Cover rival views in berry foam.',
+  diddy: 'Baby oil clouds rival views for 4 seconds.',
   jet: 'Protected autopilot. Brake to cancel.',
   crown: 'A comet hunts down the leader.',
   lightning: 'Strike and slow unprotected rivals.',
@@ -63,6 +64,9 @@ function EffectScene({ item }: { item: PowerUp }) {
       break;
     case 'splat':
       scene = <><path d="M29 19H115L128 69H16Z" fill="#adc6e51a" stroke="#b6c7de" strokeWidth="2" /><path d="M72 22V66M24 59L58 40" stroke="#b6c7de" strokeWidth="2" opacity=".4" /><g className={styles.berrySplat} fill="currentColor"><path d="M71 29Q81 6 87 28Q116 18 103 41Q125 57 101 60Q95 80 80 65Q56 84 54 63Q22 67 37 46Q23 24 50 32Q52 11 65 28Z" /><circle cx="22" cy="25" r="5" /><circle cx="121" cy="44" r="4" /><circle cx="40" cy="76" r="3" /><path d="M58 40Q70 31 83 37" fill="none" stroke="#ebd3ff" strokeWidth="4" strokeLinecap="round" /></g></>;
+      break;
+    case 'diddy':
+      scene = <><path d="M25 24H118L130 74H12Z" fill="#c9e9ef25" stroke="#b6c7de" strokeWidth="2" /><g className={styles.oilPour} fill="currentColor"><path d="M42 30Q30 15 41 10Q52 16 46 30L62 50Q68 64 56 68Q43 64 47 53Z" /><path d="M83 28Q70 45 78 55Q92 65 91 46Z" opacity=".75" /><path d="M108 39Q97 52 102 65Q116 73 117 58Z" opacity=".6" /><ellipse cx="66" cy="65" rx="44" ry="9" opacity=".4" /><path d="M52 51L55 59M82 46L84 53M108 57L109 62" fill="none" stroke="#fffdf1" strokeWidth="3" strokeLinecap="round" /></g><g transform="translate(31 9) rotate(-30)" fill="#e9f5f1" stroke="#203142" strokeWidth="2"><path d="M0 9V3H12V9L17 14V33H-5V14Z" /><path d="M0 2H12" stroke="#75d3d6" strokeWidth="5" /><path d="M-1 19H13V28H-1Z" fill="#ffdda5" stroke="none" /></g></>;
       break;
     case 'jet':
       scene = <><g className={styles.jetTrails} stroke="currentColor" strokeWidth="2"><path d="M7 23H34M1 44H29M12 66H42" /></g><g className={styles.jetRocket}><path className={styles.jetFlame} d="M52 34L16 44L52 55L39 44Z" fill="#ffd56d" /><path d="M47 29Q85 14 113 44Q85 73 47 59Z" fill="currentColor" stroke="#ffe0c5" strokeWidth="2" /><path d="M58 25V63M83 26V62" stroke="#793a32" strokeWidth="4" /><circle cx="96" cy="44" r="7" fill="#d9fbff" /><path d="M60 25L48 12L45 30M60 63L48 76L45 58" fill="#ffbfa3" /></g></>;

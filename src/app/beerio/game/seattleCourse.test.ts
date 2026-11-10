@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRace, stepRace, type GamePlayer } from './simulation';
 import { addSeattleScenery, SEATTLE_NEEDLE, SEATTLE_SPHERE_FRACTIONS, type SeattleGeometry } from './seattleScenery';
-import { ACTIVE_SHORTCUT, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, TRACKS, sampleTrack, selectTrack, shortcutPose, trackCurve, trackPose } from './track';
+import { ACTIVE_SHORTCUT, clamp, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, TRACKS, sampleTrack, selectTrack, shortcutPose, trackCurve, trackPose } from './track';
 
 const driver = (id: string): GamePlayer => ({ id, name: id, color: '#f64', input: { steer: 0, accelerate: true, brake: false } });
 
@@ -73,6 +73,8 @@ test('ten Seattle drivers complete a race with monotone progress and no free bra
   race.countdown=0;
   for(let step=0;step<5000 && !race.complete;step++) {
     const previous=race.karts.map(k=>k.distance);
+    // The test driver must steer too: ordinary assist is no longer autopilot.
+    race.karts.forEach((kart, i) => { players[i].input.steer = clamp(kart.lane * .6, -1, 1); });
     stepRace(race,players,1/60);
     race.karts.forEach((k,i)=>{assert.ok(k.distance >= previous[i]); assert.ok(k.distance-previous[i]<2);});
   }

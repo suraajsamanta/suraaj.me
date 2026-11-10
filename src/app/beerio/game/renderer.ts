@@ -3,8 +3,10 @@ import { SPACE_THEME } from './spaceCourse';
 import { addSeattleScenery } from './seattleScenery';
 import { addFoundryScenery } from './foundryScenery';
 import { FOUNDRY_THEME } from './foundryCourse';
+import { rainbowPanel } from './rainbowCourse';
+import { addRainbowScenery } from './rainbowScenery';
 import { ACTIVE_SHORTCUT, ACTIVE_TRACK, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, ROAD_HALF_WIDTH, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACK_LENGTH, TRACK_POINTS, shortcutPose, trackPose, wrap, type Vec3 } from './track';
-import type { GamePlayer, RaceState } from './simulation';
+import { kartWorldPose, type GamePlayer, type KartState, type RaceState } from './simulation';
 import { DANCE_SECONDS, LIGHTNING_SECONDS, ITEM_RESPAWN_SECONDS, ITEM_BURST_SECONDS, ITEM_NOTICE_SECONDS } from './powerups';
 
 type Color = [number, number, number];
@@ -143,6 +145,21 @@ export function racePose(at: number, lane = 0, height = 0, onShortcut = false) {
   return onShortcut && d >= ACTIVE_SHORTCUT.start * TRACK_LENGTH && d <= ACTIVE_SHORTCUT.end * TRACK_LENGTH
     ? shortcutPose(at, lane, height) : trackPose(at, lane, height);
 }
+/** Keep the falling kart visible against the edge it left, with no below-road chase clipping. */
+export function kartCameraTargets(kart: KartState): Camera {
+  if (kart.fall) {
+    const pose = kartWorldPose(kart);
+    return {
+      eye: [pose.position[0] - pose.forward[0] * 11, kart.fall.origin[1] + 6, pose.position[2] - pose.forward[2] * 11],
+      target: [pose.position[0], pose.position[1] + 0.8, pose.position[2]],
+    };
+  }
+  return {
+    eye: racePose(routeOffset(kart.distance, -9 - kart.speed * 0.06, kart.onShortcut), kart.lane * 0.72, 4.5, kart.onShortcut).position,
+    target: racePose(routeOffset(kart.distance, 10 + kart.speed * 0.1, kart.onShortcut), kart.lane * 0.4, 0.9, kart.onShortcut).position,
+  };
+}
+
 /** Advance a camera or trail by physical metres, continuing on the main road at either junction. */
 export function routeOffset(at: number, metres: number, onShortcut: boolean): number {
   if (!onShortcut) return at + metres;
@@ -189,12 +206,20 @@ function worldGeometry(): Geometry {
     // Short tiles give the interpolated fog meaningful local distances.
     for (let x = -1200; x < 1200; x += 100) for (let z = -1200; z < 1200; z += 100)
       g.quad([x,-.15,z], [x,-.15,z+100], [x+100,-.15,z+100], [x+100,-.15,z], ACTIVE_TRACK.id === 'foundry' ? FOUNDRY_THEME.ground : [0.38,0.55,0.46]);
-  } else if (ACTIVE_TRACK.id !== 'space') g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
-  const space = ACTIVE_TRACK.id === 'space', foundry = ACTIVE_TRACK.id === 'foundry';
+  } else if (ACTIVE_TRACK.id !== 'space' && ACTIVE_TRACK.id !== 'rainbow') g.quad([-1500, -0.15, -1500], [-1500, -0.15, 1500], [1500, -0.15, 1500], [1500, -0.15, -1500], [0.9, 0.7, 0.46]);
+  const space = ACTIVE_TRACK.id === 'space', foundry = ACTIVE_TRACK.id === 'foundry', rainbow = ACTIVE_TRACK.id === 'rainbow';
   const theme = space ? SPACE_THEME : foundry ? FOUNDRY_THEME : null;
   const dark: Color = theme?.road ?? [0.2, 0.25, 0.32], cream: Color = theme?.stripe ?? CREAM, orange: Color = theme?.curb ?? CORAL;
   for (let i = 0; i < TRACK_POINTS.length - 1; i++) {
     const a = TRACK_POINTS[i].distance, b = TRACK_POINTS[i + 1].distance;
+    if (rainbow) {
+      for (let lane = 0; lane < 7; lane++) g.roadStrip(a, b, -7 + lane * 2, -5 + lane * 2, rainbowPanel(lane, i), 0.035, true);
+      for (const side of [-1, 1]) {
+        g.roadStrip(a, b, side < 0 ? -7 : 6.82, side < 0 ? -6.82 : 7, [0.91, 0.96, 1], 0.055, true);
+        g.quad(trackPose(a, side * 7, 0.035).position, trackPose(b, side * 7, 0.035).position, trackPose(b, side * 7, -0.5).position, trackPose(a, side * 7, -0.5).position, [0.24, 0.21, 0.46], true);
+      }
+      continue;
+    }
     const shoulder: Color = theme?.shoulder ?? [0.51, 0.68, 0.42];
     // Separate side bands avoid depth-fighting the sloped, curved road mesh.
     g.roadStrip(a, b, -11.2, -ROAD_HALF_WIDTH, shoulder, 0);
@@ -221,6 +246,12 @@ function worldGeometry(): Geometry {
   for (let i = 0; i < SHORTCUT_POINTS.length - 1; i++) {
     const a = branchAt(i), b = branchAt(i + 1);
     const strip = (left: number, right: number, color: Color, height: number) => g.quad(shortcutPose(a, left, height).position, shortcutPose(b, left, height).position, shortcutPose(b, right, height).position, shortcutPose(a, right, height).position, color, true);
+    if (rainbow) {
+      for (let lane = 0; lane < 7; lane++) strip(-7 + lane * 2, -5 + lane * 2, rainbowPanel(lane, i), 0.08);
+      strip(-7, -6.82, [0.91, 0.96, 1], 0.095); strip(6.82, 7, [0.91, 0.96, 1], 0.095);
+      for (const side of [-1, 1]) g.quad(shortcutPose(a, side * 7, 0.08).position, shortcutPose(b, side * 7, 0.08).position, shortcutPose(b, side * 7, -0.5).position, shortcutPose(a, side * 7, -0.5).position, [0.24, 0.21, 0.46], true);
+      continue;
+    }
     strip(-ROAD_HALF_WIDTH, ROAD_HALF_WIDTH, [0.28, 0.34, 0.37], 0.08);
     strip(-6.8, -6.55, [1, 0.77, 0.35], 0.095); strip(6.55, 6.8, [1, 0.77, 0.35], 0.095);
     if (i % 12 < 5) strip(-0.13, 0.13, [0.95, 0.79, 0.49], 0.1);
@@ -271,6 +302,7 @@ function worldGeometry(): Geometry {
 
   // Course-specific scenery is batched once into the shared world mesh.
   if (ACTIVE_TRACK.id === 'seattle') { addSeattleScenery(g); return g; }
+  if (rainbow) { addRainbowScenery(g); return g; }
   if (space) { addSpaceScenery(g); return g; }
   if (foundry) { addFoundryScenery(g); return g; }
 
@@ -1382,6 +1414,7 @@ export class RaceRenderer {
   private figureAuras: (Mesh | null)[];
   private figures: (string | null)[];
   private cameras: Camera[];
+  private fallingCameras: boolean[];
   private columns: number;
   private rows: number;
   private width = 0;
@@ -1397,10 +1430,11 @@ export class RaceRenderer {
       varying vec3 v_color; varying float v_distance; varying float v_height;
       void main() { vec4 world = u_model * vec4(a_position, 1.0); gl_Position = u_view * world; v_color = a_color; v_distance = distance(world.xyz, u_eye); v_height = world.y; }
     `);
+    const isRainbow = ACTIVE_TRACK.id === 'rainbow';
     const isSpace = ACTIVE_TRACK.id === 'space', isSeattle = ACTIVE_TRACK.id === 'seattle', isFoundry = ACTIVE_TRACK.id === 'foundry';
     const fragment = this.shader(gl.FRAGMENT_SHADER, `
       precision mediump float; uniform float u_opacity; varying vec3 v_color; varying float v_distance; varying float v_height;
-      void main() { float fog = ${isSpace ? '0.0' : 'smoothstep(145.0, 610.0, v_distance)'}; vec3 haze = ${isFoundry ? 'vec3(0.37, 0.30, 0.33)' : isSeattle ? 'vec3(0.61, 0.73, 0.75)' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0))'}; gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
+      void main() { float fog = ${isSpace || isRainbow ? '0.0' : 'smoothstep(145.0, 610.0, v_distance)'}; vec3 haze = ${isFoundry ? 'vec3(0.37, 0.30, 0.33)' : isSeattle ? 'vec3(0.61, 0.73, 0.75)' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.56, 0.78, 0.87), clamp(v_height / 140.0, 0.0, 1.0))'}; gl_FragColor = vec4(mix(v_color, haze, fog), u_opacity); }
     `);
     const program = gl.createProgram();
     if (!program) throw new Error('Could not initialize the 3D race renderer.');
@@ -1420,9 +1454,9 @@ export class RaceRenderer {
       void main() {
         vec3 ray = normalize(u_forward + u_right * v_uv.x * u_lens.x + u_up * v_uv.y * u_lens.y);
         float horizon = clamp(ray.y * 1.8, 0.0, 1.0);
-        vec3 sky = ${isSpace ? 'vec3(0.018, 0.024, 0.065)' : isFoundry ? 'mix(vec3(0.37, 0.30, 0.33), vec3(0.10, 0.17, 0.28), pow(horizon, 0.6))' : isSeattle ? 'mix(vec3(0.61, 0.73, 0.75), vec3(0.32, 0.56, 0.68), pow(horizon, 0.6))' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6))'};
+        vec3 sky = ${isRainbow ? 'mix(vec3(0.075, 0.025, 0.17), vec3(0.013, 0.025, 0.085), pow(horizon, 0.6))' : isSpace ? 'vec3(0.018, 0.024, 0.065)' : isFoundry ? 'mix(vec3(0.37, 0.30, 0.33), vec3(0.10, 0.17, 0.28), pow(horizon, 0.6))' : isSeattle ? 'mix(vec3(0.61, 0.73, 0.75), vec3(0.32, 0.56, 0.68), pow(horizon, 0.6))' : 'mix(vec3(0.94, 0.76, 0.62), vec3(0.29, 0.64, 0.83), pow(horizon, 0.6))'};
         float sun = dot(ray, normalize(vec3(-0.6, 0.32, 0.65)));
-        ${isSpace || isSeattle || isFoundry ? '' : 'sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0); sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));'}
+        ${isRainbow || isSpace || isSeattle || isFoundry ? '' : 'sky += vec3(0.14, 0.09, 0.03) * pow(max(0.0, sun), 25.0); sky = mix(sky, vec3(1.0, 0.95, 0.72), smoothstep(0.9974, 0.9982, sun));'}
         gl_FragColor = vec4(sky, 1.0);
       }`);
     const skyProgram = gl.createProgram(), skyBuffer = gl.createBuffer();
@@ -1450,7 +1484,8 @@ export class RaceRenderer {
     this.figureAuras = this.figures.map(id => id ? this.upload(figureAuraGeometry(id)) : null);
     this.columns = players.length <= 1 ? 1 : players.length <= 4 ? 2 : players.length <= 6 ? 3 : 4;
     this.rows = Math.ceil(players.length / this.columns);
-    this.cameras = race.karts.map((kart) => ({ eye: racePose(routeOffset(kart.distance, -10, kart.onShortcut), kart.lane * 0.6, 4.5, kart.onShortcut).position, target: racePose(routeOffset(kart.distance, 10, kart.onShortcut), kart.lane * 0.35, 0.9, kart.onShortcut).position }));
+    this.cameras = race.karts.map(kartCameraTargets);
+    this.fallingCameras = race.karts.map(kart => Boolean(kart.fall));
     gl.enable(gl.DEPTH_TEST); gl.enable(gl.SCISSOR_TEST);
     gl.useProgram(program); gl.enableVertexAttribArray(this.position); gl.enableVertexAttribArray(this.color);
   }
@@ -1501,9 +1536,11 @@ export class RaceRenderer {
     gl.scissor(0, 0, width, height); gl.clearColor(0.07, 0.08, 0.12, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     for (let i = 0; i < race.karts.length; i++) {
       const kart = race.karts[i], camera = this.cameras[i];
-      const position = racePose(kart.distance, kart.lane, 0, kart.onShortcut).position;
-      const behind = racePose(routeOffset(kart.distance, -9 - kart.speed * 0.06, kart.onShortcut), kart.lane * 0.72, 4.5, kart.onShortcut).position;
-      const target = racePose(routeOffset(kart.distance, 10 + kart.speed * 0.1, kart.onShortcut), kart.lane * 0.4, 0.9, kart.onShortcut).position;
+      const position = kartWorldPose(kart).position;
+      const { eye: behind, target } = kartCameraTargets(kart);
+      // A respawn is a teleport, not a camera flight back through the void.
+      if (!kart.fall && this.fallingCameras[i]) { camera.eye = [...behind]; camera.target = [...target]; }
+      this.fallingCameras[i] = Boolean(kart.fall);
       const smoothing = Math.min(1, dt * 8);
       for (let axis = 0; axis < 3; axis++) { camera.eye[axis] += (behind[axis] - camera.eye[axis]) * smoothing; camera.target[axis] += (target[axis] - camera.target[axis]) * smoothing; }
       // Keep the chased kart in view through the tightest bends.
@@ -1553,13 +1590,14 @@ export class RaceRenderer {
         const other = race.karts[j];
         // Render every racer, including close followers between this kart and
         // its chase camera. The view frustum handles those behind the camera.
-        const pose = racePose(other.distance, other.lane, 0.04, other.onShortcut);
-        const yaw = pose.yaw + other.heading;
+        const pose = kartWorldPose(other, 0.04);
+        const yaw = pose.yaw + (other.fall ? other.fall.elapsed * 0.7 : other.heading);
         const transform = model(pose.position, yaw);
-        this.draw(this.shadow, model([pose.position[0], pose.position[1] + 0.055, pose.position[2]], yaw));
+        if (!other.fall) this.draw(this.shadow, model([pose.position[0], pose.position[1] + 0.055, pose.position[2]], yaw));
         const dancing = other.power.dance > 0;
         let figurePosition = pose.position, figureYaw = yaw;
         this.draw(dancing ? this.emptyKarts[j] : this.karts[j], transform);
+        if (other.fall) continue;
         if (dancing) {
           const age = DANCE_SECONDS - other.power.dance;
           // Step out and return during the first and last third of a second.
@@ -1629,7 +1667,7 @@ export class RaceRenderer {
       }
       // Transparent shells are the final world pass, after all opaque karts.
       for (const other of race.karts) {
-        if (other.power.shield <= 0) continue;
+        if (other.fall || (other.power.shield <= 0 && !(other.respawnGrace > 0))) continue;
         const pose = racePose(other.distance, other.lane, 0.04, other.onShortcut);
         this.draw(this.shield, model(pose.position, pose.yaw), 0.16 + Math.sin(race.elapsed * 3) * 0.025);
       }

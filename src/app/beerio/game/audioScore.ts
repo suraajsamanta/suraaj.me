@@ -29,14 +29,14 @@ const CHORDS = [
   [36, 55, 60, 64], [33, 57, 60, 64], [41, 57, 60, 65], [43, 55, 59, 62],
   [41, 57, 60, 65], [36, 55, 60, 64], [43, 55, 59, 62], [36, 55, 60, 64],
 ];
-const TRANSPOSE: Record<TrackId, number> = { sunset: 0, canyon: -2, brewery: 2, seattle: -5, space: -2, foundry: -7 };
+const TRANSPOSE: Record<TrackId, number> = { sunset: 0, canyon: -2, brewery: 2, seattle: -5, space: -2, rainbow: -2, foundry: -7 };
 
 export function renderRaceScore(sampleRate = SCORE_SAMPLE_RATE, trackId: TrackId = 'sunset'): [Float32Array, Float32Array] {
   if (!Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 192000) throw new RangeError('Score sample rate must be between 8 kHz and 192 kHz');
   const bpm = raceScore(trackId).bpm, duration = SCORE_BARS * 4 * 60 / bpm;
   const length = Math.round(sampleRate * duration), eighth = 60 / bpm / 2;
   const channels: [Float32Array, Float32Array] = [new Float32Array(length), new Float32Array(length)];
-  const space = trackId === 'space', foundry = trackId === 'foundry', canyon = trackId === 'canyon', brewery = trackId === 'brewery', seattle = trackId === 'seattle';
+  const space = trackId === 'space' || trackId === 'rainbow', foundry = trackId === 'foundry', canyon = trackId === 'canyon', brewery = trackId === 'brewery', seattle = trackId === 'seattle';
   const transpose = TRANSPOSE[trackId] ?? 0;
   let seed = 8137;
   const random = () => { seed = (seed * 16807) % 2147483647; return seed / 1073741823.5 - 1; };

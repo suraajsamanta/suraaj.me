@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { audioSnapshot, noteFrequency, RaceAudio, soundEvents } from './audio';
 import { RaceRenderer, parseColor, racerGeometry, dancerGeometry, twerkGeometry, figureAuraGeometry, lightningGeometry, racePose, routeOffset, barrierIntersectsShortcut } from './renderer';
 import { collectPowerups, ITEM_BURST_SECONDS, ITEM_RESPAWN_SECONDS } from './powerups';
-import { createRace, type GamePlayer } from './simulation';
+import { createRace, stepRace, kartWorldPose, type GamePlayer } from './simulation';
+import { rainbowPanel } from './rainbowCourse';
 import { ACTIVE_SHORTCUT, selectTrack, shortcutPose, SHORTCUT_LENGTH, SHORTCUT_POINTS, TRACKS, TRACK_LENGTH, TRACK_POINTS, trackPose } from './track';
 
 const player: GamePlayer = { id: 'racer', name: 'Racer', color: '#ffcb55', input: { steer: 0, accelerate: true, brake: false } };
@@ -204,8 +205,9 @@ test('each shortcut road, chase camera, kart and item use the physical branch', 
       assert.ok(renderedAt(kart.distance, kart.lane), `${track.id} branch kart`);
       assert.ok(renderedAt(start + span * .4, 2), `${track.id} branch hazard`);
       assert.ok(renderedAt(start + span * .6, -2), `${track.id} branch projectile`);
-      // The uploaded static world has the distinctive shortcut surface color.
-      assert.ok(stats.data.some(data => { for (let i = 3; i < data.length; i += 6) if (Math.abs(data[i] - .28) < 1e-5 && Math.abs(data[i + 1] - .34) < 1e-5 && Math.abs(data[i + 2] - .37) < 1e-5) return true; return false; }), `${track.id} branch road`);
+      // The uploaded static world has the course-appropriate shortcut surface color.
+      const branchColor = track.id === 'rainbow' ? rainbowPanel(0, 0) : [.28, .34, .37];
+      assert.ok(stats.data.some(data => { for (let i = 3; i < data.length; i += 6) if (Math.abs(data[i] - branchColor[0]) < 1e-5 && Math.abs(data[i + 1] - branchColor[1]) < 1e-5 && Math.abs(data[i + 2] - branchColor[2]) < 1e-5) return true; return false; }), `${track.id} branch road`);
       const branchView = Array.from(stats.views.at(-1)!); renderer.dispose();
       const mainGL = fakeWebGL(), mainCanvas = { ...canvas, getContext: () => mainGL.gl } as unknown as HTMLCanvasElement;
       kart.onShortcut = false;
@@ -531,4 +533,32 @@ test('ten-view celebrity effects animate and follow dancers without per-frame up
     assert.equal(stats.nonFinite, false);
     renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
   } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); }
+});
+
+
+test('rainbow falling karts and cameras use host world positions, respawn cleanly, and never re-upload meshes', () => {
+  const originalWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', { value: { devicePixelRatio: 1 }, configurable: true, writable: true });
+  try {
+    selectTrack('rainbow');
+    const { gl, stats, buffers, programs } = fakeWebGL();
+    const canvas = { width: 0, height: 0, getContext: () => gl, getBoundingClientRect: () => ({ width: 1280, height: 720 }) } as unknown as HTMLCanvasElement;
+    const race = createRace([player]); race.countdown = 0; race.powers.boxes = [];
+    const kart = race.karts[0]; kart.distance = 55; kart.lane = 7.2; kart.speed = 35;
+    const renderer = new RaceRenderer(canvas, [player], race), uploads = stats.uploads;
+    stepRace(race, [player], 1 / 60);
+    for (let frame = 0; frame < 107; frame++) {
+      stats.models = []; renderer.render(race, 1 / 60);
+      const p = kartWorldPose(kart, .04).position;
+      assert.ok(stats.models.some(m => Math.abs(m[12] - p[0]) < .001 && Math.abs(m[13] - p[1]) < .001 && Math.abs(m[14] - p[2]) < .001));
+      stepRace(race, [player], 1 / 60);
+    }
+    assert.equal(kart.fall, null); renderer.render(race, 1 / 60);
+    assert.equal(stats.uploads, uploads); assert.equal(stats.nonFinite, false);
+    renderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+    selectTrack('sunset');
+    const nextRace = createRace([player]), nextRenderer = new RaceRenderer(canvas, [player], nextRace);
+    nextRenderer.render(nextRace, 1 / 60); assert.equal(nextRace.karts[0].fall, null);
+    nextRenderer.dispose(); assert.equal(buffers.size, 0); assert.equal(programs.size, 0);
+  } finally { Object.defineProperty(globalThis, 'window', { value: originalWindow, configurable: true, writable: true }); selectTrack('sunset'); }
 });

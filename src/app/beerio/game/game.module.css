@@ -67,6 +67,19 @@
 .splatter i:nth-child(2) { right: -22%; top: -10%; transform: rotate(145deg); }
 .splatter i:nth-child(3) { left: -8%; bottom: -27%; transform: rotate(-65deg); }
 .splatter i:nth-child(4) { right: -8%; bottom: -27%; transform: rotate(220deg); }
+/* Translucent baby-oil film clouds the track, not the sibling HUD/map layers.
+   The host timer owns fade/expiry, including pauses and controller reconnects. */
+.oil { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; background: linear-gradient(112deg, #fff5d194 0%, #c9ad6d54 28%, #fffcec8c 48%, #c8ae6f66 72%, #fff5db88 100%); }
+.oil::before { content: ''; position: absolute; inset: -12%; background: radial-gradient(ellipse at 24% 34%, #fffcdfba 0 12%, #cba56166 19%, transparent 34%), radial-gradient(ellipse at 70% 62%, #fffce7cc 0 16%, #d3ba8980 26%, transparent 42%); }
+.oil i { position: absolute; top: -35%; width: 24%; height: 100%; border-radius: 30% 45% 48% 38%; border: 2px solid #fff6dba6; background: linear-gradient(90deg, #ad86434d, #fff5dbaa 33%, #e2c98e7a 75%, #fffdebc2); box-shadow: inset 5px 0 12px #fffef080, 5px 5px 12px #90754229; transform: rotate(-18deg); animation: oilSlide 4s ease-out both; }
+.oil i:nth-child(1) { left: -12%; height: 120%; }
+.oil i:nth-child(2) { left: 12%; top: -53%; width: 19%; }
+.oil i:nth-child(3) { left: 39%; top: -27%; width: 27%; }
+.oil i:nth-child(4) { left: 68%; top: -45%; width: 17%; height: 115%; }
+.oil i:nth-child(5) { left: 89%; top: -18%; width: 20%; }
+.oil[data-paused] i { animation-play-state: paused; }
+@keyframes oilSlide { from { transform: translateY(-12%) rotate(-18deg); } to { transform: translateY(24%) rotate(-12deg); } }
+@media (prefers-reduced-motion: reduce) { .oil i { animation: none; } }
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: #0b1018bc; backdrop-filter: blur(7px); padding: 24px; z-index: 3; }
 .errorCard, .podium { width: min(100%, 480px); padding: 28px; border: 1px solid #ffffff1f; border-radius: 18px; background: #19212c; text-align: center; box-shadow: 0 12px 60px #0005; }
 .errorCard strong { font-size: 23px; }

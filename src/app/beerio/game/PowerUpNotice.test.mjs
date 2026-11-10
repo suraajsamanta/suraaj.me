@@ -30,7 +30,7 @@ const { POWER_UPS } = load('powerups.ts');
 const css = readFileSync(resolve(directory, 'power-up-notice.module.css'), 'utf8');
 const render = props => renderToStaticMarkup(React.createElement(PowerUpNotice, { item: 'fizz', kind: 'pickup', keyboard: true, playerName: 'Driver One', ...props }));
 
-test('all twelve power-ups render different effect vignettes with meaningful text', () => {
+test('all thirteen power-ups render different effect vignettes with meaningful text', () => {
   const scenes = new Set();
   for (const [item, power] of Object.entries(POWER_UPS)) {
     const html = render({ item, kind: 'activate' });
@@ -47,7 +47,7 @@ test('all twelve power-ups render different effect vignettes with meaningful tex
     assert.ok((scene.match(/<(?:g|path|circle|ellipse)\b/g) || []).length < 28, 'Geometry stays bounded for ten simultaneous notices');
     scenes.add(scene);
   }
-  assert.equal(scenes.size, 12, 'Dance and twerk, as well as all other effects, have distinct depictions');
+  assert.equal(scenes.size, 13, 'Dance and twerk, as well as all other effects, have distinct depictions');
 });
 
 test('pickup instructions match keyboard and phone controls; full slot does not illustrate activation', () => {
@@ -63,7 +63,7 @@ test('pickup instructions match keyboard and phone controls; full slot does not 
 });
 
 test('copy describes duration, targeting, protection and brake cancellation accurately', () => {
-  for (const [item, words] of Object.entries({ flask: /7 seconds/, prism: /6 seconds.*protection/, jet: /autopilot.*Brake to cancel/, crown: /leader/, dance: /racer ahead/, twerk: /racer behind/, lightning: /unprotected rivals/ })) {
+  for (const [item, words] of Object.entries({ flask: /7 seconds/, prism: /6 seconds.*protection/, jet: /autopilot.*Brake to cancel/, crown: /leader/, dance: /racer ahead/, twerk: /racer behind/, lightning: /unprotected rivals/, diddy: /Baby oil.*rival views.*4 seconds/ })) {
     assert.match(render({ item }), words);
   }
 });
@@ -72,7 +72,7 @@ test('animation is finite, pauseable and reduced-motion safe, including entry ef
   assert.match(render({ paused: true }), /data-paused="true"/);
   assert.doesNotMatch(render({ paused: false }), /data-paused/);
   assert.match(css, /\.notice\[data-paused\][\s\S]*?animation-play-state:\s*paused/);
-  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.notice, \.notice::after, \.notice \*\s*\{\s*animation:\s*none/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.notice\[data-kind\], \.notice\[data-kind\]::before, \.notice::after, \.notice \*\s*\{\s*animation:\s*none/);
   assert.doesNotMatch(css, /\binfinite\b|\bfilter\s*:|\bwill-change\s*:/);
   const frames = [...css.matchAll(/@keyframes\s+\w+\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
   assert.ok(frames.length >= 20);
@@ -83,10 +83,27 @@ test('animation is finite, pauseable and reduced-motion safe, including entry ef
 });
 
 test('popup fits its own camera and has compact split-screen breakpoints', () => {
-  assert.match(css, /width:\s*min\(88%, 410px\)/);
+  assert.match(css, /width:\s*min\(80%, 360px\)/);
   assert.match(css, /box-sizing:\s*border-box/);
   assert.match(css, /pointer-events:\s*none/);
   for (const size of ['max-width: 360px', 'max-height: 240px', 'max-width: 180px']) assert.ok(css.includes(`@container (${size})`));
   const source = readFileSync(resolve(directory, 'PowerUpNotice.tsx'), 'utf8');
   assert.doesNotMatch(source, /requestAnimationFrame|setInterval|setTimeout|useEffect/);
+});
+
+
+test('notice stays above the driving view with a translucent background', () => {
+  assert.match(css, /top:\s*clamp\(2px, \.8cqh, 8px\)/);
+  assert.doesNotMatch(css, /top:\s*5[25]%|translate\(-50%, -50%\)/);
+  assert.match(css, /background:\s*linear-gradient\([^;]*#0c17286b[^;]*#0c172878/);
+  assert.doesNotMatch(css, /backdrop-filter|#0c1728f5/);
+  assert.match(css, /text-shadow:\s*0 1px 3px #000/, 'Text keeps contrast without an opaque card');
+});
+
+test('activation slams in with a local impact ring and both animations pause', () => {
+  assert.match(css, /\.notice\[data-kind='activate'\]\s*\{\s*animation:\s*slam \.42s/);
+  assert.match(css, /\.notice\[data-kind='activate'\]::before[^}]*animation:\s*slamRing \.35s/);
+  assert.match(css, /@keyframes slam\s*\{[\s\S]*?scale\(1\.04, \.88\)/, 'The impact has a squash then settles');
+  assert.match(css, /\.notice\[data-paused\]::before, \.notice\[data-paused\]::after\s*\{\s*animation-play-state:\s*paused/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.notice\[data-kind\], \.notice\[data-kind\]::before[^}]*animation:\s*none/, 'Reduced motion has enough specificity to override the activation animation');
 });

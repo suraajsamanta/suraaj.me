@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, DANCE_SECONDS, LIGHTNING_SECONDS, racerAhead, racerBehind, FLASK_SECONDS, FLASK_PULSE_SECONDS, PRISM_SECONDS, SPLATTER_SECONDS, JET_SECONDS, CROWN_WARNING_SECONDS, powerDrivingState, POWER_UPS, stepPowers, type PowerUp } from './powerups';
+import { absorbPowerHit, collectPowerups, createPowerState, createPowerWorld, DANCE_SECONDS, LIGHTNING_SECONDS, racerAhead, racerBehind, FLASK_SECONDS, FLASK_PULSE_SECONDS, PRISM_SECONDS, SPLATTER_SECONDS, OIL_SECONDS, JET_SECONDS, CROWN_WARNING_SECONDS, powerDrivingState, POWER_UPS, stepPowers, type PowerUp } from './powerups';
 import { createRace, stepRace, type GamePlayer } from './simulation';
 import { ACTIVE_SHORTCUT, selectTrack, SHORTCUT_LENGTH, TRACKS, TRACK_LENGTH, wrap } from './track';
 import { mergeControllerAction } from './actionMerge';
@@ -14,8 +14,8 @@ function ready(ids = ['a', 'b']) {
   return { race, players };
 }
 
-test('all twelve original items have clear controls and active-track item boxes', () => {
-  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'twerk']);
+test('all thirteen items have clear controls and active-track item boxes', () => {
+  assert.deepEqual(Object.keys(POWER_UPS), ['fizz', 'guard', 'slick', 'bolt', 'dance', 'flask', 'prism', 'splat', 'jet', 'crown', 'lightning', 'diddy', 'twerk']);
   const world = createPowerWorld();
   assert.equal(world.boxes.length, 12);
   assert.ok(world.boxes.every(box => box.distance > 0 && box.distance < TRACK_LENGTH));
@@ -498,7 +498,7 @@ test('deterministic pickup pools expose every original item and reserve Jet Keg 
 
 test('all new power timers freeze during countdown/completion and reject invalid time steps', () => {
   const { race, players } = ready(['a', 'b']);
-  Object.assign(race.karts[0].power, { flask: 4, flaskCooldown: 0.2, prism: 2, jet: 3, splatter: 1, leaderWarning: 1 });
+  Object.assign(race.karts[0].power, { flask: 4, flaskCooldown: 0.2, prism: 2, jet: 3, splatter: 1, oil: 2, leaderWarning: 1 });
   players[0].input.action = 20;
   for (const state of [{ countdown: 1, complete: false }, { countdown: 0, complete: true }]) {
     Object.assign(race, state);
@@ -1160,4 +1160,68 @@ test('using an item at a box preserves activation feedback while the next pickup
   assert.equal(box.cooldown, 4.5);
   assert.equal(kart.power.notice?.kind, 'activate', 'Pickup cannot erase a same-frame activation notice');
   assert.equal(kart.power.notice?.item, 'guard');
+});
+
+test('Diddy Mode oils all nine rival views without changing driving, then expires exactly once', () => {
+  const { race, players } = ready(Array.from({ length: 10 }, (_, i) => `oil-${i}`));
+  const [owner, ...rivals] = race.karts;
+  press(race, players, 0, 'diddy');
+  assert.equal(owner.power.item, null); assert.equal(owner.power.used, 1); assert.equal(owner.power.oil, 0);
+  assert.deepEqual(owner.power.notice, { kind: 'activate', item: 'diddy', remaining: 2 });
+  assert.ok(rivals.every(kart => kart.power.oil === OIL_SECONDS && kart.speed === 30 && kart.power.slow === 0));
+  tickPowers(race, players, 1);
+  assert.ok(rivals.every(kart => kart.power.oil > 2.9 && kart.power.oil < 3.1));
+  assert.equal(owner.power.used, 1, 'Heartbeat inputs cannot refresh an oil attack');
+  tickPowers(race, players, 3.1);
+  assert.ok(rivals.every(kart => kart.power.oil === 0));
+});
+
+test('Diddy Mode respects connection/finish eligibility, shields, and simultaneous protection', () => {
+  for (const reverse of [false, true]) {
+    const { race, players } = ready(['owner', 'guard', 'prism', 'jet', 'offline', 'finished', 'target']);
+    const [owner, guard, prism, jet, offline, finished, target] = race.karts;
+    race.karts.forEach((kart, index) => { kart.distance = 300 - index * 25; });
+    jet.distance = 20;
+    players[4].connected = false; finished.finishTime = 20;
+    [owner.power.item, guard.power.item, prism.power.item, jet.power.item] = ['diddy', 'guard', 'prism', 'jet'];
+    for (let i = 0; i < 4; i++) players[i].input.action = 1;
+    if (reverse) { race.karts.reverse(); players.reverse(); }
+    stepPowers(race, players, 1 / 60);
+    assert.equal(target.power.oil, OIL_SECONDS);
+    for (const kart of [owner, guard, prism, jet, offline, finished]) assert.equal(kart.power.oil, 0, kart.id);
+    assert.equal(guard.power.shield, 0, 'A single-use guard absorbs the oil');
+    assert.ok(prism.power.prism > 0 && jet.power.jet > 0, 'Persistent protection survives');
+  }
+});
+
+test('Diddy Mode retains inventory with no rival and never replays an old press on reconnect or rematch', () => {
+  const { race, players } = ready(['owner', 'offline']);
+  players[1].connected = false;
+  const [owner, target] = race.karts;
+  press(race, players, 0, 'diddy');
+  assert.equal(owner.power.item, 'diddy'); assert.equal(owner.power.used, 0);
+  assert.equal(owner.power.hitLabel, 'No rivals to oil');
+  players[1].connected = true;
+  stepPowers(race, players, 1 / 60);
+  assert.equal(target.power.oil, 0);
+  press(race, players, 0);
+  assert.equal(target.power.oil, OIL_SECONDS);
+  const rematch = createRace(players); rematch.countdown = 0;
+  rematch.karts[0].power.item = 'diddy';
+  stepPowers(rematch, players, 1 / 60);
+  assert.ok(rematch.karts.every(kart => kart.power.oil === 0 && kart.power.used === 0));
+  assert.equal(rematch.karts[0].power.item, 'diddy');
+});
+
+test('Prism Party and Jet Keg cleanse oil while repeated attacks are bounded by one fixed timer', () => {
+  for (const item of ['prism', 'jet'] as const) {
+    const { race, players } = ready(['owner', 'target']);
+    const [owner, target] = race.karts;
+    owner.distance = 300; target.distance = 100;
+    press(race, players, 0, 'diddy'); tickPowers(race, players, 1);
+    press(race, players, 0, 'diddy');
+    assert.equal(target.power.oil, OIL_SECONDS, 'Fresh attacks refresh instead of adding unbounded time');
+    press(race, players, 1, item);
+    assert.equal(target.power.oil, 0, item);
+  }
 });
