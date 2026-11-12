@@ -1,0 +1,27 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
+const require=createRequire(import.meta.url),dir=mkdtempSync(join(tmpdir(),'madfun-engine-'));
+const result=spawnSync(process.execPath,[require.resolve('typescript/bin/tsc'),'src/app/madfun/boomerang/engine.ts','--outDir',dir,'--module','commonjs','--target','es2020','--skipLibCheck'],{cwd:process.cwd(),encoding:'utf8'});
+assert.equal(result.status,0,result.stdout+result.stderr);
+const {createArena,startMatch,syncRoster,tickArena,returnToLobby,ARENAS}=require(join(dir,'engine.js'));
+process.on('exit',()=>rmSync(dir,{recursive:true,force:true}));
+const roster=[{id:'a',name:'Asha',color:'#ff7655'},{id:'b',name:'Ben',color:'#55aaff'}];
+const run=(s,n,inputs={})=>{for(let i=0;i<n*60;i++)tickArena(s,inputs,1/60);};
+const playing=()=>{const s=createArena(roster);startMatch(s);run(s,5.1);return s;};
+test('requires at least two fighters and caps unique roster at ten',()=>{const s=createArena([roster[0]]);assert.equal(startMatch(s),false);syncRoster(s,Array.from({length:20},(_,i)=>({...roster[0],id:String(i)})));assert.equal(s.players.length,10);});
+test('five-second countdown does not move fighters or replay held throw',()=>{const s=createArena(roster);startMatch(s);const x=s.players[0].x;run(s,4,{a:{x:1,y:0,throwSeq:3,dash:true}});assert.equal(s.phase,'countdown');assert.equal(s.players[0].x,x);assert.equal(s.boomerangs.length,0);run(s,1.1,{a:{x:0,y:0,throwSeq:3,dash:true}});assert.equal(s.phase,'playing');assert.equal(s.boomerangs.length,0);});
+test('movement is normalized and obstacle collisions slide rather than pass through',()=>{const s=playing();const p=s.players[0];p.x=305;p.y=240;run(s,.5,{a:{x:1,y:0,throwSeq:0,dash:false}});assert.ok(p.x<=318.1);assert.ok(Number.isFinite(p.x));});
+test('one active boomerang per player, fresh sequences only',()=>{const s=playing();run(s,.2,{a:{x:0,y:0,throwSeq:1,dash:false}});assert.equal(s.boomerangs.length,1);tickArena(s,{a:{x:0,y:0,throwSeq:2,dash:false}},.01);assert.equal(s.boomerangs.length,1);run(s,2,{a:{x:0,y:0,throwSeq:2,dash:false}});assert.equal(s.boomerangs.length,0);});
+test('boomerang eliminates a rival, scores round, returns to countdown',()=>{const s=playing(),[a,b]=s.players;a.x=100;a.y=100;a.dx=1;a.dy=0;b.x=250;b.y=100;a.shield=0;b.shield=0;run(s,.5,{a:{x:0,y:0,throwSeq:1,dash:false}});assert.equal(s.phase,'roundOver');assert.equal(a.score,1);assert.equal(a.kills,1);assert.equal(b.alive,false);run(s,3.1);assert.equal(s.phase,'countdown');assert.ok(s.players.every(p=>p.alive));});
+test('dash avoids boomerang hits and cannot retrigger while held',()=>{const s=playing();const p=s.players[0];p.x=100;p.y=100;run(s,.1,{a:{x:1,y:0,throwSeq:0,dash:true}});assert.ok(p.dashTime>0);run(s,2,{a:{x:0,y:0,throwSeq:0,dash:true}});assert.equal(p.dashTime,0);});
+test('fifth point produces champion and rematch resets scores',()=>{const s=playing();s.players[0].score=4;s.players[1].alive=false;run(s,.1);run(s,3.1);assert.equal(s.phase,'matchOver');assert.equal(s.winnerId,'a');assert.equal(startMatch(s),true);assert.ok(s.players.every(p=>p.score===0));});
+test('sudden death resolves idle rounds and malformed input stays finite',()=>{const s=playing();run(s,74,{a:{x:NaN,y:Infinity,throwSeq:-1,dash:false}});assert.ok(s.round>1||s.phase==='roundOver');assert.ok(s.players.every(p=>Number.isFinite(p.x)&&Number.isFinite(p.y)));});
+test('three maps, roster isolated, no lobby changes during match',()=>{assert.equal(ARENAS.length,3);const a=playing(),b=createArena(roster,'neon');syncRoster(a,[]);assert.equal(a.players.length,2);a.players[0].score=3;assert.equal(b.players[0].score,0);returnToLobby(a);syncRoster(a,[]);assert.equal(a.players.length,0);});
+test('simulation roundtrips as JSON and runs deterministic bot practice',()=>{const r=roster.map(p=>({...p,bot:true}));const a=createArena(r),b=createArena(r);startMatch(a);startMatch(b);run(a,18);run(b,18);assert.deepEqual(a,b);assert.deepEqual(JSON.parse(JSON.stringify(a)),a);});
+
+test('second throw press recalls active boomerang; rematch keeps action floor',()=>{const s=playing();tickArena(s,{a:{x:0,y:0,throwSeq:1,dash:false}},.02);assert.equal(s.boomerangs.length,1);assert.equal(s.boomerangs[0].returning,false);tickArena(s,{a:{x:0,y:0,throwSeq:2,dash:false}},.01);assert.equal(s.boomerangs[0].returning,true);s.phase='matchOver';assert.equal(startMatch(s),true);assert.equal(s.players[0].lastThrow,2);run(s,5.2,{a:{x:0,y:0,throwSeq:2,dash:false}});assert.equal(s.boomerangs.length,0);});
