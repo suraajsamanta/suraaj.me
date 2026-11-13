@@ -29,6 +29,23 @@ test('real relay isolates simultaneous rooms, readies controllers, reconnects, a
  await until(()=>p.getSnapshot().status==='connected'&&a.getSnapshot().players[0].connected,'resume',6000);assert.equal(p.getSnapshot().playerId,id);assert.equal(a.getSnapshot().players.length,10);
  a.lobby();await until(()=>!p.getSnapshot().locked&&a.getSnapshot().players[0].ready,'lobby auto-ready');a.start();await until(()=>p.getSnapshot().locked,'rematch');
  p.setInput({x:0,y:0,throwSeq:0,dash:false});p.setInput({x:1,y:0,throwSeq:1,dash:false});await until(()=>a.getSnapshot().players[0].input.throwSeq===2,'fresh local throw after controller remount');
+ // Drive the host's normal frame-loop publish calls while 10 phone clients
+ // continue their normal input ticks; HUD updates arrive well below relay budget.
+ const before=ps.length;const frames=setInterval(()=>a.publish({marker:'live'}),16);
+ try{await sleep(2300);}finally{clearInterval(frames);}
+ assert.ok(ps.length-before>=8 && ps.length-before<=12);
+ assert.equal(a.getSnapshot().status,'connected');
+ assert.equal(a.getSnapshot().players.length,10);
+ // Deliver the same notification and socket closure as a relay rate rejection.
+ // Recovery should preserve the host token and room without an explicit Retry.
+ const code=a.getSnapshot().code;
+ ar.host.send({type:'error',code:'rate_limit',fatal:true,message:'Too many messages. Please reconnect.'});
+ ar.host.close();
+ await until(()=>a.getSnapshot().status==='reconnecting','rate-limit reconnect');
+ await until(()=>a.getSnapshot().status==='connected','host resume');
+ assert.equal(a.getSnapshot().code,code);
+ assert.equal(a.getSnapshot().players.length,10);
+ assert.equal(a.getSnapshot().error,null);
  // Beerio's modern character-selection room remains a separate, unchanged protocol.
  const beerio=new WS(process.env.NEXT_PUBLIC_BEERIO_RELAY_URL);const msgs=[];beerio.on('message',d=>msgs.push(JSON.parse(d)));await new Promise(r=>beerio.once('open',r));beerio.send(JSON.stringify({type:'create',maxPlayers:10,characterSelectionVersion:3}));await until(()=>msgs.some(m=>m.type==='welcome'),'Beerio welcome');const room=msgs.find(m=>m.type==='welcome').room;assert.equal(room.characterSelection,true);
  const wrong=make();wrong.join(room.code,'Wrong game');await until(()=>wrong.getSnapshot().status==='error','wrong game rejection');assert.match(wrong.getSnapshot().error,/refresh|Beerio|update/i);

@@ -13,7 +13,7 @@
     "test:view": "node --test src/app/beerio/game/GameView.test.mjs src/app/beerio/game/PowerUpNotice.test.mjs src/app/beerio/game/guest-models.test.mjs",
     "test:audio": "node --test src/app/beerio/game/audio.test.mjs src/app/beerio/game/useRaceAudio.test.mjs",
     "generate:race-audio": "node scripts/generate-race-score.mjs",
-    "test:madfun": "node --test src/app/madfun/boomerang/*.test.mjs"
+    "test:madfun": "node --test src/app/madfun/*/*.test.mjs src/app/madfun/party-games.test.mjs"
   },
   "dependencies": {
     "next": "16.4.5",
