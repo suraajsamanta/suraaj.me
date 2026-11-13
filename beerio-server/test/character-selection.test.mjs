@@ -87,3 +87,30 @@ test('relay recovery preserves picks but never reuses a partially elapsed countd
   const phone = peer(); service.receive(phone, { type: 'resume', code: f.room.code, roomId: f.room.roomId, token });
   assert.equal(room.countdownEndsAt, 25000); now = 24999; service.sweep(); assert.equal(room.locked, false); now = 25000; service.sweep(); assert.equal(room.locked, true);
 });
+
+test('v4 automatically locks the confirmed roster for the on-track countdown and resets on rematch', () => {
+  const f = fixture(); f.room.characterSelectionVersion = 4;
+  const a = f.peer(), b = f.peer();
+  for (const [peer, name] of [[a, 'A'], [b, 'B']]) f.service.receive(peer, { type: 'join', code: f.room.code, name, characterSelectionVersion: 4 });
+  f.choose(a, { direction: 'right' }); f.choose(a);
+  assert.equal(f.room.locked, false, 'wait for every player');
+  f.choose(b, { direction: 'right' }); f.choose(b);
+  assert.equal(f.room.selectionPhase, 'racing'); assert.equal(f.room.locked, true);
+  assert.equal(f.room.countdownEndsAt, null, 'no extra lobby countdown before the track');
+  assert.deepEqual([...f.room.participants], [a.playerId,b.playerId]);
+  assert.deepEqual(f.room.players.get(a.playerId).input, ZERO_INPUT);
+  f.service.receive(f.host, { type: 'lock', locked: false });
+  assert.equal(f.room.selectionPhase, 'gathering'); assert.equal(f.room.locked, false);
+  assert.ok([...f.room.players.values()].every(player => !player.characterConfirmed));
+});
+
+test('v4 never starts with disconnected or unconfirmed seats', () => {
+  const f = fixture(); f.room.characterSelectionVersion = 4;
+  const a = f.peer(), b = f.peer();
+  for (const p of [a,b]) f.service.receive(p, { type:'join', code:f.room.code, name:'Driver', characterSelectionVersion:4 });
+  f.choose(a, { direction:'right' }); f.choose(a);
+  f.service.disconnect(b);
+  assert.equal(f.room.locked, false);
+  f.service.receive(f.host, { type:'skip_offline' });
+  assert.equal(f.room.locked, true, 'explicit host removal leaves a fully confirmed roster');
+});

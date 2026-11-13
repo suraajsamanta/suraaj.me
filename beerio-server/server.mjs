@@ -2,21 +2,23 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import { RoomService } from './core.mjs';
+import { PartyService } from './party.mjs';
 
 /** One process owns all rooms. Do not put round-robin replicas in front of this service. */
 export function createRelay({ allowedOrigins = [], maxConnections = 2000, logger = console } = {}) {
   const rooms = new RoomService();
+  const parties = new PartyService();
   const upgrades = new Map();
   const server = http.createServer((request, response) => {
     if (request.url === '/health') {
       response.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      response.end(JSON.stringify({ ok: true, service: 'beerio-relay', rooms: rooms.rooms.size }));
+      response.end(JSON.stringify({ ok: true, service: 'beerio-relay', rooms: rooms.rooms.size + parties.rooms.size }));
     } else { response.writeHead(404); response.end('Not found'); }
   });
   const wss = new WebSocketServer({ noServer: true, maxPayload: 40_960, perMessageDeflate: false });
   server.on('upgrade', (request, socket, head) => {
     const reject = (code) => { socket.end(`HTTP/1.1 ${code}\r\nConnection: close\r\n\r\n`); };
-    if (request.url !== '/' && request.url !== '/room') { reject('404 Not Found'); return; }
+    if (request.url !== '/' && request.url !== '/room' && request.url !== '/party') { reject('404 Not Found'); return; }
     if (allowedOrigins.length && !allowedOrigins.includes(request.headers.origin)) { reject('403 Forbidden'); return; }
     if (wss.clients.size >= maxConnections) { reject('503 Service Unavailable'); return; }
     // Trust the TCP peer rather than spoofable forwarded headers. Tune at the reverse proxy too.
@@ -28,9 +30,9 @@ export function createRelay({ allowedOrigins = [], maxConnections = 2000, logger
       upgrades.set(ip, bucket);
     }
     if (++bucket.count > 120) { reject('429 Too Many Requests'); return; }
-    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws));
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request.url === '/party' ? parties : rooms));
   });
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, service) => {
     ws.isAlive = true;
     const peer = {
       send(message) {
@@ -41,17 +43,17 @@ export function createRelay({ allowedOrigins = [], maxConnections = 2000, logger
       },
       close() { ws.close(1000); },
     };
-    rooms.connect(peer);
+    service.connect(peer);
     ws.on('pong', () => { ws.isAlive = true; });
     ws.on('message', (data, binary) => {
       if (binary) { ws.close(1003, 'Text messages only'); return; }
-      try { rooms.receive(peer, JSON.parse(data.toString())); }
+      try { service.receive(peer, JSON.parse(data.toString())); }
       catch { ws.close(1007, 'Invalid message'); }
     });
-    ws.on('close', () => rooms.disconnect(peer));
-    ws.on('error', () => rooms.disconnect(peer));
+    ws.on('close', () => service.disconnect(peer));
+    ws.on('error', () => service.disconnect(peer));
   });
-  const sweep = setInterval(() => rooms.sweep(), 100);
+  const sweep = setInterval(() => { rooms.sweep(); parties.sweep(); }, 100);
   const heartbeat = setInterval(() => {
     for (const ws of wss.clients) {
       if (!ws.isAlive) { ws.terminate(); continue; }
@@ -72,7 +74,7 @@ export function createRelay({ allowedOrigins = [], maxConnections = 2000, logger
     wss.close(() => server.close(resolve));
   });
   server.on('error', (error) => logger.error('Beerio relay server error:', error.message));
-  return { server, rooms, close };
+  return { server, rooms, parties, close };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -11,7 +11,7 @@ export const SELECTION_COLUMNS = 6;
 const selectionCharacters = room => room.characterSelectionVersion >= 2 ? SELECTION_CHARACTERS : LEGACY_SELECTION_CHARACTERS;
 export const SELECTION_COUNTDOWN_MS = 5000;
 const CHARACTERS = new Set([...SELECTION_CHARACTERS, 'fox', 'robot', 'frog', 'cat', 'alien', 'bear', 'bird', 'blob']);
-const VEHICLES = new Set(['kart', 'buggy', 'roadster', 'motorcycle']);
+const VEHICLES = new Set(['kart', 'buggy', 'roadster', 'motorcycle', 'bmw-m2', 'bmw-m3', 'bmw-m4', 'amg-gt', 'amg-g63', 'lamborghini', 'mclaren', 'ferrari', 'ducati', 'bmw-bike', 'cybertruck', 'tesla-roadster', 'bugatti']);
 const validAppearance = (a) => a && typeof a === 'object' && !Array.isArray(a) && CHARACTERS.has(a.character) && VEHICLES.has(a.vehicle) && typeof a.color === 'string' && /^#[a-f\d]{6}$/i.test(a.color);
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const safeInput = (value) => value && typeof value === 'object' &&
@@ -92,10 +92,17 @@ export class RoomService {
     } });
   }
   updateSelection(room) {
-    if (!room.characterSelection || !['selecting', 'countdown'].includes(room.selectionPhase)) return;
+    if (!room.characterSelection || room.locked || !(room.characterSelectionVersion >= 4 ? ['gathering', 'selecting', 'countdown'] : ['selecting', 'countdown']).includes(room.selectionPhase)) return;
     const players = [...room.players.values()];
     const allSelected = Boolean(room.host) && players.length > 0 && room.pendingWelcomes.size === 0 &&
       players.every(player => player.peer && player.characterConfirmed);
+    if (allSelected && room.characterSelectionVersion >= 4) {
+      room.locked = true; room.selectionPhase = 'racing'; room.countdownEndsAt = null;
+      room.participants = new Set(players.map(player => player.id));
+      for (const player of players) this.resetInput(room, player);
+      return;
+    }
+    if (!allSelected && room.selectionPhase === 'gathering') return;
     if (!allSelected) { room.selectionPhase = 'selecting'; room.countdownEndsAt = null; }
     else if (room.selectionPhase !== 'countdown') {
       room.selectionPhase = 'countdown'; room.countdownEndsAt = this.now() + (room.characterSelectionVersion >= 3 ? 8000 : SELECTION_COUNTDOWN_MS);
@@ -322,7 +329,7 @@ export class RoomService {
     const room = {
       code, maxPlayers, publicMatchmaking: message.publicMatchmaking === true, players: new Map(), host: peer, hostToken, roomId: hashToken(hostToken),
       hostGoneAt: null, touchedAt: this.now(), locked: false, recovering: false,
-      characterSelection: [1, 2, 3].includes(message.characterSelectionVersion), characterSelectionVersion: [2, 3].includes(message.characterSelectionVersion) ? message.characterSelectionVersion : 1, selectionPhase: 'gathering', countdownEndsAt: null,
+      characterSelection: [1, 2, 3, 4].includes(message.characterSelectionVersion), characterSelectionVersion: [2, 3, 4].includes(message.characterSelectionVersion) ? message.characterSelectionVersion : 1, selectionPhase: 'gathering', countdownEndsAt: null,
       recoveryEnabled: message.recoveryVersion === 1, checkpointRevision: 0, pendingWelcomes: new Map(),
       participants: new Set(),
     };
@@ -453,7 +460,7 @@ export class RoomService {
     const c = message.checkpoint;
     if (!c || typeof c !== 'object' || c.version !== 1 || c.roomId !== message.roomId ||
       !Number.isInteger(c.maxPlayers) || c.maxPlayers < 4 || c.maxPlayers > 10 ||
-      (c.characterSelectionVersion !== undefined && ![1, 2, 3].includes(c.characterSelectionVersion)) ||
+      (c.characterSelectionVersion !== undefined && ![1, 2, 3, 4].includes(c.characterSelectionVersion)) ||
       typeof c.locked !== 'boolean' || !Array.isArray(c.players) || c.players.length > c.maxPlayers ||
       c.players.some(p => !p || typeof p.id !== 'string' || !/^[a-f0-9]{16}$/.test(p.id) ||
         !isHash(p.tokenHash) || typeof p.name !== 'string' || p.name !== cleanName(p.name) || !validName(p.name) || !(validAppearance(p) || (c.characterSelectionVersion >= 3 && p.character === null && validAppearance({ ...p, character: 'gorilla' }))) ||
@@ -479,7 +486,7 @@ export class RoomService {
       code: this.makeCode(message.code), roomId: message.roomId, hostToken: message.token,
       host: null, hostGoneAt: this.now(), touchedAt: this.now(),
       maxPlayers: c.maxPlayers, publicMatchmaking: c.publicMatchmaking === true, locked: c.locked, recovering: c.locked && c.participants.length > 0,
-      characterSelection: c.characterSelection === true, characterSelectionVersion: [2, 3].includes(c.characterSelectionVersion) ? c.characterSelectionVersion : 1, selectionPhase: c.locked ? 'racing' : ['selecting', 'countdown'].includes(c.selectionPhase) ? 'selecting' : 'gathering', countdownEndsAt: null,
+      characterSelection: c.characterSelection === true, characterSelectionVersion: [2, 3, 4].includes(c.characterSelectionVersion) ? c.characterSelectionVersion : 1, selectionPhase: c.locked ? 'racing' : ['selecting', 'countdown'].includes(c.selectionPhase) ? 'selecting' : 'gathering', countdownEndsAt: null,
       recoveryEnabled: true, checkpointRevision: 0, pendingWelcomes: new Map(),
       participants: new Set(c.participants),
       players: new Map(c.players.map(p => [p.id, {
