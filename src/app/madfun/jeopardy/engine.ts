@@ -4,7 +4,7 @@ export type Seat={id:string;name:string;connected:boolean};
 export type Question=Clue&{round:string;points:number;start:boolean};
 export type Recap={index:number;round:string;points:number;prompt:string;answer?:string;answers:Record<string,string>;marks:Record<string,boolean>};
 type PublicRecap=Omit<Recap,'answers'|'marks'>;
-export type Run={phase:'round'|'answer'|'review'|'reveal'|'results';index:number;players:Seat[];scores:Record<string,number>;answers:Record<string,string>;marks:Record<string,boolean>;recap:Recap[];deadline:number|null;version:number};
+export type Run={phase:'round'|'answer'|'review'|'reveal'|'recap'|'results';index:number;players:Seat[];scores:Record<string,number>;answers:Record<string,string>;marks:Record<string,boolean>;recap:Recap[];recapIndex:number;recapOpen:boolean;deadline:number|null;version:number};
 const norm=(x:string)=>x.normalize('NFKD').replace(/\p{M}/gu,'').toLowerCase().replace(/^\s*(what|who)\s+(is|are|was|were)\s+/,'').replace(/[^\p{L}\p{N}]+/gu,' ').trim();
 const correct=(c:Clue,x:string)=>!c.manual&&!!norm(x)&&[c.answer,...c.aliases??[]].some(a=>a&&norm(a)===norm(x));
 export function parseDeck(text:string):Deck{
@@ -21,7 +21,7 @@ export function makeQueue(d:Deck,random=Math.random):Question[]{
  const shuffle=(c:Clue)=>{if(!c.choices)return c;const choices=[...c.choices];for(let i=choices.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[choices[j],choices[i]]=[choices[i],choices[j]];}return {...c,choices};};
  return [...d.categories.flatMap(c=>c.clues.map((q,i)=>({...shuffle(q),round:c.name,points:100*(i+1),start:i===0}))),...(d.final?[{...shuffle(d.final),round:d.final.category,points:500,start:true}]:[])];
 }
-export const newRun=(players:Seat[],version:number):Run=>({phase:'round',index:0,players:players.filter(p=>p.connected),scores:{},answers:{},marks:{},recap:[],deadline:null,version});
+export const newRun=(players:Seat[],version:number):Run=>({phase:'round',index:0,players:players.filter(p=>p.connected),scores:{},answers:{},marks:{},recap:[],recapIndex:0,recapOpen:false,deadline:null,version});
 export function move(g:Run,queue:Question[],actor:string,input:unknown,now=Date.now()):Run{
  const c=queue[g.index];if(!c||!input||typeof input!=='object')return g;const a=input as {type?:unknown;value?:unknown;version?:unknown};if(a.version!==g.version)return g;
  const next=(patch:Partial<Run>):Run=>({...g,...patch,version:g.version+1});
@@ -30,7 +30,7 @@ export function move(g:Run,queue:Question[],actor:string,input:unknown,now=Date.
   const v=a.value.trim();return v&&v.length<=160&&(!c.choices||c.choices.includes(v))?{...g,answers:{...g.answers,[actor]:v}}:g;
  }
  if((g.phase==='round'&&a.type==='open')||(g.phase==='reveal'&&a.type==='next')){
-  const index=g.index+Number(g.phase==='reveal');if(index===queue.length)return next({phase:'results'});
+  const index=g.index+Number(g.phase==='reveal');if(index===queue.length)return next({phase:'recap',recapIndex:0,recapOpen:false});
   if(g.phase==='reveal'&&queue[index].start)return next({index,phase:'round',answers:{},marks:{},deadline:null});
   return next({index,phase:'answer',answers:{},marks:{},deadline:now+30000});
  }
@@ -44,31 +44,21 @@ export function move(g:Run,queue:Question[],actor:string,input:unknown,now=Date.
    recap:[...g.recap,{index:g.index,round:c.round,points:c.points,prompt:c.prompt,answer,answers:g.answers,marks:g.marks}],
   });
  }
+ if(g.phase==='recap'){
+  if(a.type==='reveal_recap'&&!g.recapOpen)return next({recapOpen:true});
+  if(a.type==='next_recap'&&g.recapOpen){
+   const recapIndex=g.recapIndex+1;
+   return recapIndex>=g.recap.length?next({phase:'results',recapOpen:false}):next({recapIndex,recapOpen:false});
+  }
+ }
  return g;
 }
 export function publicRun(g:Run,q:Question[],title:string){
  const c=q[g.index];
  const base={title,phase:g.phase,index:g.index,total:q.length,round:c.round,points:c.points,players:g.players,scores:g.phase==='results'?g.scores:{},version:g.version,deadline:g.deadline,submitted:Object.keys(g.answers),...(['answer','review','reveal'].includes(g.phase)?{prompt:c.prompt,choices:c.choices}:{})};
- type WithRecap=typeof base&{recap?:PublicRecap[]};
- if(g.phase!=='results')return base as WithRecap;
- // Send the answer key, never players' private submissions or marks. Stay within
- // the relay's byte cap even for long, multibyte decks; prioritize full answers.
- const recap=g.recap.map(({index,round,points,prompt,answer})=>({index,round,points,prompt,answer}));
- const out={...base,recap};
- const encoder=new TextEncoder();
- for(let limit=300;encoder.encode(JSON.stringify(out)).length>31000&&limit>=0;limit-=30){
-  for(const [i,entry] of recap.entries()){
-   const chars=Array.from(g.recap[i].prompt);
-   if(chars.length>limit)entry.prompt=limit>0?chars.slice(0,limit).join('')+'…':'';
-  }
- }
- if(encoder.encode(JSON.stringify(out)).length>31000)for(const entry of recap)entry.round='';
- for(let limit=130;encoder.encode(JSON.stringify(out)).length>31000&&limit>=0;limit-=10){
-  for(const [i,entry] of recap.entries()){
-   const answer=g.recap[i].answer;
-   if(answer&&Array.from(answer).length>limit)entry.answer=Array.from(answer).slice(0,limit).join('')+'…';
-  }
- }
- return out as WithRecap;
+ type WithRecap=typeof base&{revealCard?:PublicRecap;recapOpen?:boolean};
+ if(g.phase!=='recap')return base as WithRecap;
+ const {index,round,points,prompt,answer}=g.recap[g.recapIndex];
+ return {...base,index,round,points,recapOpen:g.recapOpen,revealCard:{index,round,points,prompt,...(g.recapOpen&&answer!==undefined?{answer}:{})}} as WithRecap;
 }
 export type PublicRun=ReturnType<typeof publicRun>;
