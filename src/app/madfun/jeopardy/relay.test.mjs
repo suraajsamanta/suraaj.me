@@ -8,7 +8,7 @@ import {createRelay} from '../../../../beerio-server/server.mjs';
 const {WebSocket}=createRequire(new URL('../../../../beerio-server/package.json',import.meta.url))('ws');
 const {outputText}=ts.transpileModule(await readFile(new URL('./engine.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}});
 const {makeQueue,move,newRun,publicRun}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
-test('real party relay delivers private answers and public reveal to both phones',async t=>{
+test('real party relay keeps grading private and publishes the answer key only at final results',async t=>{
  const relay=createRelay();relay.server.listen(0,'127.0.0.1');await once(relay.server,'listening');
  const sockets=[];t.after(()=>{sockets.forEach(ws=>ws.terminate());return relay.close();});
  const open=async()=>{
@@ -33,5 +33,7 @@ test('real party relay delivers private answers and public reveal to both phones
  act('close');pub();
  for(const p of phones){assert.equal((await p.read('state')).payload.answers,undefined);assert.ok(!p.inbox.some(m=>m.type==='action'));}
  act('reveal');pub();
- for(const p of phones){const {payload}=await p.read('state');assert.equal(payload.answer,'Yes');assert.equal(payload.scores[seats[0].id],100);assert.equal(payload.scores[seats[1].id],0);}
+ for(const p of phones){const {payload}=await p.read('state');assert.equal(payload.answer,undefined);assert.equal(payload.recap,undefined);assert.deepEqual(payload.scores,{});}
+ act('next');pub();
+ for(const p of phones){const {payload}=await p.read('state');assert.equal(payload.phase,'results');assert.equal(payload.recap[0].answer,'Yes');assert.equal(payload.recap[0].answers,undefined);assert.equal(payload.scores[seats[0].id],100);assert.equal(payload.scores[seats[1].id],0);}
 });
