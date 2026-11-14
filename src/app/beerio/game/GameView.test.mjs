@@ -153,6 +153,20 @@ async function fixture(t, initialProps = {}) {
   };
 }
 
+test('speedometer converts race speed to mph without changing simulation units', async t => {
+  const f = await fixture(t, { initialCountdown: 0 });
+  await f.frame(100);
+  const speedometer = () => findNodes(f.tree(), node => node.props?.className === 'speed')[0];
+  assert.equal(findNodes(speedometer(), node => node.type === 'strong')[0].props.children, 0);
+  f.race().karts[0].speed = 30;
+  await f.frame(200);
+  const speedHud = speedometer();
+  const physicalSpeed = f.race().karts[0].speed;
+  assert.ok(physicalSpeed > 25);
+  assert.equal(findNodes(speedHud, node => node.type === 'strong')[0].props.children, Math.round(physicalSpeed / 0.44704));
+  assert.equal(findNodes(speedHud, node => node.type === 'span')[0].props.children, 'mph');
+});
+
 test('an initially paused GameView retains its scene and countdown and pauses audio', async t => {
   const f = await fixture(t, { paused: true, players: [player({ accelerate: true, action: 1 })] });
   await f.frame(100);

@@ -382,3 +382,11 @@
   .localRaceControls .pedals { height: clamp(100px, 50dvh, 180px); }
   .localDriverSelection > div { display: flex; }
 }
+
+/* The join form can exceed the viewport (especially with Safari's keyboard
+   open). Keep it in normal page flow; the active controller stays locked. */
+.shell.joinSetup { height: auto; min-height: 100dvh; overflow: visible; }
+.joinSetup .content { flex: 1 0 auto; margin-block: 0; }
+.joinSetup .panel { flex: 0 0 auto; justify-content: flex-start; padding-bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px)); }
+.joinSetup .panel .back, .joinSetup .form > .primary { min-height: 44px; }
+.joinSetup .orbitStage { touch-action: pan-y; touch-action: pan-y pinch-zoom; }

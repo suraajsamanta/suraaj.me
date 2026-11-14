@@ -44,7 +44,7 @@ function RideOrbit({ id, name, paint }: { id: string; name: string; paint: strin
   const canvas = useRef<HTMLCanvasElement>(null);
   const preview = useRef<ReturnType<typeof import("./game/renderer")["createGaragePreview"]>>(null);
   const angle = useRef<number>(GARAGE_ANGLES[0].angle);
-  const gesture = useRef<{ pointer: number; x: number } | null>(null);
+  const gesture = useRef<{ pointer: number; x: number; y: number; axis: "pending" | "horizontal" | "vertical" } | null>(null);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<typeof GARAGE_ANGLES[number]["asset"]>("front");
   useEffect(() => {
@@ -87,13 +87,21 @@ function RideOrbit({ id, name, paint }: { id: string; name: string; paint: strin
       }}
       onPointerDown={event => {
         if (!event.isPrimary || event.button !== 0) return;
-        gesture.current = { pointer: event.pointerId, x: event.clientX };
-        event.currentTarget.setPointerCapture(event.pointerId);
+        gesture.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, axis: event.pointerType === "touch" ? "pending" : "horizontal" };
+        // Touch already has implicit capture. Leave vertical swipes to Safari.
+        if (event.pointerType !== "touch") event.currentTarget.setPointerCapture(event.pointerId);
       }}
       onPointerMove={event => {
-        if (!gesture.current || gesture.current.pointer !== event.pointerId) return;
-        const dx = event.clientX - gesture.current.x;
-        gesture.current.x = event.clientX;
+        const drag = gesture.current;
+        if (!drag || drag.pointer !== event.pointerId || drag.axis === "vertical") return;
+        const dx = event.clientX - drag.x;
+        if (drag.axis === "pending") {
+          const dy = event.clientY - drag.y;
+          if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+          drag.axis = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+          if (drag.axis === "vertical") return;
+        }
+        drag.x = event.clientX;
         turn(angle.current - dx * .016);
       }}
       onPointerUp={() => { gesture.current = null; }} onPointerCancel={() => { gesture.current = null; }}
@@ -547,7 +555,7 @@ export default function Beerio() {
     {room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}
   </main>;
 
-  return <main className={styles.shell}>
+  return <main className={`${styles.shell} ${mode === "join" ? styles.joinSetup : ""}`}>
     <header className={styles.header}><FullscreenButton /><Link href="/beerio" className={styles.wordmark}>BEERIO<span>★</span></Link><span>THE BIG SCREEN IS THE TRACK.</span><Link href="/">suraaj.me ↗</Link></header>
     <div className={styles.content}>
       {mode === "home" && <section className={styles.hero}>
