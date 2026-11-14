@@ -5,9 +5,10 @@ import { BeerioRoomClient } from "./client";
 export { BeerioRoomClient, getRelayUrl } from "./client";
 export type { RoomInput, RoomPlayer, RoomSnapshot, RoomRole, RoomStatus } from "./types";
 
-/** One hook per page. Keep the host mounted throughout the lobby, countdown, and race. */
-export function useBeerioRoom({ autoResume = true }: { autoResume?: boolean } = {}) {
-  const [client] = useState(() => new BeerioRoomClient());
+/** Keep the host mounted throughout the lobby, countdown, and race. A second
+ * local driver requires its own storage key and explicit room-scoped resume. */
+export function useBeerioRoom({ autoResume = true, storageKey }: { autoResume?: boolean; storageKey?: string } = {}) {
+  const [client] = useState(() => new BeerioRoomClient(storageKey));
   const snapshot = useSyncExternalStore(client.subscribe, client.getSnapshot, client.getServerSnapshot);
   useEffect(() => {
     if (autoResume) {
@@ -31,6 +32,7 @@ export function useBeerioRoom({ autoResume = true }: { autoResume?: boolean } = 
   return {
     ...snapshot,
     createRoom: client.createRoom,
+    restoreSession: client.restoreSession,
     joinRoom: client.joinRoom,
     joinRandomRoom: client.joinRandomRoom,
     setInput: client.setInput,

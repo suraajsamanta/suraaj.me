@@ -8,3 +8,7 @@
 .roomControls{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:.5rem}.roomControls span{color:#dfcaf5;font-size:.8rem;letter-spacing:.1em}.roomControls b{color:#ffdf89}.joinPanel{display:flex;align-items:center;justify-content:center;gap:1rem;margin:.75rem auto;width:min(95%,410px)}.joinPanel img{border-radius:.4rem}.joinPanel a{color:#ffdf89}
 
 .scene{max-width:44rem;margin:.8rem auto .55rem;padding:.65rem .9rem;border-left:3px solid #e1b9fe;background:#37214b88;border-radius:0 .6rem .6rem 0;color:#e6d9f3;font-size:clamp(.92rem,2.3vw,1.2rem);line-height:1.45;text-align:left}.phone .scene{margin:.55rem 0}
+
+.privateInvite{display:grid;justify-items:start;gap:10px;margin:12px 0}
+.phoneResults{max-width:620px;margin:0 auto}.phoneResults .reveal{grid-template-columns:minmax(0,1fr)}.phoneResults .reveal article{overflow-wrap:anywhere}
+@media(max-width:500px){.top{flex-wrap:wrap;gap:8px}.roomControls{margin-left:auto}.roomControls button{padding:10px;min-height:42px}.joinPanel{flex-wrap:wrap;text-align:center}.phoneResults .reveal article{padding:16px}}

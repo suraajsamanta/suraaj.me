@@ -1556,9 +1556,11 @@ export class RaceRenderer {
     gl.depthMask(true); gl.enable(gl.DEPTH_TEST); gl.useProgram(this.program);
     gl.enableVertexAttribArray(this.position); gl.enableVertexAttribArray(this.color);
   }
-  render(race: RaceState, dt: number) {
+  render(race: RaceState, dt: number, focusPlayerId?: string) {
     const gl = this.gl;
     const rect = this.canvas.getBoundingClientRect();
+    const focusIndex = race.karts.findIndex(kart => kart.id === focusPlayerId);
+    const columns = focusIndex >= 0 ? 1 : this.columns, rows = focusIndex >= 0 ? 1 : this.rows;
     const pixelRatio = Math.min(window.devicePixelRatio || 1, race.karts.length > 6 ? 1 : race.karts.length > 4 ? 1.25 : 1.75, Math.sqrt(3400000 / Math.max(1, rect.width * rect.height)));
     const width = Math.max(1, Math.round(rect.width * pixelRatio)), height = Math.max(1, Math.round(rect.height * pixelRatio));
     if (width !== this.width || height !== this.height) {
@@ -1577,9 +1579,10 @@ export class RaceRenderer {
       // Keep the chased kart in view through the tightest bends.
       camera.target[0] = camera.target[0] * 0.98 + position[0] * 0.02;
       camera.target[2] = camera.target[2] * 0.98 + position[2] * 0.02;
-      const column = i % this.columns, row = Math.floor(i / this.columns);
-      const x = Math.round(column * width / this.columns) + 1, right = Math.round((column + 1) * width / this.columns) - 1;
-      const top = Math.round(row * height / this.rows) + 1, bottom = Math.round((row + 1) * height / this.rows) - 1;
+      if (focusIndex >= 0 && i !== focusIndex) continue;
+      const column = focusIndex >= 0 ? 0 : i % columns, row = focusIndex >= 0 ? 0 : Math.floor(i / columns);
+      const x = Math.round(column * width / columns) + 1, right = Math.round((column + 1) * width / columns) - 1;
+      const top = Math.round(row * height / rows) + 1, bottom = Math.round((row + 1) * height / rows) - 1;
       const w = Math.max(1, right - x), h = Math.max(1, bottom - top), y = height - bottom;
       gl.viewport(x, y, w, h); gl.scissor(x, y, w, h); gl.clearColor(...SKY, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       this.drawSky(camera, w / h, kart.boost > 0);

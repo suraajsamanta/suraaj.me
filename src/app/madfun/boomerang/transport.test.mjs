@@ -16,8 +16,8 @@ test('real relay isolates simultaneous rooms, readies controllers, reconnects, a
  globalThis.WebSocket=WS;process.env.NEXT_PUBLIC_BEERIO_RELAY_URL=`ws://127.0.0.1:${relay.server.address().port}/room`;
  const clients=[];const make=()=>{const c=new ArenaRoomClient();clients.push(c);return c;};
  t.after(async()=>{clients.forEach(c=>c.dispose());await relay.close();globalThis.WebSocket=oldWS;if(oldRelay===undefined)delete process.env.NEXT_PUBLIC_BEERIO_RELAY_URL;else process.env.NEXT_PUBLIC_BEERIO_RELAY_URL=oldRelay;});
- const a=make(),b=make();a.create();b.create();await until(()=>a.getSnapshot().code&&b.getSnapshot().code,'hosts');assert.notEqual(a.getSnapshot().code,b.getSnapshot().code);
- const ar=relay.rooms.rooms.get(a.getSnapshot().code);assert.equal(ar.publicMatchmaking,false);assert.equal(ar.characterSelection,false);
+ const a=make(),b=make();a.create();b.create(9);await until(()=>a.getSnapshot().code&&b.getSnapshot().code,'hosts');assert.notEqual(a.getSnapshot().code,b.getSnapshot().code);
+ const ar=relay.rooms.rooms.get(a.getSnapshot().code);assert.equal(relay.rooms.rooms.get(b.getSnapshot().code).maxPlayers,9,'Host & Play reserves one of ten places for the local host');assert.equal(ar.publicMatchmaking,false);assert.equal(ar.characterSelection,false);
  const p=make(),q=make();p.join(a.getSnapshot().code,'Asha');q.join(b.getSnapshot().code,'Ravi');await until(()=>a.getSnapshot().players[0]?.ready&&b.getSnapshot().players[0]?.ready,'auto-ready');
 
  Array.from({length:9},(_,i)=>{const c=make();c.join(a.getSnapshot().code,`Guest ${i+2}`);return c;});await until(()=>a.getSnapshot().players.length===10&&a.getSnapshot().players.every(p=>p.ready),'ten seats ready');const overflow=make();overflow.join(a.getSnapshot().code,'Eleventh');await until(()=>overflow.getSnapshot().status==='error','capacity');assert.equal(a.getSnapshot().players.length,10);
@@ -30,10 +30,10 @@ test('real relay isolates simultaneous rooms, readies controllers, reconnects, a
  a.lobby();await until(()=>!p.getSnapshot().locked&&a.getSnapshot().players[0].ready,'lobby auto-ready');a.start();await until(()=>p.getSnapshot().locked,'rematch');
  p.setInput({x:0,y:0,throwSeq:0,dash:false});p.setInput({x:1,y:0,throwSeq:1,dash:false});await until(()=>a.getSnapshot().players[0].input.throwSeq===2,'fresh local throw after controller remount');
  // Drive the host's normal frame-loop publish calls while 10 phone clients
- // continue their normal input ticks; HUD updates arrive well below relay budget.
+ // continue their normal input ticks; Arena updates stay under the relay's 20 Hz state limit.
  const before=ps.length;const frames=setInterval(()=>a.publish({marker:'live'}),16);
  try{await sleep(2300);}finally{clearInterval(frames);}
- assert.ok(ps.length-before>=8 && ps.length-before<=12);
+ assert.ok(ps.length-before>=20 && ps.length-before<=42);
  assert.equal(a.getSnapshot().status,'connected');
  assert.equal(a.getSnapshot().players.length,10);
  // Deliver the same notification and socket closure as a relay rate rejection.

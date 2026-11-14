@@ -55,7 +55,7 @@ export function CharacterGrid({ players, endsAt, version = 2 }: { players: RoomP
 }
 
 /** Direction is one discrete step per tilt, with slow repeat while held. */
-export function CharacterController({ player, onChoose, endsAt }: { player: RoomPlayer; onChoose: (choice: Choice) => void; endsAt?: number | null }) {
+export function CharacterController({ player, onChoose, endsAt, standalone = false }: { player: RoomPlayer; onChoose: (choice: Choice) => void; endsAt?: number | null; standalone?: boolean }) {
   const [direction, setDirection] = useState<Direction | null>(null);
   const held = useRef<Direction | null>(null);
   const repeat = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -82,7 +82,7 @@ export function CharacterController({ player, onChoose, endsAt }: { player: Room
   const cursor = player.characterCursor ?? player.character;
   const character = CHARACTERS.find(item => item.id === cursor);
   return <div className={styles.phoneSelection}>
-    {endsAt ? <SelectionCountdown endsAt={endsAt} /> : <><p className={styles.phoneEyebrow}>{player.characterConfirmed ? "CHARACTER SELECTED" : "LOOK UP AT THE BIG SCREEN"}</p><h1 aria-live="polite" aria-atomic="true">{character?.name ?? "Choose a character"}</h1>{character && "title" in character && <span className={styles.characterTitle}>{character.title}</span>}<CharacterPortrait id={cursor ?? undefined} large /><p>{player.characterConfirmed ? "Waiting for the others to choose." : "Tilt the joystick to browse. Hit SELECT when you find your favorite."}</p></>}
+    {endsAt ? <SelectionCountdown endsAt={endsAt} /> : <><p className={styles.phoneEyebrow}>{player.characterConfirmed ? "CHARACTER SELECTED" : standalone ? "PICK YOUR DRIVER" : "LOOK UP AT THE BIG SCREEN"}</p><h1 aria-live="polite" aria-atomic="true">{character?.name ?? "Choose a character"}</h1>{character && "title" in character && <span className={styles.characterTitle}>{character.title}</span>}<CharacterPortrait id={cursor ?? undefined} large /><p>{player.characterConfirmed ? "Waiting for the others to choose." : "Tilt the joystick to browse. Hit SELECT when you find your favorite."}</p></>}
     <div className={styles.selectionControls}>
       {!player.characterConfirmed && <div className={styles.selectionJoystick} role="group" aria-label="Character selection joystick" onKeyDown={event => {
         const directions: Record<string, Direction> = { ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };

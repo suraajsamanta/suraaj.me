@@ -24,6 +24,8 @@ export type GameViewProps = {
   raceKey?: string | number;
   /** Arrow keys or WASD drive the first kart, in addition to phone controls. */
   localKeyboard?: boolean;
+  /** Optional local host camera, without changing the authoritative roster. */
+  focusPlayerId?: string;
   /** Help deliberate steering through bends. Can be changed during a race without resetting it. */
   autoSteer?: boolean;
   /** Pauses authoritative simulation while the host connection is unavailable. */
@@ -69,12 +71,13 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to ten chase cameras. */
-export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECONDS, trackId = 'sunset', raceKey = 0, localKeyboard = true, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
+export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECONDS, trackId = 'sunset', raceKey = 0, localKeyboard = true, focusPlayerId, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
   const finishRef = useRef(onFinish);
   const inventoryRef = useRef(onInventoryChange);
   const keyboardRef = useRef(localKeyboard);
+  const focusRef = useRef(focusPlayerId);
   const autoSteerRef = useRef(autoSteer);
   const pausedRef = useRef(paused);
   const pauseVersionRef = useRef(0);
@@ -91,14 +94,16 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
   const countdownSeconds = Number.isFinite(initialCountdown)
     ? initialCountdown <= 0 ? 0 : Math.max(COUNTDOWN_SECONDS, Math.min(30, initialCountdown))
     : COUNTDOWN_SECONDS;
-  const columns = roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : roster.length <= 6 ? 3 : 4;
-  const rows = Math.max(1, Math.ceil(roster.length / columns));
-  const spareCells = columns * rows - roster.length;
+  const focused = roster.some(player => player.id === focusPlayerId);
+  const columns = focused ? 1 : roster.length <= 1 ? 1 : roster.length <= 4 ? 2 : roster.length <= 6 ? 3 : 4;
+  const rows = focused ? 1 : Math.max(1, Math.ceil(roster.length / columns));
+  const spareCells = focused ? 0 : columns * rows - roster.length;
 
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { finishRef.current = onFinish; }, [onFinish]);
   useEffect(() => { inventoryRef.current = onInventoryChange; }, [onInventoryChange]);
   useEffect(() => { keyboardRef.current = localKeyboard; }, [localKeyboard]);
+  useEffect(() => { focusRef.current = focusPlayerId; }, [focusPlayerId]);
   useEffect(() => { autoSteerRef.current = autoSteer; }, [autoSteer]);
   useEffect(() => {
     if (pausedRef.current !== paused) {
@@ -213,7 +218,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
         // on reconnect. Movement, timers, position and inventory stay frozen.
         discardPausedInput();
         if (lastHud === 0) {
-          try { renderer.render(race, 0); setHud(snapshot(race, playersRef.current)); lastHud = now; }
+          try { renderer.render(race, 0, focusRef.current); setHud(snapshot(race, playersRef.current)); lastHud = now; }
           catch (cause) {
             failed = true; pauseAudio();
             setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted.');
@@ -241,7 +246,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
         });
         accumulator += elapsed;
         while (accumulator >= 1 / 60) { stepRace(race, currentPlayers, 1 / 60, autoSteerRef.current); accumulator -= 1 / 60; }
-        try { renderer.render(race, Math.max(elapsed, 1 / 60)); }
+        try { renderer.render(race, Math.max(elapsed, 1 / 60), focusRef.current); }
         catch (cause) {
           failed = true; pauseAudio();
           setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted. Restart the race to reconnect.');
@@ -286,9 +291,10 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
   const introNameOpacity = hud.countdown > 0 ? 1 : Math.max(0, Math.min(1, 1 - (hud.elapsed - INTRO_NAME_HOLD_SECONDS) / INTRO_NAME_FADE_SECONDS));
   return (
     <div className={styles.game} style={gridStyle} aria-label={`${selectedTrack.name}, ${roster.length} racers, ${totalLaps} laps`}>
-      <canvas className={styles.canvas} ref={canvasRef} aria-label="3D split-screen race with a behind-the-kart camera for each player" />
+      <canvas className={styles.canvas} ref={canvasRef} aria-label={focused ? "3D race from your behind-the-kart camera" : "3D split-screen race with a behind-the-kart camera for each player"} />
       <div className={styles.hudGrid}>
         {roster.map((player, index) => {
+          if (focused && player.id !== focusPlayerId) return null;
           const kart = hud.karts.find((entry) => entry.id === player.id);
           const place = kart?.place || index + 1;
           return (

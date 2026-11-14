@@ -247,9 +247,18 @@ function Controller({ send, useItem: activateItem, item, itemFeedback = "" }: { 
 
 export default function Beerio() {
   const room = useBeerioRoom();
+  const hostDriver = useBeerioRoom({ autoResume: false, storageKey: "beerio-local-driver-v1" });
+  const { restoreSession: restoreHostDriver } = hostDriver;
   const { code: roomCode, role: roomRole, status: roomStatus, setLocked, publishState, onState } = room;
   const [mode, setMode] = useState<Mode>("home");
   const [name, setName] = useState("");
+  const [localName, setLocalName] = useState("");
+  const [localDriverSetup, setLocalDriverSetup] = useState(false);
+  const [focusDriver, setFocusDriver] = useState(false);
+  const [localItem, setLocalItem] = useState<PowerUp | null | undefined>(undefined);
+  const [localItemFeedback, setLocalItemFeedback] = useState("");
+  const [practiceAction, setPracticeAction] = useState(0);
+  const firePracticeItem = useCallback(() => setPracticeAction(n => n + 1), []);
   const [code, setCode] = useState("");
   const [publicRoom, setPublicRoom] = useState(false);
   const [randomJoin, setRandomJoin] = useState(false);
@@ -267,6 +276,7 @@ export default function Beerio() {
   const committedStart = useRef(-1);
   const [qr, setQr] = useState("");
   const [joinUrl, setJoinUrl] = useState("");
+  const [joinFeedback, setJoinFeedback] = useState("");
   const [practiceInput, setPracticeInput] = useState<Input>(neutral);
   const [raceFinished, setRaceFinished] = useState(false);
   const [steeringAssist, setSteeringAssist] = useState(true);
@@ -278,6 +288,11 @@ export default function Beerio() {
   const selectionArmed = useRef(false);
   const needsLobbyUnlock = useRef(false);
   const self = room.players.find((player) => player.id === room.playerId);
+  const localDriver = room.players.find((player) => player.id === hostDriver.playerId);
+  const localDriverId = localDriver?.id;
+  useEffect(() => {
+    if (roomRole === "host" && roomCode && roomStatus === "connected") restoreHostDriver(roomCode);
+  }, [roomRole, roomCode, roomStatus, restoreHostDriver]);
   // Room state messages are optional on older clients/relays. Only accept a
   // known item for this phone while the durable room lock says it is racing.
   useEffect(() => {
@@ -368,6 +383,7 @@ export default function Beerio() {
       committedStart.current = generation;
       acceptInventory.current = true; resultsRef.current = null;
       if ((room.characterSelectionVersion ?? 1) >= 4) setRaceTrack(selectedTrack);
+      setLocalItem(undefined); setLocalItemFeedback("");
       setRaceRoster(entrants); setRaceFinished(false); setRaceKey(n => n + 1); setRacing(true); setStarting(false);
       publishState({ phase: "racing" });
     });
@@ -387,29 +403,19 @@ export default function Beerio() {
     const url = new URL(window.location.href); url.search = ""; url.searchParams.set("room", room.code);
     QRCode.toDataURL(url.toString(), { width: 220, margin: 1, color: { dark: "#171528", light: "#ffffff" } }).then((data) => { setJoinUrl(url.toString()); setQr(data); }).catch(() => { setJoinUrl(url.toString()); setQr(""); });
   }, [room.code, room.role]);
-  useEffect(() => {
-    if (mode !== "practice") return;
-    const held = new Set<string>();
-    const apply = () => setPracticeInput({ steer: Number(held.has("ArrowRight") || held.has("d")) - Number(held.has("ArrowLeft") || held.has("a")), accelerate: held.has("ArrowUp") || held.has("w"), brake: held.has("ArrowDown") || held.has("s") });
-    const down = (e: KeyboardEvent) => { if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"].includes(e.key)) { e.preventDefault(); held.add(e.key); apply(); } };
-    const up = (e: KeyboardEvent) => { held.delete(e.key); apply(); };
-    const clear = () => { held.clear(); apply(); };
-    window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", clear);
-    return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", clear); };
-  }, [mode]);
   const confirmLeavingRace = () => {
     const active = (mode === "practice" && !raceFinished) || (mode === "host" && racing && !raceFinished) || (mode === "join" && room.locked && phonePhase !== "results");
     return !active || window.confirm("Leave this race? Your current race progress will be lost.");
   };
-  const exit = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; setStarting(false); setStartError(""); room.leaveRoom(); setRacing(false); setRaceFinished(false); setMode("home"); };
+  const exit = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; setStarting(false); setStartError(""); hostDriver.leaveRoom(); room.leaveRoom(); setJoinFeedback(""); setLocalDriverSetup(false); setRacing(false); setRaceFinished(false); setMode("home"); };
   // Resume audio directly inside the gesture, before React mounts the race.
   const start = () => {
     if (starting || room.status !== "connected" || room.locked || !room.players.some(player => player.connected)) return;
     void unlockRaceAudio(); startGeneration.current++; needsLobbyUnlock.current = false; selectionArmed.current = true; setStartError(""); setRaceTrack(selectedTrack); setStarting(true); room.beginCharacterSelection();
   };
-  const practice = () => { void unlockRaceAudio(); setRaceFinished(false); setRaceTrack(selectedTrack); setMode("practice"); setRaceKey((n) => n + 1); };
+  const practice = () => { void unlockRaceAudio(); setLocalItem(undefined); setLocalItemFeedback(""); setPracticeInput(neutral); setPracticeAction(0); setRaceFinished(false); setRaceTrack(selectedTrack); setMode("practice"); setRaceKey((n) => n + 1); };
   const lobby = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; needsLobbyUnlock.current = true; setStarting(false); setStartError(""); setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
-  const players = mode === "practice" ? [{ id: "practice", name: "YOU", ...appearance, input: practiceInput }] : raceRoster.map((driver) => {
+  const players = mode === "practice" ? [{ id: "practice", name: "YOU", ...appearance, input: { ...practiceInput, action: practiceAction } }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
     return { ...driver, character: driver.character ?? undefined, connected: current?.connected === true, retired: !current || current.inRace === false, input: current?.connected ? current.input : neutral };
   });
@@ -431,17 +437,51 @@ export default function Beerio() {
     try { localStorage.setItem("beerio-steering-assist", enabled ? "on" : "off"); } catch { /* Optional preference storage. */ }
   };
 
-  if (mode === "practice" || (mode === "host" && racing)) return <main className={styles.race}>
-    <GameView initialCountdown={mode === "host" && (room.characterSelectionVersion ?? 1) < 4 ? 0 : 5} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
-      onInventoryChange={mode === "host" ? (inventory: PlayerInventory[]) => { if (acceptInventory.current && room.status === "connected" && !room.recovering) room.publishState({ type: "inventory", inventory }); } : undefined}
+  const joinLocalDriver = () => {
+    if (!room.code || !localName.trim() || room.status !== "connected" || room.locked) return;
+    void unlockRaceAudio();
+    setFocusDriver(window.matchMedia("(pointer: coarse)").matches);
+    hostDriver.joinRoom({ code: room.code, name: localName.trim(), relayUrl: room.relayUrl, appearance });
+  };
+  const showLocalSetup = room.status === "connected" && !room.locked && room.selectionPhase === "gathering" && activePlayers.length < room.maxPlayers && !localDriver;
+  const localEntry = localDriver ? <div className={styles.localDriverEntry}>
+    <strong>You’re driving as {localDriver.name}</strong>
+    {room.selectionPhase === "gathering" && !localDriver.characterConfirmed && <button type="button" className={styles.smallButton} onClick={() => { hostDriver.leaveRoom(); setLocalDriverSetup(false); }}>REMOVE MY DRIVER</button>}
+    {hostDriver.status === "error" && hostDriver.canRetryConnection && <button type="button" className={styles.smallButton} onClick={hostDriver.retryConnection}>RECONNECT MY DRIVER</button>}
+  </div> : showLocalSetup ? <div className={styles.localDriverEntry}>
+    {!localDriverSetup ? <button type="button" className={styles.smallButton} onClick={() => setLocalDriverSetup(true)}>DRIVE ON THIS DEVICE</button> :
+      <form onSubmit={event => { event.preventDefault(); joinLocalDriver(); }}>
+        <label>YOUR DRIVER NAME<input autoComplete="nickname" maxLength={64} required value={localName} onChange={event => setLocalName(event.target.value)} placeholder="Your name" /></label>
+        <button className={styles.smallButton} disabled={hostDriver.status === "connecting" || !localName.trim()}>{hostDriver.status === "connecting" ? "JOINING…" : "JOIN AS A DRIVER"}</button>
+      </form>}
+    {hostDriver.error && <p role="alert">{hostDriver.error}</p>}
+  </div> : null;
+  const localSelection = localDriver && hostDriver.status === "connected" && !room.locked
+    ? <div className={styles.localDriverSelection}><CharacterController player={localDriver} onChoose={hostDriver.chooseCharacter} endsAt={room.countdownEndsAt} standalone /></div>
+    : null;
+  const showRaceControls = !raceFinished && (mode === "practice" || Boolean(localDriverId && hostDriver.status === "connected" && localDriver?.inRace && room.status === "connected" && !room.recovering));
+  const updateRaceInventory = (inventory: PlayerInventory[]) => {
+    if (mode === "host" && acceptInventory.current && room.status === "connected" && !room.recovering) room.publishState({ type: "inventory", inventory });
+    const held = inventory.find(entry => entry.id === (mode === "practice" ? "practice" : localDriverId));
+    if (held) { setLocalItem(held.item); setLocalItemFeedback(held.feedback ?? ""); }
+  };
+
+  if (mode === "practice" || (mode === "host" && racing)) return <main className={`${styles.race} ${showRaceControls ? styles.withRaceControls : ""}`}>
+    <GameView focusPlayerId={showRaceControls && focusDriver ? localDriverId : undefined} initialCountdown={mode === "host" && (room.characterSelectionVersion ?? 1) < 4 ? 0 : 5} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
+      onInventoryChange={updateRaceInventory}
       onFinish={(results) => { selectionArmed.current = false; acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
       onRematch={mode === "practice" ? practice : undefined} onLobby={mode === "practice" ? exit : lobby}
       lobbyLabel={mode === "practice" ? "Back to menu" : "Rematch lobby"}
       rematchDisabled={mode === "host" && (room.status !== "connected" || room.locked || starting || activePlayers.length === 0)} />
-    <div className={styles.raceTop}><FullscreenButton /><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD · SPACE BRAKES · SHIFT DRIFTS · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}</div>
+    {showRaceControls && <div className={styles.localRaceControls}><Controller send={mode === "practice" ? setPracticeInput : hostDriver.setInput} useItem={mode === "practice" ? firePracticeItem : hostDriver.useItem} item={localItem} itemFeedback={localItemFeedback} /></div>}
+    <div className={styles.raceTop}><FullscreenButton /><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "host" && showRaceControls && players.length > 1 && <button className={styles.smallButton} onClick={() => setFocusDriver(value => !value)}>{focusDriver ? "SHOW ALL RACERS" : "SHOW MY CAMERA"}</button>}{mode === "practice" && <><span className={styles.keyboardTip}>ARROWS / WASD · SPACE BRAKES · SHIFT DRIFTS · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}</div>
     {mode === "host" && room.status === "connected" && room.recovering && <div role="status" aria-live="polite" className={styles.connectionWarning}>
       Race paused while drivers reconnect. {room.recoveryWaitingFor.length > 0 && <>Waiting for: {room.recoveryWaitingFor.map((id) => room.players.find((player) => player.id === id)?.name || "Driver").join(", ")}.</>}
       {room.recoveryWaitingFor.length > 0 && <button className={styles.smallButton} onClick={room.resumeRace}>CONTINUE WITHOUT MISSING DRIVERS</button>}
+    </div>}
+    {mode === "host" && localDriver?.inRace && !raceFinished && room.status === "connected" && !room.recovering && hostDriver.status !== "connected" && <div role="status" className={styles.connectionWarning}>
+      Your driver is reconnecting. The other drivers can keep racing.
+      {hostDriver.canRetryConnection && <button className={styles.smallButton} onClick={hostDriver.retryConnection}>RECONNECT MY DRIVER</button>}
     </div>}
     {mode === "host" && startError && room.status === "connected" && <div role="alert" className={styles.connectionWarning}>{startError}</div>}
     {mode === "host" && room.status !== "connected" && <div role="alert" className={styles.connectionWarning}>{room.error || "Connection lost. Reconnecting…"} Race paused while the host reconnects.{room.status === "error" && room.canRetryConnection && <button className={styles.smallButton} onClick={room.retryConnection}>RETRY CONNECTION</button>}{(room.status === "closed" || room.status === "error") && <button className={styles.smallButton} onClick={exit}>EXIT ROOM</button>}</div>}
@@ -477,16 +517,24 @@ export default function Beerio() {
     <header className={selectionStyles.hostHeader}><FullscreenButton /><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b></div><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></header>
     <div className={selectionStyles.hostWorkspace}>
       <aside className={selectionStyles.hostSidebar}>
-        <div className={selectionStyles.joinDetails}><span>SCAN TO JOIN</span>{qr && <Image src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}<strong>{room.code}</strong><small>{joinUrl}</small></div>
+        <div className={selectionStyles.joinDetails}><span>SCAN TO JOIN</span>{qr && <Image src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}<strong>{room.code}</strong><button type="button" className={styles.smallButton} disabled={!joinUrl} onClick={() => {
+          if (!joinUrl) return;
+          if (navigator.share) void navigator.share({ title: "Join my Beerio race", url: joinUrl }).catch(() => {});
+          else void navigator.clipboard?.writeText(joinUrl).then(() => setJoinFeedback("Link copied."), () => setJoinFeedback("Copy the URL below."));
+        }}>SHARE INVITE</button><small>{joinUrl}</small>{joinFeedback && <small role="status">{joinFeedback}</small>}</div>
         <TrackPicker value={selectedTrack} onChange={chooseTrack} />
         <button type="button" role="switch" aria-checked={steeringAssist} className={styles.assistToggle} onClick={toggleSteeringAssist}><span>STEERING ASSIST</span><strong>{steeringAssist ? "ON" : "OFF"}</strong></button>
         {(room.characterSelectionVersion ?? 1) < 4 && <button className={styles.primary} disabled={starting || !activePlayers.length || room.players.some(player => !player.connected || !player.characterConfirmed) || room.status !== "connected" || choosingCharacters} onClick={start}>{starting ? "STARTING…" : choosingCharacters ? "RACE STARTING…" : "START RACE ↗"}</button>}
+        {localEntry}
         <p className={styles.fine}>The last pick automatically opens the track. Wait for 5–4–3–2–1, then GO!</p>
         {room.players.some(player => !player.connected) && <button className={styles.smallButton} disabled={room.status !== "connected"} onClick={room.skipOfflineDrivers}>CONTINUE WITHOUT DISCONNECTED DRIVERS</button>}
         {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}
         {room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}
       </aside>
-      <CharacterGrid version={room.characterSelectionVersion} players={room.players} endsAt={room.status === "connected" && room.hostConnected ? room.countdownEndsAt : null} />
+      <div className={selectionStyles.hostBoard} data-driving={Boolean(localSelection)}>
+        <CharacterGrid version={room.characterSelectionVersion} players={room.players} endsAt={room.status === "connected" && room.hostConnected ? room.countdownEndsAt : null} />
+        {localSelection}
+      </div>
     </div>
   </main>;
 
@@ -509,16 +557,17 @@ export default function Beerio() {
         <button className={styles.textButton} onClick={() => setMode("solo")}>Set up a solo practice race →</button>
         <div className={styles.checkers} aria-hidden="true" /><div className={styles.bigStar} aria-hidden="true">✳</div>
       </section>}
-      {mode === "solo" && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>SOLO PRACTICE</div><h1>Make a<br /><em>practice run.</em></h1><p>Choose your racer, ride, and track for a practice race. A keyboard is required: use the arrow keys or WASD.</p><div className={styles.practiceSetup}><AppearancePicker value={appearance} onChange={chooseAppearance} /><TrackPicker value={selectedTrack} onChange={chooseTrack} label="SOLO PRACTICE TRACK" /><button className={styles.primary} onClick={practice}>START SOLO PRACTICE ↗</button></div></section>}
-      {mode === "host" && !room.code && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>THE HOST SCREEN</div><h1>Get the gang<br /><em>together.</em></h1><p>Open this page on the laptop connected to your TV. Create a room, then have everyone join on their phones.</p><div className={styles.assistSetting}><button type="button" role="switch" aria-checked={publicRoom} className={styles.assistToggle} disabled={room.status === "connecting"} onClick={() => setPublicRoom(!publicRoom)}><span>ALLOW RANDOM PLAYERS</span><strong>{publicRoom ? "ON" : "OFF"}</strong></button><p className={styles.fine}>When on, anyone can join this room while it is open. Players need to see the host screen to race.</p></div><button className={styles.primary} disabled={room.status === "connecting"} onClick={() => room.createRoom({ maxPlayers: 10, publicMatchmaking: publicRoom })}>{room.status === "connecting" ? "CONNECTING..." : "CREATE ROOM ↗"}</button>{room.error && <p role="alert" className={styles.error}>{room.error}</p>}<p className={styles.fine}>The host screen runs the race. Players join from any network using a room code.</p></section>}
+      {mode === "solo" && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>SOLO PRACTICE</div><h1>Make a<br /><em>practice run.</em></h1><p>Choose your racer, ride, and track for a practice race. Use the on-screen controls or the arrow keys and WASD.</p><div className={styles.practiceSetup}><AppearancePicker value={appearance} onChange={chooseAppearance} /><TrackPicker value={selectedTrack} onChange={chooseTrack} label="SOLO PRACTICE TRACK" /><button className={styles.primary} onClick={practice}>START SOLO PRACTICE ↗</button></div></section>}
+      {mode === "host" && !room.code && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>THE HOST SCREEN</div><h1>Get the gang<br /><em>together.</em></h1><p>Host on your phone or put this page on a larger screen. Create a room, then share the join link with the other drivers.</p><div className={styles.assistSetting}><button type="button" role="switch" aria-checked={publicRoom} className={styles.assistToggle} disabled={room.status === "connecting"} onClick={() => setPublicRoom(!publicRoom)}><span>ALLOW RANDOM PLAYERS</span><strong>{publicRoom ? "ON" : "OFF"}</strong></button><p className={styles.fine}>When on, anyone can join this room while it is open. Players need to see the host screen to race.</p></div><button className={styles.primary} disabled={room.status === "connecting"} onClick={() => room.createRoom({ maxPlayers: 10, publicMatchmaking: publicRoom })}>{room.status === "connecting" ? "CONNECTING..." : "CREATE ROOM ↗"}</button>{room.error && <p role="alert" className={styles.error}>{room.error}</p>}<p className={styles.fine}>The host screen runs the race. Players join from any network using a room code.</p></section>}
       {mode === "host" && room.code && <section className={styles.lobby}><div className={styles.lobbyHead}><div><div className={styles.eyebrow}>THE STARTING GRID</div><h1>Join the race<span>.</span></h1><p>Everyone joins with a name and color. Then choose your characters together.</p></div><button className={styles.secondary} onClick={exit}>CLOSE ROOM</button></div>
         {publicRoom && !room.publicMatchmaking && <p role="alert" className={styles.error}>This relay does not support random joining yet. This room is code-only.</p>}
         {room.maxPlayers < 10 && <div className={styles.capacityWarning} role="status"><strong>This older room holds only {room.maxPlayers} players.</strong><p>To race with 10, create a new room. This closes the current room and everyone will need to rejoin with the new code.</p><button type="button" className={styles.secondary} disabled={room.status !== "connected" || room.locked || starting} onClick={() => {
           if (room.players.length > 0 && !window.confirm("Create a 10-player room? This closes the current room and disconnects everyone. Players will need the new code to rejoin.")) return;
+          hostDriver.leaveRoom();
           room.createRoom({ maxPlayers: 10, ...(room.publicMatchmaking ? { publicMatchmaking: true } : {}), relayUrl: room.relayUrl });
         }}>CREATE 10-PLAYER ROOM ↗</button></div>}
         <div className={styles.lobbyGrid}><div className={styles.joinCard}><div className={styles.codeLabel}>ROOM CODE</div><p className={styles.fine}>{room.publicMatchmaking ? "OPEN TO RANDOM PLAYERS" : "CODE-ONLY ROOM"}</p><div className={styles.code}>{room.code}</div><p className={styles.url}>{joinUrl}</p>{qr && <Image className={styles.qr} src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}</div>
-          <div className={styles.players}><div className={styles.playersHead}>DRIVERS <span>{activePlayers.length} / {room.maxPlayers}</span></div>
+          <div className={styles.players}>{localEntry}{localSelection}<div className={styles.playersHead}>DRIVERS <span>{activePlayers.length} / {room.maxPlayers}</span></div>
             {!choosingCharacters && <><StartingGrid players={room.players} maxPlayers={room.maxPlayers} /><TrackPicker value={selectedTrack} onChange={chooseTrack} /><div className={styles.assistSetting}><button type="button" role="switch" aria-checked={steeringAssist} className={styles.assistToggle} onClick={toggleSteeringAssist}><span>STEERING ASSIST</span><strong>{steeringAssist ? "ON" : "OFF"}</strong></button><p className={styles.fine}>{steeringAssist ? "Helps while you steer. Let go and you can hit the wall." : "Full control. Drivers must steer through every bend."}</p></div><button className={styles.primary} disabled={starting || !activePlayers.length || room.status !== "connected"} onClick={start}>{starting ? "OPENING…" : "EVERYONE’S IN · CHOOSE CHARACTERS ↗"}</button><p className={styles.fine}>Invite everyone first, then open the character grid. No ready-up. Last character pick starts the five-second countdown.</p></>}
             {choosingCharacters && <><p className={styles.fine}>Racing on {TRACKS.find(track => track.id === raceTrack)?.name}. Use your phone joystick to choose, then SELECT.</p><button className={styles.secondary} disabled={room.status !== "connected"} onClick={() => { selectionArmed.current = false; needsLobbyUnlock.current = true; room.setLocked(false); }}>BACK TO JOINING</button></>}
             {room.players.some(player => !player.connected) && <button className={styles.secondary} disabled={room.status !== "connected"} onClick={room.skipOfflineDrivers}>CONTINUE WITHOUT DISCONNECTED DRIVERS</button>}

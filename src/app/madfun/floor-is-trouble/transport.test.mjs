@@ -16,8 +16,8 @@ test('real relay isolates simultaneous rooms, readies controllers, reconnects, a
  globalThis.WebSocket=WS;process.env.NEXT_PUBLIC_BEERIO_RELAY_URL=`ws://127.0.0.1:${relay.server.address().port}/room`;
  const clients=[];const make=()=>{const c=new ArenaRoomClient();clients.push(c);return c;};
  t.after(async()=>{clients.forEach(c=>c.dispose());await relay.close();globalThis.WebSocket=oldWS;if(oldRelay===undefined)delete process.env.NEXT_PUBLIC_BEERIO_RELAY_URL;else process.env.NEXT_PUBLIC_BEERIO_RELAY_URL=oldRelay;});
- const a=make(),b=make();a.create();b.create();await until(()=>a.getSnapshot().code&&b.getSnapshot().code,'hosts');assert.notEqual(a.getSnapshot().code,b.getSnapshot().code);
- const ar=relay.rooms.rooms.get(a.getSnapshot().code);assert.equal(ar.publicMatchmaking,false);assert.equal(ar.characterSelection,false);
+ const a=make(),b=make();a.create();b.create(9);await until(()=>a.getSnapshot().code&&b.getSnapshot().code,'hosts');assert.notEqual(a.getSnapshot().code,b.getSnapshot().code);
+ const ar=relay.rooms.rooms.get(a.getSnapshot().code);assert.equal(relay.rooms.rooms.get(b.getSnapshot().code).maxPlayers,9,'Host & Play reserves one of ten places for the local host');assert.equal(ar.publicMatchmaking,false);assert.equal(ar.characterSelection,false);
  const p=make(),q=make();p.join(a.getSnapshot().code,'Asha');q.join(b.getSnapshot().code,'Ravi');await until(()=>a.getSnapshot().players[0]?.ready&&b.getSnapshot().players[0]?.ready,'auto-ready');
 
  Array.from({length:9},(_,i)=>{const c=make();c.join(a.getSnapshot().code,`Guest ${i+2}`);return c;});await until(()=>a.getSnapshot().players.length===10&&a.getSnapshot().players.every(p=>p.ready),'ten seats ready');const overflow=make();overflow.join(a.getSnapshot().code,'Eleventh');await until(()=>overflow.getSnapshot().status==='error','capacity');assert.equal(a.getSnapshot().players.length,10);

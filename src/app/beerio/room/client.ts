@@ -61,6 +61,9 @@ export class BeerioRoomClient {
   private intentionalClose = false;
   private suppressInput = false;
 
+  /** A host and a local driver may share a tab without replacing each other. */
+  constructor(private readonly storageKey = STORAGE_KEY) {}
+
   getSnapshot = (): RoomSnapshot => this.snapshot;
   getServerSnapshot = (): RoomSnapshot => this.snapshot;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -83,8 +86,8 @@ export class BeerioRoomClient {
   }
   private storeSession() {
     try {
-      if (this.session) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(this.session));
-      else sessionStorage.removeItem(STORAGE_KEY);
+      if (this.session) sessionStorage.setItem(this.storageKey, JSON.stringify(this.session));
+      else sessionStorage.removeItem(this.storageKey);
     } catch { /* Private browsing/storage restrictions must not block play. */ }
   }
   private zeroPlayers(): RoomPlayer[] {
@@ -98,7 +101,7 @@ export class BeerioRoomClient {
   restoreSession = (expectedCode?: string) => {
     if (this.socket || this.pendingHello) return;
     try {
-      const saved = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? "null") as SavedSession | null;
+      const saved = JSON.parse(sessionStorage.getItem(this.storageKey) ?? "null") as SavedSession | null;
       if (!saved || !/^[A-HJ-NP-Z2-9]{6}$/.test(saved.code) || !/^[a-f0-9]{48}$/.test(saved.token) || !["host", "player"].includes(saved.role)) return;
       if (expectedCode && saved.code !== expectedCode.trim().toUpperCase()) return;
       this.session = { ...saved, relayUrl: validateUrl(saved.relayUrl) };

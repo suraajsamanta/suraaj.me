@@ -463,3 +463,31 @@ test('public hosting is explicit and random joining handles unavailable and olde
   assert.equal(f.client.getSnapshot().status, 'error');
   assert.match(f.client.getSnapshot().error, /unavailable on this relay/);
 });
+
+test('a same-tab host and local driver retain independently scoped resume credentials', async (t) => {
+  const f = fixture(t);
+  const driver = new BeerioRoomClient('beerio-local-driver-v1');
+  const resumed = new BeerioRoomClient('beerio-local-driver-v1');
+  t.after(() => { driver.destroy(); resumed.destroy(); });
+  f.client.createRoom();
+  await flush();
+  welcome(f.socket(), 'host');
+  const host = f.saved.get('beerio-room-session-v1');
+  driver.joinRoom({ code: 'ABC234', name: 'Host driver' });
+  await flush();
+  assert.equal(f.socket().sent[0].type, 'join');
+  welcome(f.socket(), 'player');
+  assert.equal(f.saved.get('beerio-room-session-v1'), host);
+  assert.equal(JSON.parse(f.saved.get('beerio-local-driver-v1')).role, 'player');
+  driver.destroy();
+  resumed.restoreSession('DEF234');
+  assert.equal(resumed.getSnapshot().status, 'idle');
+  resumed.restoreSession('ABC234');
+  await flush();
+  assert.equal(f.socket().sent[0].type, 'resume');
+  assert.equal(f.socket().sent[0].code, 'ABC234');
+  welcome(f.socket(), 'player');
+  resumed.leaveRoom();
+  assert.equal(f.saved.get('beerio-room-session-v1'), host);
+  assert.equal(f.saved.has('beerio-local-driver-v1'), false);
+});

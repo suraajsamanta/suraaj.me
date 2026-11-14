@@ -2,9 +2,9 @@
 import type { ArenaInput } from './engine';
 export type ArenaRoomPlayer = {id:string;name:string;color:string;connected:boolean;ready:boolean;input:ArenaInput};
 export type ArenaRoomSnapshot = {status:'idle'|'connecting'|'connected'|'reconnecting'|'error'|'closed';role:'host'|'player'|null;code:string|null;playerId:string|null;players:ArenaRoomPlayer[];locked:boolean;hostConnected:boolean;error:string|null};
-// Phones render a HUD, not the TV simulation. Keep periodic traffic sparse and
+// Phones render the same authoritative arena; drop obsolete display states and
 // drop stale snapshots instead of feeding a blocked socket.
-const STATE_INTERVAL_MS=200;
+const STATE_INTERVAL_MS=64;
 const INPUT_INTERVAL_MS=80;
 const neutral=():ArenaInput=>({x:0,y:0,throwSeq:0,dash:false});
 // The legacy relay transports a direction angle and movement bit, not kart physics.
@@ -18,7 +18,7 @@ export class ArenaRoomClient {
  onState=(fn:(state:unknown)=>void)=>{this.states.add(fn);return ()=>{this.states.delete(fn);};};
  private update(p:Partial<ArenaRoomSnapshot>){this.snapshot={...this.snapshot,...p};this.listeners.forEach(f=>f());}
  private send(m:unknown,replaceable=false){if(this.ws?.readyState===WebSocket.OPEN&&this.ws.bufferedAmount<(replaceable?1:131072)){try{this.ws.send(JSON.stringify(m));}catch{/* A closing socket is handled by reconnect. */}}}
- create=()=>this.begin({type:'create',maxPlayers:10,publicMatchmaking:false},'host');
+ create=(maxPlayers=10)=>this.begin({type:'create',maxPlayers,publicMatchmaking:false},'host');
  join=(code:string,name:string)=>{code=code.trim().toUpperCase();if(!/^[A-HJ-NP-Z2-9]{6}$/.test(code)||!name.trim()||Array.from(name.trim()).length>64){this.update({error:'Enter your name (up to 64 characters) and the six-character code.'});return;}this.begin({type:'join',code,name:name.trim()},'player');};
  private begin(hello:Record<string,unknown>,role:'host'|'player'){this.leave();this.intentional=false;this.token=null;this.localThrowSequence=0;this.wireThrowSequence=0;this.hello=hello;this.retries=0;this.openedAt=Date.now();this.update({status:'connecting',role,code:null,playerId:null,players:[],error:null});this.connect();}
  private connect(){if(this.timer)clearInterval(this.timer);if(this.reconnect)clearTimeout(this.reconnect);const previous=this.ws;this.ws=null;previous?.close();const configured=process.env.NEXT_PUBLIC_BEERIO_RELAY_URL;const url=configured||(location.protocol==='https:'?'wss://beerio-relay.onrender.com/room':`ws://${location.hostname}:8787`);const ws=new WebSocket(url);this.ws=ws;

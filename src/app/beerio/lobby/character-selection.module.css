@@ -275,3 +275,15 @@
 .garageSpotlight > b, .garageSpotlight > p { font-size: 12px; }
 .spotlightHead, .spotlightRide { height: 100%; background: center / contain no-repeat; }
 @media (max-width: 840px), (max-height: 530px) { .garageSpotlight { display: none; } }
+
+.hostBoard { min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.joinDetails > button { min-height: 36px; text-align: center; }
+@media (max-width: 760px) {
+  .hostSidebar > div:not(.joinDetails) select { min-height: 44px; font-size: 14px; }
+  .hostSidebar > button, .hostSidebar > button[role="switch"], .joinDetails > button { min-height: 44px; font-size: 10px; }
+  .hostScreen .hostHeader > button { min-height: 44px; }
+  .hostBoard[data-driving="true"] .roster { display: none; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .hostBoard[data-driving="true"] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 30%); }
+}

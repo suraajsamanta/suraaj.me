@@ -5,3 +5,33 @@
 .practiceControls{display:none}@media(pointer:coarse){.practiceControls{display:block;position:absolute;bottom:20px;left:15px;right:15px;opacity:.75;pointer-events:none}.practiceControls .controls{max-width:none;justify-content:space-between;align-items:flex-end}.practiceControls .stickColumn{width:130px;pointer-events:auto}.practiceControls .actionColumn{width:150px;flex-direction:row;pointer-events:auto;gap:10px}.practiceControls .throwButton{width:85px;font-size:12px}.practiceControls .throwButton>span{font-size:25px}.practiceControls .throwButton small{display:none}.practiceControls .dashButton{width:65px;font-size:11px;padding:14px 4px}.practiceControls .controlCaption{display:none}.localInstructions{display:none}}
 .invited .hero{max-width:520px;margin:6vh auto}.invited .hero>h1,.invited .hero>.eyebrow,.invited .hero>.intro,.invited .entryGrid>.panel:first-child{display:none}.invited .entryGrid{display:block;margin-top:0}.invited .form{display:flex;flex-direction:column}.invited .form label{width:100%}.invited .form button{width:100%;margin-top:10px;padding:17px}.invited .panel{padding:24px}.invited .panel h2{font-size:32px}
 .topbar{flex-wrap:wrap}.topActions{margin-left:auto}@media(max-width:420px){.topbar{gap:6px}.brand{font-size:17px}.topActions{gap:4px}.subtle{padding:8px;font-size:11px}}
+
+/* Phone play uses the same arena as display-only mode. */
+.viewToggle{align-self:center;color:var(--muted);background:#ffffff08;border:1px solid #ffffff24;border-radius:10px;padding:8px;min-height:38px;font:inherit;font-size:12px;cursor:pointer}
+.phoneArena{min-height:0;width:100%;flex:1;background:#191928;border-radius:13px;overflow:hidden;margin:8px auto;max-width:820px}
+.phoneArena canvas{display:block;width:100%;height:100%;object-fit:contain}
+.phoneWithArena .controls,.hostControls .controls{flex:0 0 auto;max-width:480px;min-height:0;padding:5px 0 12px;gap:15px}
+.phoneWithArena .stickColumn,.hostControls .stickColumn{width:min(34%,18dvh,135px)}
+.phoneWithArena .actionColumn,.hostControls .actionColumn{width:auto;flex-direction:row;gap:12px}
+.phoneWithArena .controls button,.hostControls .controls button{min-width:54px}
+.phoneWithArena .throwButton,.hostControls .throwButton{width:min(16dvh,86px);font-size:13px}
+.phoneWithArena .throwButton>span,.hostControls .throwButton>span{font-size:24px}
+.phoneWithArena .throwButton small,.hostControls .throwButton small{display:none}
+.phoneWithArena .dashButton,.hostControls .dashButton{width:auto;min-height:46px;padding:10px;font-size:12px}
+.phoneWithArena .controlCaption,.hostControls .controlCaption{display:none}
+.phoneResults{width:min(100%,460px);margin:20px auto;padding:0;list-style:none;min-height:0;overflow:auto;touch-action:pan-y}
+.phoneResults li{display:flex;justify-content:space-between;gap:12px;padding:12px;border-bottom:1px solid #ffffff22}
+.phoneResults span{min-width:0;overflow-wrap:anywhere}
+.phoneResults b{white-space:nowrap;color:var(--lime)}
+.hostControls{flex-shrink:0}
+@media(max-height:520px) and (orientation:landscape){
+  .phoneWithArena .topbar{position:static}
+  .phoneWithArena .phoneStatus{position:static}
+  .phoneWithArena .phoneStatus h1{display:none}
+  .phoneWithArena .phoneFooter{display:none}
+  .phoneWithArena .controls,.hostControls .controls{justify-content:space-around;padding:0 0 8px}
+  .phoneWithArena .phoneStatus p{margin:2px 0 4px}
+  .phoneWithArena .viewToggle{min-height:30px;padding:4px 8px}
+}
+.phoneWithArena:not(:has(.phoneArena)) .controls{margin-top:auto;margin-bottom:auto}
+.phoneWithArena{touch-action:pan-y}
