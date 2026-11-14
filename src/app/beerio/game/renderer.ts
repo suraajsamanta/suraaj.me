@@ -1,3 +1,6 @@
+import { buildExoticGarageRide } from './exoticGarage';
+import { buildBikeEv } from './garageBikeEv';
+import { buildGermanRide } from './garageGerman';
 import { addSpaceScenery } from './spaceScenery';
 import { SPACE_THEME } from './spaceCourse';
 import { addSeattleScenery } from './seattleScenery';
@@ -928,11 +931,11 @@ function animalGeometry(color: Color, id: string, pose: AnimalPose, phase = 0, h
 }
 
 /** A shared, original character model keeps each racer's identity in every pose. */
-function characterHead(g: Geometry, character: string, center: Vec3, accent: Color) {
+function characterHead(g: Geometry, character: string, center: Vec3, accent: Color, includeScarf = true) {
   const fur = CHARACTER_COLORS[character];
   // Long-necked animals keep their defining silhouette in the kart and every
   // animation, not just in the selection artwork.
-  const neck = character === 'giraffe' ? .3 : character === 'flamingo' ? .2 : 0;
+  const neck = includeScarf ? character === 'giraffe' ? .3 : character === 'flamingo' ? .2 : 0 : 0;
   if (neck) g.ellipsoid([center[0], center[1] - .4 + neck / 2, center[2]], [.17, .28 + neck / 2, .17], fur, 8, 5);
   const [x, y, z] = [center[0], center[1] + neck, center[2]];
   const p = (dx: number, dy: number, dz: number): Vec3 => [x + dx, y + dy, z + dz];
@@ -1099,8 +1102,10 @@ function characterHead(g: Geometry, character: string, center: Vec3, accent: Col
     eyes(0.2, 0.09, 0.385);
   }
   // A bright scarf is visible from the chase camera on every character.
-  g.box(p(0, -0.45, -0.01), [0.66, 0.12, 0.56], accent);
-  g.box(p(0.24, -0.64, -0.28), [0.19, 0.42, 0.06], CREAM, -0.18);
+  if (includeScarf) {
+    g.box(p(0, -0.45, -0.01), [0.66, 0.12, 0.56], accent);
+    g.box(p(0.24, -0.64, -0.28), [0.19, 0.42, 0.06], CREAM, -0.18);
+  }
 }
 
 function characterTail(g: Geometry, character: string, hip: Vec3) {
@@ -1201,10 +1206,36 @@ function vehicleGeometry(g: Geometry, color: Color, vehicle: string) {
   g.box([0, 1.2, 0.58], [0.7, 0.12, 0.15], CHARCOAL);
 }
 
+const GARAGE_DRIVER_HEIGHT: Readonly<Record<string, number>> = {
+  'bmw-m2': 1.55, 'bmw-m3': 1.58, 'bmw-m4': 1.52,
+  'amg-gt': 1.47, 'amg-g63': 2.10,
+  lamborghini: 1.37, mclaren: 1.36, ferrari: 1.36, bugatti: 1.45,
+  ducati: 1.51, 'bmw-bike': 1.51, cybertruck: 1.93, 'tesla-roadster': 1.42,
+};
+const GARAGE_DRIVER_LONGITUDINAL: Readonly<Record<string, number>> = {
+  'amg-gt': -.52, ducati: -.47, 'bmw-bike': -.47, 'tesla-roadster': -.15,
+};
+
 export function racerGeometry(color: Color, character = 'fox', vehicle = 'kart', driver = true): Geometry {
   const g = new Geometry();
+  if (buildGermanRide(g, color, vehicle) || buildExoticGarageRide(g, color, vehicle) || buildBikeEv(g, color, vehicle)) {
+    if (driver) addCharacterHead(g,color,character,[0,GARAGE_DRIVER_HEIGHT[vehicle],GARAGE_DRIVER_LONGITUDINAL[vehicle] ?? -.26]);
+    return g;
+  }
   vehicleGeometry(g, color, vehicle);
   if (driver) seatedDriver(g, color, characterId(character), vehicle === 'motorcycle');
+  return g;
+}
+
+function addCharacterHead(g: Geometry, color: Color, character: string, center: Vec3) {
+  const id = characterId(character);
+  if (isFigure(id)) figureHead(g, id, center);
+  else characterHead(g, id, center, color, false);
+}
+
+export function characterHeadGeometry(color: Color, character = 'fox'): Geometry {
+  const g = new Geometry();
+  addCharacterHead(g, color, character, [0, 1, 0]);
   return g;
 }
 
@@ -1679,4 +1710,64 @@ export class RaceRenderer {
     gl.deleteBuffer(this.skyBuffer); gl.deleteProgram(this.skyProgram);
     gl.deleteProgram(this.program);
   }
+}
+
+/** On-demand garage preview: one canvas and one static mesh. */
+export function createGaragePreview(canvas: HTMLCanvasElement) {
+  const gl = canvas.getContext('webgl', { alpha: true, antialias: true, powerPreference: 'low-power' });
+  if (!gl) return null;
+  const compile = (type: number, source: string) => {
+    const shader = gl.createShader(type);
+    if (!shader) return null;
+    gl.shaderSource(shader, source); gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { gl.deleteShader(shader); return null; }
+    return shader;
+  };
+  const vertex = compile(gl.VERTEX_SHADER, 'attribute vec3 a_position; attribute vec3 a_color; uniform mat4 u_matrix; varying vec3 v_color; void main(){gl_Position=u_matrix*vec4(a_position,1.0);v_color=a_color;}');
+  const fragment = compile(gl.FRAGMENT_SHADER, 'precision mediump float; varying vec3 v_color; void main(){gl_FragColor=vec4(v_color,1.0);}');
+  const program = gl.createProgram(), buffer = gl.createBuffer();
+  if (program && vertex && fragment) { gl.attachShader(program, vertex); gl.attachShader(program, fragment); gl.linkProgram(program); }
+  if (vertex) gl.deleteShader(vertex);
+  if (fragment) gl.deleteShader(fragment);
+  if (!program || !buffer || !vertex || !fragment || !gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    if (program) gl.deleteProgram(program);
+    if (buffer) gl.deleteBuffer(buffer);
+    return null;
+  }
+  const position = gl.getAttribLocation(program, 'a_position'), color = gl.getAttribLocation(program, 'a_color');
+  const matrix = gl.getUniformLocation(program, 'u_matrix');
+  gl.useProgram(program); gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.enableVertexAttribArray(position); gl.enableVertexAttribArray(color);
+  gl.vertexAttribPointer(position, 3, gl.FLOAT, false, 24, 0);
+  gl.vertexAttribPointer(color, 3, gl.FLOAT, false, 24, 12);
+  gl.enable(gl.DEPTH_TEST);
+  let count = 0, radius = 2.1, center: Vec3 = [0, .65, 0];
+  return {
+    setRide(id: string, paint: string) {
+      const data = racerGeometry(parseColor(paint), 'fox', id, false).data;
+      let minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+      radius = 1;
+      for (let i = 0; i < data.length; i += 6) {
+        minY = Math.min(minY, data[i + 1]); maxY = Math.max(maxY, data[i + 1]);
+        minZ = Math.min(minZ, data[i + 2]); maxZ = Math.max(maxZ, data[i + 2]);
+        radius = Math.max(radius, Math.hypot(data[i], data[i + 2]));
+      }
+      center = [0, (minY + maxY) / 2, (minZ + maxZ) / 2];
+      count = data.length / 6;
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+    },
+    draw(angle: number) {
+      const dpr = Math.min(1.75, window.devicePixelRatio || 1);
+      const width = Math.max(1, Math.round(canvas.clientWidth * dpr));
+      const height = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+      const aspect = width / height, distance = Math.max(3.1, radius * (1.9 + Math.max(0, 1 - aspect) * .8));
+      const eye: Vec3 = [Math.sin(angle) * distance, center[1] + distance * .43, center[2] + Math.cos(angle) * distance];
+      gl.viewport(0, 0, width, height);
+      gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      gl.uniformMatrix4fv(matrix, false, viewProjection({ eye, target: center }, aspect, false));
+      gl.drawArrays(gl.TRIANGLES, 0, count);
+    },
+    dispose() { gl.deleteBuffer(buffer); gl.deleteProgram(program); },
+  };
 }

@@ -444,7 +444,8 @@ test('finish callback takes precedence over a due inventory change and blocks al
   race.karts[0].finishTime = 1;
   race.karts[1].power.item = 'guard';
   assert.equal(race.complete, false);
-  // Physics ends the grace period in this frame, while an inventory change is due.
+  // Explicit withdrawal completes the final seat while inventory is due.
+  await f.setProps({ players: [player(), { ...player(), id: 'second', retired: true }] });
   await f.frame(600);
   assert.equal(race.complete, true);
   assert.deepEqual(events.map(event => event.type), ['inventory', 'finish']);
@@ -601,8 +602,8 @@ test('large full names stay fully visible through countdown and three seconds af
   const names = () => findNodes(f.tree(), node => node.props?.className === 'countdownName');
   const identities = () => findNodes(f.tree(), node => node.props?.className === 'countdownIdentity');
   const numbers = () => findNodes(f.tree(), node => node.props?.className === 'countdownNumber');
-  assert.equal(f.race().countdown, 8);
-  assert.ok(numbers().every(node => node.props.children === 8));
+  assert.equal(f.race().countdown, 5);
+  assert.ok(numbers().every(node => node.props.children === 5));
   assert.deepEqual(names().map(node => node.props.children), players.map(p => p.name));
   assert.equal(names()[0].props.style['--name-size'], '3.5cqw', 'Very long wide names get a compact fitting size');
   f.race().countdown = 1; await f.frame(200);
@@ -706,18 +707,18 @@ test('pickup and activation notices publish to phones even after the item was co
   assert.deepEqual(inventories.at(-1), [{ id: 'driver', item: null }]);
 });
 
-test('host skips its completed room countdown while all local countdowns allow at least eight seconds', async t => {
+test('host skips its completed room countdown while all local countdowns allow at least five seconds', async t => {
   const f = await fixture(t, { initialCountdown: 0 });
   await f.frame(100);
   assert.equal(f.race().countdown, 0);
-  await f.setProps({ raceKey: 'solo', initialCountdown: 8 });
+  await f.setProps({ raceKey: 'solo', initialCountdown: 5 });
   await f.frame(200);
-  assert.equal(f.renderers.at(-1).race.countdown, 8);
+  assert.equal(f.renderers.at(-1).race.countdown, 5);
   let now = 200;
   for (const initialCountdown of [3, Number.NaN, Infinity]) {
     await f.setProps({ raceKey: `fallback-${now}`, initialCountdown });
     await f.frame(now += 100);
-    assert.equal(f.renderers.at(-1).race.countdown, 8);
+    assert.equal(f.renderers.at(-1).race.countdown, 5);
   }
   await f.setProps({ raceKey: 'longer-countdown', initialCountdown: 10 });
   await f.frame(now += 100);

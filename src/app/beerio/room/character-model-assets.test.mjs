@@ -86,3 +86,59 @@ test('the same animal body rig is present in showroom, seated, motorcycle, dance
     assert.equal(new Set(frames.map(data => sha256(JSON.stringify(data)))).size, 8, `${id}'s body articulates with the animation`);
   }
 });
+
+test('all garage cars are unique meshes with head-only drivers and four distinct fallback preview angles', () => {
+  const { GARAGE_VEHICLES, currentGarageVehicle, validAppearance } = load(resolve(root, 'src/app/beerio/appearance.ts'));
+  const { characterHeadGeometry } = load(resolve(root, 'src/app/beerio/game/renderer.ts'));
+  const color = parseColor('#abc123'), meshes = new Set();
+  assert.equal(GARAGE_VEHICLES.length, 13);
+  for (const { id } of GARAGE_VEHICLES) {
+    const vehicle = racerGeometry(color, 'gorilla', id, false).data;
+    const driver = racerGeometry(color, 'gorilla', id, true).data;
+    assert.ok(vehicle.length && vehicle.every(Number.isFinite), id);
+    assert.ok(vehicle.length / 18 <= 4500, `${id}: vehicle stays under the split-screen triangle budget`);
+    assert.equal(driver.length - vehicle.length, characterHeadGeometry(color, 'gorilla').data.length, id);
+    meshes.add(sha256(JSON.stringify(vehicle)));
+    const views = new Set();
+    for (const suffix of ['', '-left', '-rear', '-right']) {
+      const png = readFileSync(resolve(root, 'public/beerio/models/rides', id + suffix + '.png'));
+      assert.equal(png.subarray(1, 4).toString(), 'PNG', id);
+      views.add(sha256(png));
+    }
+    assert.equal(views.size, 4, id);
+    assert.ok(validAppearance({ vehicle: id, character: 'gorilla', color: '#abc123' }), id);
+  }
+  assert.equal(meshes.size, GARAGE_VEHICLES.length);
+  for (const legacy of ['kart', 'buggy', 'roadster', 'motorcycle']) {
+    assert.ok(validAppearance({ vehicle: legacy, character: 'gorilla', color: '#abc123' }));
+    assert.ok(GARAGE_VEHICLES.some(ride => ride.id === currentGarageVehicle(legacy)));
+  }
+});
+
+test('garage orbit redraws a new camera without re-uploading geometry', t => {
+  const w = globalThis.window;
+  globalThis.window = { devicePixelRatio: 2 };
+  t.after(() => { if (w === undefined) delete globalThis.window; else globalThis.window = w; });
+  const { createGaragePreview } = load(resolve(root, 'src/app/beerio/game/renderer.ts'));
+  const matrices = [], uploads = [], draws = [], drops = [];
+  const gl = new Proxy({
+    createShader: () => ({}), createProgram: () => ({}), createBuffer: () => ({}),
+    getShaderParameter: () => true, getProgramParameter: () => true,
+    getAttribLocation: (_program, name) => name === 'a_color' ? 1 : 0,
+    uniformMatrix4fv: (_location, _transpose, value) => matrices.push(Array.from(value)),
+    bufferData: (_target, value) => uploads.push(value),
+    drawArrays: (_mode, _offset, count) => draws.push(count),
+    deleteProgram: () => drops.push('program'), deleteBuffer: () => drops.push('buffer'),
+  }, { get: (target, prop) => Object.hasOwn(target, prop) ? target[prop] : prop === prop.toUpperCase() ? 42 : () => {} });
+  const canvas = { clientWidth: 320, clientHeight: 160, width: 0, height: 0, getContext: () => gl };
+  const preview = createGaragePreview(canvas);
+  preview.setRide('bmw-m3', '#42b76c');
+  for (const angle of [-.62, -Math.PI / 2, Math.PI, Math.PI / 2]) preview.draw(angle);
+  assert.equal(uploads.length, 1);
+  assert.equal(new Set(matrices.map(row => JSON.stringify(row))).size, 4);
+  assert.ok(draws.every(count => count > 0 && count === uploads[0].length / 6));
+  assert.deepEqual([canvas.width, canvas.height], [560, 280]);
+  preview.dispose();
+  assert.deepEqual(drops, ['buffer', 'program']);
+  assert.equal(createGaragePreview({ getContext: () => null }), null);
+});

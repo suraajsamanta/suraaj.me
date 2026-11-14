@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { CHARACTERS, selectionCharacters, CHARACTER_COLUMNS, type CharacterId } from "../appearance";
+import { CHARACTERS, GARAGE_VEHICLES, currentGarageVehicle, selectionCharacters, CHARACTER_COLUMNS, type CharacterId } from "../appearance";
 import type { RoomPlayer } from "../room/types";
 import styles from "./character-selection.module.css";
 
@@ -11,7 +11,7 @@ type Choice = { direction: Direction } | { confirm: boolean };
 export function CharacterPortrait({ id, large = false }: { id?: CharacterId; large?: boolean }) {
   const character = CHARACTERS.find(item => item.id === id);
   if (!character) return <span className={`${styles.portrait} ${styles.blankPortrait} ${large ? styles.largePortrait : ""}`} aria-label="No character chosen">?</span>;
-  return <span className={`${styles.portrait} ${styles.modelPortrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={character.name} style={{ backgroundImage: `url("/beerio/models/${character.id}.png")` }} />;
+  return <span className={`${styles.portrait} ${styles.modelPortrait} ${large ? styles.largePortrait : ""}`} role="img" aria-label={character.name} style={{ backgroundImage: `url("/beerio/models/heads/${character.id}.png")` }} />;
 }
 
 export function SelectionCountdown({ endsAt }: { endsAt: number }) {
@@ -28,16 +28,28 @@ export function SelectionCountdown({ endsAt }: { endsAt: number }) {
 export function CharacterGrid({ players, endsAt, version = 2 }: { players: RoomPlayer[]; endsAt?: number | null; version?: number }) {
   const characters = selectionCharacters(version);
   const rows = Math.ceil(characters.length / CHARACTER_COLUMNS);
+  const featured = players.find(player => player.connected && (player.characterCursor || player.character));
+  const featuredCharacter = characters.find(character => character.id === (featured?.characterCursor ?? featured?.character));
+  const featuredRide = featured && GARAGE_VEHICLES.find(ride => ride.id === currentGarageVehicle(featured.vehicle ?? "kart"));
   return <section className={styles.selection} aria-label="Choose your character" style={{ "--character-rows": rows } as CSSProperties}>
-    <div className={styles.selectionTitle}><div><span>THE WHOLE CREW</span><h2>Pick your character.</h2><p>Join with your phone, then move the joystick and press SELECT. The host starts the race when everyone is ready.</p></div><strong>{players.filter(p => p.characterConfirmed).length} / {players.length} PICKED</strong></div>
+    <div className={styles.selectionTitle}><div><span>THE WHOLE CREW</span><h2>Pick your character.</h2><p>Join with your phone, then move the joystick and press SELECT. The race countdown starts automatically when everyone has picked.</p></div><strong>{players.filter(p => p.characterConfirmed).length} / {players.length} PICKED</strong></div>
     <div className={styles.roster} aria-label="Drivers choosing characters">{players.map(player => <span key={player.id} title={player.name} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}<small>{!player.connected ? "RECONNECTING" : player.characterConfirmed ? "PICKED ✓" : "CHOOSING"}</small></span>)}</div>
-    <div className={styles.characterGrid} role="list" aria-label={`${characters.length} characters in ${CHARACTER_COLUMNS} columns and ${rows} rows`}>{characters.map(character => {
+    <div className={styles.garageBoard}><div className={styles.characterGrid} role="list" aria-label={`${characters.length} characters in ${CHARACTER_COLUMNS} columns and ${rows} rows`}>{characters.map(character => {
       const hovering = players.filter(player => (player.characterCursor ?? player.character) === character.id);
       return <article role="listitem" aria-label={character.name} className={`${styles.characterCard} ${hovering.length ? styles.highlighted : ""}`} key={character.id}>
         <div className={styles.nameFlags}>{hovering.map(player => <span key={player.id} title={player.name} className={!player.connected ? styles.offline : ""} style={{ "--driver-color": player.color } as CSSProperties}>{player.name}{player.characterConfirmed ? " ✓" : ""}</span>)}</div>
         <CharacterPortrait id={character.id} /><strong>{character.name}</strong>
       </article>;
-    })}</div>
+    })}</div><aside className={styles.garageSpotlight} aria-label="Garage spotlight">
+      <span>GARAGE SPOTLIGHT</span>
+      {featured && featuredCharacter && featuredRide ? <>
+        <strong>{featured.name}</strong>
+        <div className={styles.spotlightHead} aria-hidden="true" style={{ backgroundImage: `url("/beerio/models/heads/${featuredCharacter.id}.png")` }} />
+        <b>{featuredCharacter.name}</b>
+        <div className={styles.spotlightRide} aria-hidden="true" style={{ backgroundImage: `url("/beerio/models/rides/${featuredRide.id}.png")` }} />
+        <b>{featuredRide.name}</b>
+      </> : <p>Driver and ride appear here when someone browses.</p>}
+    </aside></div>
     {endsAt && <SelectionCountdown endsAt={endsAt} />}
   </section>;
 }

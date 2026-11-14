@@ -40,7 +40,7 @@ test('shared grid shows all30 choices, long usernames above cards, selected stat
   assert.match(html, /Huang/); assert.match(html, /Zuckerberg/);
   assert.match(html, new RegExp(players[0].name)); assert.match(html, /RECONNECTING/); assert.match(html, /PICKED ✓/);
   assert.match(html, /Max/); assert.match(html, /Riley/); assert.doesNotMatch(html, /the (Monkey|Bird|Lion)/i);
-  assert.match(html, /\/beerio\/models\/horse\.png/);
+  assert.match(html, /\/beerio\/models\/heads\/horse\.png/);
 });
 
 test('phone offers four directions and SELECT with no second ready-up; confirmed pick can be changed', () => {
@@ -58,7 +58,7 @@ test('all animal and guest previews are distinct generated model renders with ac
   assert.deepEqual(appearance.exports.PUBLIC_FIGURE_CHARACTERS.map(c => c.name), ['Bezos', 'Trump', 'Musk', 'Zuckerberg', 'Ye', 'Huang']);
   const signatures = new Set();
   for (const character of characters) {
-    const path = `/beerio/models/${character.id}.png`;
+    const path = `/beerio/models/heads/${character.id}.png`;
     const png = readFileSync(new URL(`../../../../public${path}`, import.meta.url));
     assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
     assert.ok(png.readUInt32BE(16) >= 128 && png.readUInt32BE(20) >= 128, `${character.id} needs a readable preview`);

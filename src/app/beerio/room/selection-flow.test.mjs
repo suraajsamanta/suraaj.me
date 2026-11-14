@@ -19,7 +19,8 @@ const compile = file => ts.transpileModule(readFileSync(new URL(file, import.met
 }).outputText;
 const types = { exports: {} };
 new Function('module', 'exports', compile('./types.ts'))(types, types.exports);
-const clientSource = compile('./client.ts');
+// Explicit legacy-v3 compatibility coverage; v4 transport is covered by item-pipeline.
+const clientSource = compile('./client.ts').replaceAll('characterSelectionVersion: 4', 'characterSelectionVersion: 3');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const appearance = { exports: {} };
@@ -299,4 +300,16 @@ test('v3 recovery accepts genuine null lobby slots but rejects invented confirma
   assert.equal(restored.room.selectionPhase, 'gathering');
   assert.equal(restored.room.countdownEndsAt, null);
   assert.deepEqual(restored.room.players.map(p => p.character), ['gorilla', null, null]);
+});
+
+test('new garage picks reach the host and survive controller reconnect alongside legacy rides', async t => {
+  const f = await fixture(t, 2);
+  for (const { id } of appearance.exports.GARAGE_VEHICLES) {
+    f.phones[0].client.setAppearance({ character: 'fox', vehicle: id, color: '#abcdef' });
+    await until(() => f.player(0).vehicle === id, id);
+  }
+  f.phones[0].reload();
+  await until(() => f.phones[0].client.getSnapshot().status === 'connected' && f.player(0).connected, 'garage driver reconnect');
+  assert.equal(f.player(0).vehicle, 'bugatti');
+  assert.equal(f.player(1).vehicle, 'motorcycle');
 });

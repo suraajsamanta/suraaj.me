@@ -52,7 +52,24 @@ export const CHARACTERS = [
   { id: 'bird', name: 'Sky', icon: '🐦' },
   { id: 'blob', name: 'Bubbles', icon: '🫧' },
 ] as const;
+export const GARAGE_VEHICLES = [
+  { id: 'bmw-m2', name: 'BMW M2', icon: '🏁' },
+  { id: 'bmw-m3', name: 'BMW M3', icon: '🏁' },
+  { id: 'bmw-m4', name: 'BMW M4', icon: '🏁' },
+  { id: 'amg-gt', name: 'Mercedes-AMG GT', icon: '🏁' },
+  { id: 'amg-g63', name: 'Mercedes-AMG G 63', icon: '🚙' },
+  { id: 'lamborghini', name: 'Lamborghini Aventador', icon: '🏎️' },
+  { id: 'mclaren', name: 'McLaren 720S', icon: '🏎️' },
+  { id: 'ferrari', name: 'Ferrari F40', icon: '🏎️' },
+  { id: 'ducati', name: 'Ducati Panigale V4', icon: '🏍️' },
+  { id: 'bmw-bike', name: 'BMW S 1000 RR', icon: '🏍️' },
+  { id: 'cybertruck', name: 'Tesla Cybertruck', icon: '🛻' },
+  { id: 'tesla-roadster', name: 'Tesla Roadster', icon: '🏎️' },
+  { id: 'bugatti', name: 'Bugatti Chiron', icon: '🏎️' },
+] as const;
+export type GarageVehicleId = typeof GARAGE_VEHICLES[number]['id'];
 export const VEHICLES = [
+  ...GARAGE_VEHICLES,
   { id: 'kart', name: 'Classic Kart', icon: '🏎️' },
   { id: 'buggy', name: 'Dune Buggy', icon: '🚙' },
   { id: 'roadster', name: 'Roadster', icon: '🚘' },
@@ -61,10 +78,20 @@ export const VEHICLES = [
 export type CharacterId = typeof CHARACTERS[number]['id'];
 export type VehicleId = typeof VEHICLES[number]['id'];
 export type Appearance = { character: CharacterId; vehicle: VehicleId; color: string };
-export const DEFAULT_APPEARANCE: Appearance = { character: 'gorilla', vehicle: 'kart', color: '#ffce58' };
+export const DEFAULT_APPEARANCE: Appearance = { character: 'gorilla', vehicle: 'bmw-m2', color: '#ffce58' };
 export const PALETTE = ['#ffce58', '#4ce4f3', '#ff7479', '#bd9aff', '#66e6a2', '#ff9de2', '#ff9648', '#4b72ee'];
 export function validAppearance(value: unknown): value is Appearance {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Record<string, unknown>;
   return CHARACTERS.some(item => item.id === candidate.character) && VEHICLES.some(item => item.id === candidate.vehicle) && typeof candidate.color === 'string' && /^#[a-f\d]{6}$/i.test(candidate.color);
+}
+
+export function currentGarageVehicle(vehicle: VehicleId): GarageVehicleId {
+  switch (vehicle) {
+    case 'kart': return 'bmw-m2';
+    case 'buggy': return 'amg-g63';
+    case 'roadster': return 'tesla-roadster';
+    case 'motorcycle': return 'ducati';
+    default: return vehicle;
+  }
 }

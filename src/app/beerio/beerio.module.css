@@ -325,3 +325,24 @@
   .form .appearanceNote { display: none; }
   .panel:has(.practiceSetup) h1 { font-size: 34px; }
 }
+
+.phoneGarage label { display: grid; min-width: 0; gap: 4px; }
+.phoneGarage select { width: 100%; min-width: 0; min-height: 40px; padding: 7px 9px; border: 1px solid #635b72; border-radius: 8px; color: #fff; background: #29243e; font: inherit; font-size: 14px; letter-spacing: normal; }
+.phoneGarage select:focus-visible { outline: 2px solid #ffce58; outline-offset: 2px; }
+.garageRideName { font-size: clamp(16px, 3.7vw, 29px); max-width: 66%; letter-spacing: -.025em; line-height: 1; }
+.rideOrbit { margin: 8px 0 10px; overflow: hidden; border: 1px solid #5c4c72; border-radius: 12px; background: #201a30; }
+.orbitStage { height: clamp(98px, 22dvh, 220px); position: relative; cursor: grab; touch-action: pan-y; user-select: none; overflow: hidden; background: radial-gradient(ellipse at 52% 47%, #574770 0%, #2c2641 48%, #1a172a 83%); }
+.orbitStage:active { cursor: grabbing; }
+.orbitStage:focus-visible { outline: 2px solid #ffce58; outline-offset: -3px; }
+.orbitPlatform { position: absolute; display: block; pointer-events: none; left: 12%; width: 76%; bottom: 6%; height: 30%; border-radius: 50%; background: radial-gradient(ellipse, #110f1a99, #8891bd18 63%, #b8b0ee44 69%, transparent 70%); }
+.orbitCanvas, .orbitStill { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.orbitCanvas[data-ready="false"] { visibility: hidden; }
+.orbitStill { object-fit: contain; }
+.orbitHint { position: absolute; pointer-events: none; bottom: 5px; right: 8px; padding: 3px 5px; border-radius: 3px; color: #f7e8b2; background: #211b2abb; font-size: 8px; font-weight: 800; letter-spacing: .12em; }
+.orbitAngles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 5px; }
+.orbitAngles button, .form .orbitAngles button { min-height: 30px; margin: 0; padding: 0 2px; border: 1px solid #6f5c89; background: #342b49; color: #eee8fd; border-radius: 6px; font-size: 10px; cursor: pointer; }
+.orbitAngles button[aria-pressed="true"] { background: #ffce58; color: #1c1826; border-color: #ffce58; }
+.orbitAngles button:focus-visible { outline: 2px solid white; outline-offset: 2px; }
+@media (min-height: 730px) { .form .orbitStage { height: clamp(140px, 23dvh, 210px); } }
+@media (max-height: 650px) { .orbitStage { height: clamp(84px, 18dvh, 125px); } .rideOrbit { margin: 5px 0; } .orbitAngles button, .form .orbitAngles button { min-height: 25px; } }
+@media (max-height: 460px) and (orientation: landscape) { .orbitStage { height: 68px; } .orbitHint { display: none; } }

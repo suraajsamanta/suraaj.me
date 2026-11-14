@@ -6,8 +6,9 @@ import Link from "next/link";
 import Image from "next/image";
 import GameView, { type PlayerInventory, type RaceResult } from "./game/GameView";
 import { POWER_UPS, type PowerUp } from "./game/powerups";
+import FullscreenButton from "./FullscreenButton";
 import SteeringJoystick from "./game/SteeringJoystick";
-import { CHARACTERS, VEHICLES, PALETTE, DEFAULT_APPEARANCE, validAppearance, type Appearance, type CharacterId, type VehicleId } from "./appearance";
+import { CHARACTERS, GARAGE_VEHICLES, currentGarageVehicle, PALETTE, DEFAULT_APPEARANCE, validAppearance, type Appearance, type CharacterId, type VehicleId } from "./appearance";
 import type { RoomPlayer } from "./room/types";
 import { unlockRaceAudio } from "./game/audio";
 import { TRACKS, type TrackId } from "./game/track";
@@ -32,17 +33,95 @@ function TrackPicker({ value, onChange, label = "CHOOSE YOUR TRACK" }: { value: 
   </div>;
 }
 
+const GARAGE_ANGLES = [
+  { label: "Front", angle: -.62, asset: "front" },
+  { label: "Left", angle: -Math.PI / 2, asset: "left" },
+  { label: "Rear", angle: Math.PI + .46, asset: "rear" },
+  { label: "Right", angle: Math.PI / 2, asset: "right" },
+] as const;
+
+function RideOrbit({ id, name, paint }: { id: string; name: string; paint: string }) {
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const preview = useRef<ReturnType<typeof import("./game/renderer")["createGaragePreview"]>>(null);
+  const angle = useRef<number>(GARAGE_ANGLES[0].angle);
+  const gesture = useRef<{ pointer: number; x: number } | null>(null);
+  const [ready, setReady] = useState(false);
+  const [view, setView] = useState<typeof GARAGE_ANGLES[number]["asset"]>("front");
+  useEffect(() => {
+    const surface = canvas.current;
+    if (!surface) return;
+    let cancelled = false;
+    const paintFrame = () => preview.current?.draw(angle.current);
+    let observer: ResizeObserver | undefined;
+    void import("./game/renderer").then(({ createGaragePreview }) => {
+      if (cancelled) return;
+      const active = createGaragePreview(surface);
+      if (!active) return;
+      preview.current = active;
+      active.setRide(id, paint); paintFrame();
+      setReady(true);
+      if (typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver(paintFrame); observer.observe(surface);
+      }
+    }).catch(() => { if (!cancelled) setReady(false); });
+    const lost = (event: Event) => { event.preventDefault(); setReady(false); };
+    surface.addEventListener("webglcontextlost", lost);
+    return () => {
+      cancelled = true; observer?.disconnect();
+      surface.removeEventListener("webglcontextlost", lost);
+      preview.current?.dispose(); preview.current = null;
+    };
+  }, [id, paint]);
+  const turn = (value: number) => {
+    angle.current = Math.atan2(Math.sin(value), Math.cos(value));
+    preview.current?.draw(angle.current);
+    const quadrant = Math.round(angle.current / (Math.PI / 2));
+    setView(quadrant === 0 ? "front" : quadrant === -1 ? "left" : quadrant === 1 ? "right" : "rear");
+  };
+  return <div className={styles.rideOrbit}>
+    <div className={styles.orbitStage} role="group" aria-label={`Rotate ${name}: drag horizontally or use the arrow keys`} tabIndex={0}
+      onKeyDown={event => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        turn(angle.current + (event.key === "ArrowRight" ? .26 : -.26));
+      }}
+      onPointerDown={event => {
+        if (!event.isPrimary || event.button !== 0) return;
+        gesture.current = { pointer: event.pointerId, x: event.clientX };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        if (!gesture.current || gesture.current.pointer !== event.pointerId) return;
+        const dx = event.clientX - gesture.current.x;
+        gesture.current.x = event.clientX;
+        turn(angle.current - dx * .016);
+      }}
+      onPointerUp={() => { gesture.current = null; }} onPointerCancel={() => { gesture.current = null; }}
+      onLostPointerCapture={() => { gesture.current = null; }}>
+      <span className={styles.orbitPlatform} aria-hidden="true" />
+      {!ready && <Image className={styles.orbitStill} src={`/beerio/models/rides/${id}${view === "front" ? "" : "-" + view}.png`} fill sizes="(max-width: 600px) 92vw, 420px" alt={`${name}, ${view} view`} unoptimized />}
+      <canvas ref={canvas} className={styles.orbitCanvas} data-ready={ready} aria-hidden="true" />
+      <span className={styles.orbitHint} aria-hidden="true">↔ SPIN TO INSPECT</span>
+    </div>
+    <div className={styles.orbitAngles} role="group" aria-label="View angle">
+      {GARAGE_ANGLES.map(({ label, angle, asset }) => <button type="button" key={asset} aria-pressed={view === asset} onClick={() => turn(angle)}>{label}</button>)}
+    </div>
+  </div>;
+}
+
 function AppearancePicker({ value, onChange, colorOnly = false }: { value: Appearance; onChange: (patch: Partial<Appearance>) => void; colorOnly?: boolean }) {
   const selected = CHARACTERS.find((character) => character.id === value.character) ?? CHARACTERS[0];
-  const ride = VEHICLES.find((vehicle) => vehicle.id === value.vehicle) ?? VEHICLES[0];
+  const ride = GARAGE_VEHICLES.find((vehicle) => vehicle.id === currentGarageVehicle(value.vehicle)) ?? GARAGE_VEHICLES[0];
   return <fieldset className={styles.appearancePicker}>
-    <legend>{colorOnly ? "YOUR COLOR" : "YOUR RACER, RIDE & COLOR"}</legend>
-    {!colorOnly && <><div className={styles.appearancePreview} style={{ borderColor: value.color }} aria-hidden="true"><CharacterPortrait id={selected.id} /><span>{ride.icon}</span></div>
+    <legend>{colorOnly ? "YOUR RIDE & COLOR" : "YOUR RACER, RIDE & COLOR"}</legend>
+    {!colorOnly && <><div className={styles.appearancePreview} style={{ borderColor: value.color }}><CharacterPortrait id={selected.id} /><b className={styles.garageRideName}>{ride.name}</b></div>
     <div className={styles.appearanceFields}>
       <label>RACER<select value={value.character} onChange={(event) => onChange({ character: event.target.value as CharacterId })}>{CHARACTERS.map((character) => <option key={character.id} value={character.id}>{character.icon} {character.name}</option>)}</select></label>
-      <label>RIDE<select value={value.vehicle} onChange={(event) => onChange({ vehicle: event.target.value as VehicleId })}>{VEHICLES.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.icon} {vehicle.name}</option>)}</select></label>
+      <label>RIDE<select value={ride.id} onChange={(event) => onChange({ vehicle: event.target.value as VehicleId })}>{GARAGE_VEHICLES.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.icon} {vehicle.name}</option>)}</select></label>
     </div>
     </>}
+    {colorOnly && <div className={styles.phoneGarage}><label>RIDE<select value={ride.id} onChange={(event) => onChange({ vehicle: event.target.value as VehicleId })}>{GARAGE_VEHICLES.map((vehicle) => <option key={vehicle.id} value={vehicle.id}>{vehicle.name}</option>)}</select></label></div>}
+    <RideOrbit key={ride.id} id={ride.id} name={ride.name} paint={value.color} />
     <div className={styles.colorChoices}><span>COLOR</span>{PALETTE.map((color) => <button type="button" key={color} title={color} aria-label={`Choose ${color}`} aria-pressed={value.color.toLowerCase() === color} className={styles.colorSwatch} style={{ backgroundColor: color }} onClick={() => onChange({ color })} />)}<label className={styles.customColor}>CUSTOM<input type="color" value={value.color} onChange={(event) => onChange({ color: event.target.value })} aria-label="Custom vehicle color" /></label></div>
     <p className={styles.appearanceNote}>{colorOnly ? "Pick your character together on the big screen after joining." : "Looks only. Every ride races equally."}</p>
   </fieldset>;
@@ -244,7 +323,7 @@ export default function Beerio() {
       if (localStorage.getItem("beerio-steering-assist") === "off") queueMicrotask(() => setSteeringAssist(false));
       try {
         const savedAppearance = JSON.parse(localStorage.getItem("beerio-appearance") || "null");
-        if (validAppearance(savedAppearance)) queueMicrotask(() => { appearanceRef.current = savedAppearance; setAppearance(savedAppearance); });
+        if (validAppearance(savedAppearance)) queueMicrotask(() => { const migrated = { ...savedAppearance, vehicle: currentGarageVehicle(savedAppearance.vehicle) }; appearanceRef.current = migrated; setAppearance(migrated); });
       } catch { /* Ignore an obsolete or malformed saved appearance. */ }
       const savedTrack = localStorage.getItem("beerio-track");
       if (TRACKS.some((track) => track.id === savedTrack)) queueMicrotask(() => setSelectedTrack(savedTrack as TrackId));
@@ -270,10 +349,16 @@ export default function Beerio() {
     if (!starting || room.status === "connected") return;
     queueMicrotask(() => { setStarting(false); setStartError("Connection interrupted while opening character selection. Reconnect and try again if the grid did not open."); });
   }, [starting, room.status]);
-  // The relay owns the countdown and freezes the roster.
+  // Arm only from an observed unlocked lobby; reloads cannot invent a race.
+  useEffect(() => {
+    if (mode === "host" && (!racing || raceFinished) && room.status === "connected" && !room.locked && room.selectionPhase === "gathering" && (room.characterSelectionVersion ?? 1) >= 4 && !needsLobbyUnlock.current && !selectionArmed.current) {
+      startGeneration.current++; selectionArmed.current = true;
+    }
+  }, [mode, racing, raceFinished, room.status, room.locked, room.selectionPhase, room.characterSelectionVersion]);
+  // The relay freezes the roster; v4 runs the five-second countdown on the track.
   // Only an acknowledged racing lock starts a simulation, never a local timer.
   useEffect(() => {
-    if (mode !== "host" || racing || !selectionArmed.current || room.status !== "connected" || !room.locked || room.selectionPhase !== "racing") return;
+    if (mode !== "host" || (racing && !raceFinished) || !selectionArmed.current || room.status !== "connected" || !room.locked || room.selectionPhase !== "racing") return;
     const generation = startGeneration.current;
     const entrants = room.players.filter(player => player.inRace).map(player => ({ ...player, input: { ...neutral } }));
     if (!entrants.length) return;
@@ -282,11 +367,12 @@ export default function Beerio() {
       if (cancelled || committedStart.current === generation) return;
       committedStart.current = generation;
       acceptInventory.current = true; resultsRef.current = null;
+      if ((room.characterSelectionVersion ?? 1) >= 4) setRaceTrack(selectedTrack);
       setRaceRoster(entrants); setRaceFinished(false); setRaceKey(n => n + 1); setRacing(true); setStarting(false);
       publishState({ phase: "racing" });
     });
     return () => { cancelled = true; };
-  }, [mode, racing, room.status, room.locked, room.selectionPhase, room.players, publishState]);
+  }, [mode, racing, raceFinished, room.status, room.locked, room.selectionPhase, room.characterSelectionVersion, room.players, selectedTrack, publishState]);
   useEffect(() => {
     if (!starting || room.selectionPhase === "gathering" && !room.error) return;
     queueMicrotask(() => setStarting(false));
@@ -325,7 +411,7 @@ export default function Beerio() {
   const lobby = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; needsLobbyUnlock.current = true; setStarting(false); setStartError(""); setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
   const players = mode === "practice" ? [{ id: "practice", name: "YOU", ...appearance, input: practiceInput }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
-    return { ...driver, character: driver.character ?? undefined, connected: current?.connected === true, input: current?.connected ? current.input : neutral };
+    return { ...driver, character: driver.character ?? undefined, connected: current?.connected === true, retired: !current || current.inRace === false, input: current?.connected ? current.input : neutral };
   });
   const activePlayers = room.players.filter((player) => player.connected);
   const choosingCharacters = room.selectionPhase === "selecting" || room.selectionPhase === "countdown";
@@ -346,13 +432,13 @@ export default function Beerio() {
   };
 
   if (mode === "practice" || (mode === "host" && racing)) return <main className={styles.race}>
-    <GameView initialCountdown={mode === "host" ? 0 : 8} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
+    <GameView initialCountdown={mode === "host" && (room.characterSelectionVersion ?? 1) < 4 ? 0 : 5} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
       onInventoryChange={mode === "host" ? (inventory: PlayerInventory[]) => { if (acceptInventory.current && room.status === "connected" && !room.recovering) room.publishState({ type: "inventory", inventory }); } : undefined}
-      onFinish={(results) => { acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
+      onFinish={(results) => { selectionArmed.current = false; acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
       onRematch={mode === "practice" ? practice : undefined} onLobby={mode === "practice" ? exit : lobby}
       lobbyLabel={mode === "practice" ? "Back to menu" : "Rematch lobby"}
       rematchDisabled={mode === "host" && (room.status !== "connected" || room.locked || starting || activePlayers.length === 0)} />
-    <div className={styles.raceTop}><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD · SPACE BRAKES · SHIFT DRIFTS · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}</div>
+    <div className={styles.raceTop}><FullscreenButton /><button className={styles.smallButton} onClick={mode === "practice" ? exit : lobby}>← {mode === "practice" ? "Exit practice" : "Lobby"}</button>{mode === "practice" && <><span>ARROWS / WASD · SPACE BRAKES · SHIFT DRIFTS · E USES ITEM</span><button type="button" role="switch" aria-label="Steering assist" aria-checked={steeringAssist} className={styles.smallButton} onClick={toggleSteeringAssist}>STEERING ASSIST: {steeringAssist ? "ON" : "OFF"}</button></>}</div>
     {mode === "host" && room.status === "connected" && room.recovering && <div role="status" aria-live="polite" className={styles.connectionWarning}>
       Race paused while drivers reconnect. {room.recoveryWaitingFor.length > 0 && <>Waiting for: {room.recoveryWaitingFor.map((id) => room.players.find((player) => player.id === id)?.name || "Driver").join(", ")}.</>}
       {room.recoveryWaitingFor.length > 0 && <button className={styles.smallButton} onClick={room.resumeRace}>CONTINUE WITHOUT MISSING DRIVERS</button>}
@@ -372,7 +458,7 @@ export default function Beerio() {
     const waitingDetail = ended && room.canRetryConnection ? "Try reconnecting to return to your racer." : ended ? "Leave this room to join another race." : room.status !== "connected" ? "Your controls are paused. We’ll reconnect you automatically." : !room.hostConnected ? "Keep this screen open. Controls will return when the host reconnects." : room.recovering ? "The race is paused while drivers reconnect. Controls return when the race resumes." : room.locked && !player?.inRace ? "You reconnected after the start. Join the next race." : phonePhase === "results" ? "Nice race! The host will open character selection for the next one." : "Eyes on the big screen. Once everyone has joined, the host opens character selection. No ready-up needed.";
     return <main className={`${styles.shell} ${styles.phoneShell}`}>
       <section className={styles.phone}>
-        <header className={styles.phoneHead}>
+        <header className={styles.phoneHead}><FullscreenButton />
           <div className={styles.driverIdentity}><span className={styles.avatar} style={{ background: player?.color || "#ffce58" }} /><div><strong>{player?.name || name || "DRIVER"}</strong><p>ROOM {room.code}</p></div></div>
           <button className={styles.phoneLeave} onClick={exit}>{ended ? "EXIT ROOM" : "LEAVE"}</button>
         </header>
@@ -388,14 +474,14 @@ export default function Beerio() {
   }
 
   if (mode === "host" && room.code && (room.characterSelectionVersion ?? 1) >= 3) return <main className={selectionStyles.hostScreen}>
-    <header className={selectionStyles.hostHeader}><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b></div><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></header>
+    <header className={selectionStyles.hostHeader}><FullscreenButton /><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b></div><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></header>
     <div className={selectionStyles.hostWorkspace}>
       <aside className={selectionStyles.hostSidebar}>
         <div className={selectionStyles.joinDetails}><span>SCAN TO JOIN</span>{qr && <Image src={qr} alt="QR code to join this room" width={180} height={180} unoptimized />}<strong>{room.code}</strong><small>{joinUrl}</small></div>
         <TrackPicker value={selectedTrack} onChange={chooseTrack} />
         <button type="button" role="switch" aria-checked={steeringAssist} className={styles.assistToggle} onClick={toggleSteeringAssist}><span>STEERING ASSIST</span><strong>{steeringAssist ? "ON" : "OFF"}</strong></button>
-        <button className={styles.primary} disabled={starting || !activePlayers.length || room.players.some(player => !player.connected || !player.characterConfirmed) || room.status !== "connected" || choosingCharacters} onClick={start}>{starting ? "STARTING…" : choosingCharacters ? "RACE STARTING…" : "START RACE ↗"}</button>
-        <p className={styles.fine}>Everyone picks a character, then the host starts the race.</p>
+        {(room.characterSelectionVersion ?? 1) < 4 && <button className={styles.primary} disabled={starting || !activePlayers.length || room.players.some(player => !player.connected || !player.characterConfirmed) || room.status !== "connected" || choosingCharacters} onClick={start}>{starting ? "STARTING…" : choosingCharacters ? "RACE STARTING…" : "START RACE ↗"}</button>}
+        <p className={styles.fine}>The last pick automatically opens the track. Wait for 5–4–3–2–1, then GO!</p>
         {room.players.some(player => !player.connected) && <button className={styles.smallButton} disabled={room.status !== "connected"} onClick={room.skipOfflineDrivers}>CONTINUE WITHOUT DISCONNECTED DRIVERS</button>}
         {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}
         {room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}
@@ -405,7 +491,7 @@ export default function Beerio() {
   </main>;
 
   if (mode === "host" && room.code && choosingCharacters) return <main className={selectionStyles.hostScreen}>
-    <header className={selectionStyles.hostHeader}><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b><small>{TRACKS.find(track => track.id === raceTrack)?.name}</small></div><div><button type="button" className={styles.smallButton} disabled={room.status !== "connected"} onClick={() => { selectionArmed.current = false; needsLobbyUnlock.current = true; room.setLocked(false); }}>BACK TO JOINING</button><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></div></header>
+    <header className={selectionStyles.hostHeader}><FullscreenButton /><strong>BEERIO<span>★</span></strong><div>ROOM <b>{room.code}</b><small>{TRACKS.find(track => track.id === raceTrack)?.name}</small></div><div><button type="button" className={styles.smallButton} disabled={room.status !== "connected"} onClick={() => { selectionArmed.current = false; needsLobbyUnlock.current = true; room.setLocked(false); }}>BACK TO JOINING</button><button type="button" className={styles.smallButton} onClick={exit}>CLOSE ROOM</button></div></header>
     <CharacterGrid version={room.characterSelectionVersion ?? 1} players={room.players} endsAt={room.status === "connected" && room.hostConnected ? room.countdownEndsAt : null} />
     {room.players.some(player => !player.connected) && <div className={selectionStyles.offlineNotice}><span>Waiting for disconnected drivers to return.</span><button className={styles.smallButton} disabled={room.status !== "connected"} onClick={room.skipOfflineDrivers}>CONTINUE WITHOUT THEM</button></div>}
     {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}
@@ -414,7 +500,7 @@ export default function Beerio() {
   </main>;
 
   return <main className={styles.shell}>
-    <header className={styles.header}><Link href="/beerio" className={styles.wordmark}>BEERIO<span>★</span></Link><span>THE BIG SCREEN IS THE TRACK.</span><Link href="/">suraaj.me ↗</Link></header>
+    <header className={styles.header}><FullscreenButton /><Link href="/beerio" className={styles.wordmark}>BEERIO<span>★</span></Link><span>THE BIG SCREEN IS THE TRACK.</span><Link href="/">suraaj.me ↗</Link></header>
     <div className={styles.content}>
       {mode === "home" && <section className={styles.hero}>
         <div className={styles.eyebrow}>THE PARTY RACING GAME</div><h1>READY.<br /><em>SET.</em> RACE.</h1>
@@ -439,7 +525,7 @@ export default function Beerio() {
           </div></div>
           {choosingCharacters && <CharacterGrid version={room.characterSelectionVersion ?? 1} players={room.players} endsAt={room.hostConnected ? room.countdownEndsAt : null} />}
           {(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
-      {mode === "join" && !room.playerId && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>GRAB THE WHEEL</div><h1>You&apos;re<br /><em>driving.</em></h1><p>{randomJoin ? "Join an open public room. You’ll need to see the host’s screen to follow the race." : "Enter the code, your name, and your color. You’ll pick your character together on the big screen."}</p><form className={styles.form} onSubmit={(event) => { event.preventDefault(); if (Array.from(name.trim()).length <= 64) { if (randomJoin) room.joinRandomRoom({ name: name.trim(), appearance }); else room.joinRoom({ code: code.trim().toUpperCase(), name: name.trim(), appearance }); } }}>{!randomJoin && <label>ROOM CODE<input required autoCapitalize="characters" autoCorrect="off" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABC123" /></label>}<label>DRIVER NAME <span>(up to 64 Unicode characters)</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" aria-invalid={Array.from(name.trim()).length > 64} aria-describedby="driver-name-help" /><small id="driver-name-help">{Array.from(name.trim()).length > 64 ? "Name is too long. Use 64 characters or fewer." : `${Array.from(name.trim()).length} / 64 characters`}</small></label><AppearancePicker value={appearance} onChange={chooseAppearance} colorOnly /><button className={styles.primary} disabled={room.status === "connecting" || !name.trim() || Array.from(name.trim()).length > 64 || (!randomJoin && !code.trim())}>{room.status === "connecting" ? "CONNECTING..." : randomJoin ? "FIND A ROOM ↗" : "JOIN THE RACE ↗"}</button></form>{(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
+      {mode === "join" && !room.playerId && <section className={styles.panel}><button className={styles.back} onClick={exit}>← BACK</button><div className={styles.eyebrow}>GRAB THE WHEEL</div><h1>You&apos;re<br /><em>driving.</em></h1><p>{randomJoin ? "Join an open public room. You’ll need to see the host’s screen to follow the race." : "Enter the code, your name, and choose your ride and color. You’ll pick your character together on the big screen."}</p><form className={styles.form} onSubmit={(event) => { event.preventDefault(); if (Array.from(name.trim()).length <= 64) { if (randomJoin) room.joinRandomRoom({ name: name.trim(), appearance }); else room.joinRoom({ code: code.trim().toUpperCase(), name: name.trim(), appearance }); } }}>{!randomJoin && <label>ROOM CODE<input required autoCapitalize="characters" autoCorrect="off" maxLength={8} value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} placeholder="ABC123" /></label>}<label>DRIVER NAME <span>(up to 64 Unicode characters)</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="Your name" aria-invalid={Array.from(name.trim()).length > 64} aria-describedby="driver-name-help" /><small id="driver-name-help">{Array.from(name.trim()).length > 64 ? "Name is too long. Use 64 characters or fewer." : `${Array.from(name.trim()).length} / 64 characters`}</small></label><AppearancePicker value={appearance} onChange={chooseAppearance} colorOnly /><button className={styles.primary} disabled={room.status === "connecting" || !name.trim() || Array.from(name.trim()).length > 64 || (!randomJoin && !code.trim())}>{room.status === "connecting" ? "CONNECTING..." : randomJoin ? "FIND A ROOM ↗" : "JOIN THE RACE ↗"}</button></form>{(room.error || startError) && <p role="alert" className={styles.error}>{room.error || startError}</p>}{room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}</section>}
     </div>
   </main>;
 }

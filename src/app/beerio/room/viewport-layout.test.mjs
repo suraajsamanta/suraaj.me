@@ -58,7 +58,7 @@ test('all 30 characters remain present for zero and ten drivers without a defaul
     assert.match(html, /--character-rows:5/);
     assert.match(html, /Huang/);
     assert.doesNotMatch(html, /highlighted/);
-    assert.equal((html.match(/\/beerio\/models\//g) || []).length, 30);
+    assert.equal((html.match(/modelPortrait/g) || []).length, 30);
   }
 });
 

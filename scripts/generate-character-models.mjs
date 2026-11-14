@@ -26,8 +26,8 @@ function load(file) {
   );
   return loaded.exports;
 }
-const { characterShowroomGeometry, racerGeometry, dancerGeometry, twerkGeometry, parseColor } = load(resolve(root, 'src/app/beerio/game/renderer.ts'));
-const { CHARACTERS, ANIMAL_CHARACTERS, PALETTE } = load(resolve(root, 'src/app/beerio/appearance.ts'));
+const { characterHeadGeometry, characterShowroomGeometry, racerGeometry, dancerGeometry, twerkGeometry, parseColor } = load(resolve(root, 'src/app/beerio/game/renderer.ts'));
+const { GARAGE_VEHICLES, CHARACTERS, ANIMAL_CHARACTERS, PALETTE } = load(resolve(root, 'src/app/beerio/appearance.ts'));
 const SIZE = 320, AA = 2, WIDTH = SIZE * AA;
 const output = resolve(root, 'public/beerio/models'); mkdirSync(output, { recursive: true });
 const crcTable = Array.from({ length: 256 }, (_, value) => {
@@ -46,7 +46,7 @@ function png(rgba) {
   for (let y = 0; y < SIZE; y++) rows.set(rgba.subarray(y * SIZE * 4, (y + 1) * SIZE * 4), y * (SIZE * 4 + 1) + 1);
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows, { level: 9 })), chunk('IEND', Buffer.alloc(0))]);
 }
-function render(data, angle = -.24, tilt = .075) {
+function render(data, angle = -.24, tilt = .075, fit = false) {
   const pixels = new Uint8ClampedArray(WIDTH * WIDTH * 4), depth = new Float32Array(WIDTH * WIDTH); depth.fill(-Infinity);
   const ca = Math.cos(angle), sa = Math.sin(angle), ct = Math.cos(tilt), st = Math.sin(tilt);
   const vertices = [];
@@ -58,8 +58,8 @@ function render(data, angle = -.24, tilt = .075) {
   }
   // One consistent scale makes silhouettes and relative head sizes legible.
   // Tall ears and horns may reduce scale slightly but are never cropped.
-  const scale = Math.min(WIDTH * .87 / (highY - lowY), WIDTH * .78 / (highX - lowX), WIDTH / 3.35);
-  const centerX = (lowX + highX) / 2, bottom = WIDTH * .94;
+  const scale = Math.min(WIDTH * .87 / (highY - lowY), WIDTH * .78 / (highX - lowX), fit ? Infinity : WIDTH / 3.35);
+  const centerX = (lowX + highX) / 2, bottom = fit ? WIDTH / 2 + (highY - lowY) * scale / 2 : WIDTH * .94;
   const screen = vertices.map(([x, y, z]) => [(x - centerX) * scale + WIDTH / 2, bottom - (y - lowY) * scale, z]);
   const edge = (a, b, x, y) => (x - a[0]) * (b[1] - a[1]) - (y - a[1]) * (b[0] - a[0]);
   for (let i = 0; i < screen.length; i += 3) {
@@ -89,6 +89,23 @@ function render(data, angle = -.24, tilt = .075) {
     rgba[at + 3] = Math.round(count * 255 / (AA * AA));
   }
   return png(rgba);
+}
+if (process.argv.includes('--garage')) {
+  const heads = resolve(output, 'heads'), rides = resolve(output, 'rides');
+  mkdirSync(heads, { recursive: true }); mkdirSync(rides, { recursive: true });
+  for (const [i, character] of CHARACTERS.entries()) {
+    writeFileSync(resolve(heads, `${character.id}.png`), render(characterHeadGeometry(parseColor(PALETTE[i % PALETTE.length]), character.id).data, -.22, .08, true));
+  }
+  const garagePaint = ['#45679d', '#31815d', '#e5bb4a', '#8292a5', '#414b46', '#ec8c32', '#d96632', '#e83742', '#d82f43', '#eef2f7', '#a7adb4', '#b73854', '#3665ad'];
+  for (const [i, ride] of GARAGE_VEHICLES.entries()) {
+    const data = racerGeometry(parseColor(garagePaint[i]), 'fox', ride.id, false).data;
+    writeFileSync(resolve(rides, `${ride.id}.png`), render(data, -.67, .28, true));
+    for (const [suffix, angle, tilt] of [['left', -Math.PI / 2, .16], ['right', Math.PI / 2, .16], ['rear', Math.PI + .46, .24]]) {
+      writeFileSync(resolve(rides, `${ride.id}-${suffix}.png`), render(data, angle, tilt, true));
+    }
+  }
+  console.log(`Rendered ${CHARACTERS.length} driver heads and ${GARAGE_VEHICLES.length} vehicle previews.`);
+  process.exit(0);
 }
 const manifest = [];
 for (const [index, character] of CHARACTERS.entries()) {
