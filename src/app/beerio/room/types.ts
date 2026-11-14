@@ -31,7 +31,7 @@ export type RoomSnapshot = {
   locked: boolean;
   characterSelection?: boolean;
   /** Version 1 has 24 animals; version 2 adds six guests; version 3 supports unselected slots. */
-  characterSelectionVersion?: 1 | 2 | 3;
+  characterSelectionVersion?: 1 | 2 | 3 | 4;
   selectionPhase?: "gathering" | "selecting" | "countdown" | "racing";
   countdownEndsAt?: number | null;
   /** A restored race waits for its original controllers, unless the host explicitly resumes. */

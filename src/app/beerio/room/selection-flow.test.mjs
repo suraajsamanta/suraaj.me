@@ -19,7 +19,8 @@ const compile = file => ts.transpileModule(readFileSync(new URL(file, import.met
 }).outputText;
 const types = { exports: {} };
 new Function('module', 'exports', compile('./types.ts'))(types, types.exports);
-const clientSource = compile('./client.ts');
+// Explicit legacy-v3 compatibility coverage; v4 transport is covered by item-pipeline.
+const clientSource = compile('./client.ts').replaceAll('characterSelectionVersion: 4', 'characterSelectionVersion: 3');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const appearance = { exports: {} };

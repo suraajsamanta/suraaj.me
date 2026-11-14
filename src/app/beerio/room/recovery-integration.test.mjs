@@ -11,7 +11,8 @@ const WebSocket = require('ws');
 const transpile = source => ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const moduleUrl = source => `data:text/javascript;base64,${Buffer.from(source).toString('base64')}`;
 const types = moduleUrl(transpile(await readFile(new URL('./types.ts', import.meta.url), 'utf8')));
-const { BeerioRoomClient } = await import(moduleUrl(transpile(await readFile(new URL('./client.ts', import.meta.url), 'utf8')).replace('"./types"', JSON.stringify(types))));
+// Keep legacy-v3 recovery coverage alongside the v4 relay regression tests.
+const { BeerioRoomClient } = await import(moduleUrl(transpile((await readFile(new URL('./client.ts', import.meta.url), 'utf8')).replaceAll('characterSelectionVersion: 4', 'characterSelectionVersion: 3')).replace('"./types"', JSON.stringify(types))));
 const ORIGIN = 'https://beerio.example';
 const ZERO = { steer: 0, accelerate: false, brake: false };
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));

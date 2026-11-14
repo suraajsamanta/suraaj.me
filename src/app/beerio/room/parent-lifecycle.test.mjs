@@ -66,6 +66,7 @@ async function fixture(t, host = true) {
     if (name === 'qrcode') return { default: { toDataURL: () => Promise.resolve('data:image/test') } };
     if (name === 'next/link' || name === 'next/image') return { default: name };
     if (name === './appearance') return { CHARACTERS: [{ id: 'fox', name: 'Fox', icon: 'fox' }], VEHICLES: [{ id: 'kart', name: 'Kart', icon: 'kart' }], PALETTE: ['#ffce58'], DEFAULT_APPEARANCE: { character: 'fox', vehicle: 'kart', color: '#ffce58' }, validAppearance: () => false };
+    if (name === './FullscreenButton') return { default: 'FullscreenButton' };
     if (name === './game/SteeringJoystick') return { default: 'SteeringJoystick' };
     if (name === './lobby/CharacterSelection') return { CharacterGrid: 'CharacterGrid', CharacterController: 'CharacterController' };
     if (name === './lobby/StartingGrid') return { default: 'StartingGrid' };
@@ -718,4 +719,27 @@ test('random joining is offered separately and host discovery requires opt-in', 
   assert.equal(f.button(tree, 'FIND A ROOM ↗').disabled, false);
   f.nodes(tree, n => n.type === 'form')[0].props.onSubmit({ preventDefault() {} });
   assert.equal(f.messages.at(-1).type, 'join_random'); assert.equal(f.messages.at(-1).options.name, 'Speedy');
+});
+
+test('v4 last pick opens the track with five seconds and no host start click', async t => {
+  const f = await fixture(t); f.room.characterSelectionVersion = 4;
+  await f.render();
+  f.room.players.forEach(player => { player.character = 'fox'; player.characterConfirmed = true; });
+  f.lock();
+  const game = f.game(await f.render());
+  assert.ok(game); assert.equal(game.initialCountdown, 5);
+  assert.equal(f.messages.filter(message => message.type === 'select_characters').length, 0);
+  f.room.players[1].connected = false;
+  let current = f.game(await f.render());
+  assert.equal(current.players[1].retired, false, 'temporary disconnect retains the seat');
+  f.room.players.splice(1, 1);
+  current = f.game(await f.render());
+  assert.equal(current.players[1].retired, true, 'relay removal declares DNF');
+});
+
+test('v4 fresh picks after results start a new on-track countdown without replaying old results', async t => {
+  const f=await fixture(t); f.room.characterSelectionVersion=4; await f.render(); f.lock();
+  const first=f.game(await f.render()); first.onFinish(RESULTS); await f.render(); f.unlock(); await f.render();
+  f.room.players.forEach(player=>{player.character='fox';player.characterConfirmed=true;}); f.lock();
+  const second=f.game(await f.render()); assert.ok(second); assert.equal(second.initialCountdown,5); assert.notEqual(second.raceKey,first.raceKey);
 });

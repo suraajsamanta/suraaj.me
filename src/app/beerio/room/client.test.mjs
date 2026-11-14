@@ -66,7 +66,7 @@ test('client creates a room and handles host state permissions', async (t) => {
   const f = fixture(t);
   f.client.createRoom({ maxPlayers: 4 });
   await flush();
-  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4, recoveryVersion: 1, characterSelectionVersion: 3 });
+  assert.deepEqual(f.socket().sent[0], { type: 'create', maxPlayers: 4, recoveryVersion: 1, characterSelectionVersion: 4 });
   welcome(f.socket(), 'host');
   assert.equal(f.client.getSnapshot().status, 'connected');
   f.client.setLocked(true);
@@ -139,7 +139,7 @@ test('resume honors explicit room links, restores same-room identity and keeps t
   f.client.restoreSession('ABC234');
   await flush();
   assert.equal(FakeWebSocket.instances.length, count + 1);
-  assert.deepEqual(f.socket().sent[0], { type: 'resume', code: 'ABC234', token: 'a'.repeat(48), characterSelectionVersion: 3 });
+  assert.deepEqual(f.socket().sent[0], { type: 'resume', code: 'ABC234', token: 'a'.repeat(48), characterSelectionVersion: 4 });
   assert.ok(!f.socket().url.includes('a'.repeat(48)));
 });
 
@@ -425,7 +425,7 @@ test('replacing an older host room leaves it and requests a new ten-player room 
   assert.equal(oldSocket.readyState, 3);
   const newSocket = f.socket(); assert.notEqual(newSocket, oldSocket);
   assert.equal(newSocket.url, oldSocket.url);
-  assert.deepEqual(newSocket.sent[0], { type: 'create', maxPlayers: 10, recoveryVersion: 1, characterSelectionVersion: 3 });
+  assert.deepEqual(newSocket.sent[0], { type: 'create', maxPlayers: 10, recoveryVersion: 1, characterSelectionVersion: 4 });
   welcome(newSocket, 'host', { code: 'DEF345', maxPlayers: 10, players: [] });
   assert.equal(f.client.getSnapshot().code, 'DEF345');
   assert.equal(f.client.getSnapshot().maxPlayers, 10);
@@ -454,7 +454,7 @@ test('public hosting is explicit and random joining handles unavailable and olde
   f.client.createRoom({ maxPlayers: 4, publicMatchmaking: true }); await flush();
   assert.equal(f.socket().sent[0].publicMatchmaking, true);
   f.client.joinRandomRoom({ name: 'Phone' }); await flush();
-  assert.deepEqual(f.socket().sent[0], { type: 'join_random', characterSelectionVersion: 3, name: 'Phone' });
+  assert.deepEqual(f.socket().sent[0], { type: 'join_random', characterSelectionVersion: 4, name: 'Phone' });
   f.socket().receive({ type: 'error', code: 'no_random_room', message: 'No open public rooms right now. Try again or join with a code.', fatal: true });
   assert.equal(f.client.getSnapshot().status, 'error');
   assert.match(f.client.getSnapshot().error, /No open public rooms/);

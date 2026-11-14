@@ -9,7 +9,7 @@ const FIRST_CONNECTION_WINDOW_MS = 90_000;
 type RecoveryPlayer = { id: string; actionSequence: number; [key: string]: unknown };
 type RecoveryCheckpoint = { version: 1; roomId: string; revision: number; ackRequired?: boolean; maxPlayers: number; locked: boolean; players: RecoveryPlayer[] };
 type SavedSession = { code: string; token: string; role: RoomRole; relayUrl: string; roomId?: string; checkpoint?: RecoveryCheckpoint };
-type WelcomeRoom = { serverTime?: number; characterSelection?: boolean; characterSelectionVersion?: 1 | 2 | 3; selectionPhase?: RoomSnapshot["selectionPhase"]; countdownEndsAt?: number | null; code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; recovering?: boolean; recoveryWaitingFor?: string[]; hostConnected: boolean };
+type WelcomeRoom = { serverTime?: number; characterSelection?: boolean; characterSelectionVersion?: 1 | 2 | 3 | 4; selectionPhase?: RoomSnapshot["selectionPhase"]; countdownEndsAt?: number | null; code: string; players: RoomPlayer[]; maxPlayers: number; locked: boolean; recovering?: boolean; recoveryWaitingFor?: string[]; hostConnected: boolean };
 
 /** NEXT_PUBLIC values are compiled at build time. Never point cellular phones at localhost. */
 export function getRelayUrl(): string {
@@ -110,15 +110,15 @@ export class BeerioRoomClient {
   };
 
   createRoom = (options: CreateRoomOptions = {}) => {
-    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 10, ...(options.publicMatchmaking ? { publicMatchmaking: true } : {}), recoveryVersion: 1, characterSelectionVersion: 3 }, options.relayUrl, "host");
+    this.begin({ type: "create", maxPlayers: options.maxPlayers ?? 10, ...(options.publicMatchmaking ? { publicMatchmaking: true } : {}), recoveryVersion: 1, characterSelectionVersion: 4 }, options.relayUrl, "host");
   };
   joinRoom = (options: JoinRoomOptions) => {
     const code = options.code.replace(/\s/g, "").toUpperCase();
     if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code)) { this.update({ status: "error", error: "Enter the six-character room code shown on the host screen." }); return; }
-    this.begin({ type: "join", characterSelectionVersion: 3, code, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
+    this.begin({ type: "join", characterSelectionVersion: 4, code, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
   };
   joinRandomRoom = (options: RandomJoinOptions) => {
-    this.begin({ type: "join_random", characterSelectionVersion: 3, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
+    this.begin({ type: "join_random", characterSelectionVersion: 4, name: options.name.trim() || "Racer", ...(options.appearance ? { appearance: options.appearance } : {}) }, options.relayUrl, "player");
   };
   private begin(hello: Record<string, unknown>, relayUrl: string | undefined, role: RoomRole) {
     this.leaveRoom();
@@ -156,7 +156,7 @@ export class BeerioRoomClient {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       const hello = this.session ? {
-        type: "resume", code: this.session.code, token: this.session.token, characterSelectionVersion: 3,
+        type: "resume", code: this.session.code, token: this.session.token, characterSelectionVersion: 4,
         ...(this.session.roomId ? { roomId: this.session.roomId, recoveryVersion: 1 } : {}),
         ...(this.session.role === "host" && this.session.checkpoint ? { checkpoint: this.session.checkpoint } : {}),
       } : this.pendingHello;

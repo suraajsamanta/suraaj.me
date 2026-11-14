@@ -16,7 +16,7 @@ export type PlayerInventory = { id: string; item: PowerUp | null; feedback?: str
 export type GameViewProps = {
   players: GamePlayer[];
   laps?: number;
-  /** Zero skips an already completed room countdown; local countdowns last at least eight seconds. */
+  /** Zero skips an already completed room countdown; local countdowns last at least five seconds. */
   initialCountdown?: number;
   /** Circuit is selected in the lobby; changing it starts a fresh race. */
   trackId?: TrackId;
@@ -24,7 +24,7 @@ export type GameViewProps = {
   raceKey?: string | number;
   /** Arrow keys or WASD drive the first kart, in addition to phone controls. */
   localKeyboard?: boolean;
-  /** Follow bends automatically. Can be changed during a race without resetting it. */
+  /** Help deliberate steering through bends. Can be changed during a race without resetting it. */
   autoSteer?: boolean;
   /** Pauses authoritative simulation while the host connection is unavailable. */
   paused?: boolean;
@@ -40,7 +40,7 @@ export type GameViewProps = {
   rematchDisabled?: boolean;
 };
 
-type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; falling: boolean; respawning: boolean; finished: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; oil: number; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
+type HudKart = { notice: ItemNotice | null; noticeKey: string; id: string; place: number; lap: number; progress: number; speed: number; boost: boolean; offRoad: boolean; falling: boolean; respawning: boolean; finished: boolean; dnf: boolean; item: PowerUp | null; shield: boolean; slow: boolean; dance: boolean; danceStyle: 'dance' | 'twerk'; lightning: boolean; splatter: boolean; oil: number; leaderWarning: boolean; hitLabel: string; flask: boolean; prism: boolean; jet: boolean; drifting: boolean; driftCharge: number; x: number; y: number; aheadId: string | null };
 type Hud = { countdown: number; elapsed: number; complete: boolean; karts: HudKart[]; results: RaceResult[] };
 const ITEM_FEEDBACK = new Set(['No racer ahead', 'No racer behind', 'No rivals to strike', 'No rivals to oil', 'Wait until back on track']);
 const EMPTY_HUD: Hud = { countdown: COUNTDOWN_SECONDS, elapsed: 0, complete: false, karts: [], results: [] };
@@ -59,7 +59,7 @@ function snapshot(race: RaceState, players: GamePlayer[]): Hud {
       const { position } = (kart.onShortcut ? shortcutPose : trackPose)(kart.distance, kart.lane);
       return { notice: kart.power.notice ? { ...kart.power.notice } : null, noticeKey: `${kart.power.collected}:${kart.power.used}`, id: kart.id, place: ranked.findIndex((other) => other.id === kart.id) + 1,
         lap: currentLap(kart, race.laps), progress: lapProgress(kart), speed: Math.round(kart.speed * 3.6),
-        falling: Boolean(kart.fall), respawning: kart.respawnGrace > 0, boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, oil: kart.finishTime === null ? kart.power.oil : 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts.filter(canInteract), activeIds)?.id ?? null };
+        falling: Boolean(kart.fall), respawning: kart.respawnGrace > 0, boost: kart.boost > 0, offRoad: Math.abs(kart.lane) > 6.5, finished: kart.finishTime !== null, dnf: kart.dnf, item: kart.power.item, shield: kart.power.shield > 0, slow: kart.power.slow > 0, dance: kart.power.dance > 0, danceStyle: kart.power.danceStyle, lightning: kart.power.lightning > 0, splatter: kart.power.splatter > 0, oil: kart.finishTime === null ? kart.power.oil : 0, leaderWarning: kart.power.leaderWarning > 0, hitLabel: kart.power.flash > 0 ? kart.power.hitLabel : '', flask: kart.power.flask > 0, prism: kart.power.prism > 0, jet: kart.power.jet > 0, drifting: kart.drifting, driftCharge: kart.driftCharge, ...mapPoint({ x: position[0], y: position[1], z: position[2] }), aheadId: racerAhead(kart, race.karts.filter(canInteract), activeIds)?.id ?? null };
     }),
   };
 }
@@ -339,6 +339,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
                 {kart?.leaderWarning && <div className={styles.warning} role="status">CROWN COMET INCOMING!</div>}
                 {kart?.hitLabel && <div className={styles.hitNotice}>{kart.hitLabel}</div>}
                 {kart?.notice && !kart.finished && <PowerUpNotice key={`${kart.notice.kind}:${kart.noticeKey}`} item={kart.notice.item} kind={kart.notice.kind} keyboard={index === 0 && localKeyboard} playerName={player.name} paused={paused} />}
+                {kart?.dnf && !hud.complete && <div className={styles.finished}>DNF <span>Driver left the race</span></div>}
                 {kart?.finished && !hud.complete && <div className={styles.finished}>FINISHED <span>{place}{suffix(place)} place</span></div>}
               </div>
               <div className={styles.bottomHud}>

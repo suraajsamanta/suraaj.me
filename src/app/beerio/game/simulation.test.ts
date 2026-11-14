@@ -28,14 +28,14 @@ test('closed 3D circuit wraps at the start line', () => {
   assert.deepEqual(trackPose(0).position, trackPose(TRACK_LENGTH).position);
   assert.ok(Math.abs(circularDistance(TRACK_LENGTH - 1, 1) + 2) < 0.001);
 });
-test('all ten racers stay behind the line for the full eight-second countdown', () => {
+test('all ten racers stay behind the line for the full five-second countdown', () => {
   const players = Array.from({ length: 10 }, (_, i) => driver(String(i)));
   const race = createRace(players);
-  assert.equal(race.countdown, 8);
+  assert.equal(race.countdown, 5);
   const positions = race.karts.map((kart) => kart.distance);
-  // Exact binary fractions verify the eight-second boundary without floating
+  // Exact binary fractions verify the five-second boundary without floating
   // point drift in the test's usual 60 Hz advance helper.
-  for (let step = 0; step < 63; step++) stepRace(race, players, 0.125);
+  for (let step = 0; step < 39; step++) stepRace(race, players, 0.125);
   assert.equal(race.countdown, 0.125);
   assert.deepEqual(race.karts.map((kart) => kart.distance), positions);
   assert.equal(race.elapsed, 0);
@@ -290,14 +290,16 @@ test('crossing the grid line is not an extra lap; a whole circuit is', () => {
   race.karts[0].distance = TRACK_LENGTH + 1;
   assert.equal(currentLap(race.karts[0], 3), 2);
 });
-test('finish order is permanent and unfinished racers receive DNF after the grace period', () => {
+test('unfinished racers keep racing beyond the old grace period until explicitly withdrawn', () => {
   const players = [driver('a'), driver('b')], race = createRace(players, 1); race.countdown = 0;
   race.karts[0].distance = TRACK_LENGTH - 0.1; race.karts[0].speed = 40;
   players[1].input.accelerate = false;
   stepRace(race, players, 1 / 60);
   assert.ok(race.karts[0].finishTime !== null);
   assert.equal(race.complete, false);
-  advance(race, players, 25.1);
+  advance(race, players, 65);
+  assert.equal(race.complete, false);
+  stepRace(race, [{ ...players[0] }, { ...players[1], retired: true }], 1 / 60);
   assert.equal(race.complete, true);
   const results = raceResults(race);
   assert.equal(results[0].id, 'a'); assert.equal(results[0].finished, true);
@@ -512,4 +514,29 @@ test('a disconnected jet ends without auto-driving', () => {
   players[1].connected = false; players[1].input.accelerate = false;
   stepRace(race, players, 1 / 60);
   assert.equal(jet.power.jet, 0); assert.ok(jet.speed <= MAX_SPEED);
+});
+
+test('manual turns use the gentler 68 percent rate and keep directional control', () => {
+  for (const steer of [-1, 1]) {
+    const players = [driver('gentle', steer)], race = createRace(players); race.countdown = 0; race.powers.boxes = [];
+    const kart = race.karts[0]; Object.assign(kart, { distance: 20, speed: 20, obstacleCooldown: 10 });
+    const before = trackPose(kart.distance).yaw + kart.heading;
+    stepRace(race, players, 1 / 60, false);
+    const after = trackPose(kart.distance).yaw + kart.heading;
+    const yawChange = Math.atan2(Math.sin(after-before), Math.cos(after-before));
+    const expected = -steer * 0.68 * (1.4 + kart.speed * 0.025) / 60;
+    assert.ok(Math.abs(yawChange - expected) < 1e-8);
+  }
+});
+
+test('temporary disconnect remains resumable and last finisher ends the race without a deadline', () => {
+  const players = [driver('winner'), driver('reconnect')], race = createRace(players, 1); race.countdown = 0;
+  race.karts[0].finishTime = 1; race.firstFinish = 1;
+  players[1].connected = false; players[1].input.accelerate = false;
+  advance(race, players, 90);
+  assert.equal(race.complete, false); assert.equal(race.karts[1].dnf, false);
+  players[1].connected = true; players[1].input.accelerate = true;
+  Object.assign(race.karts[1], { distance: TRACK_LENGTH - .1, speed: 40, lane: 0, heading: 0 });
+  stepRace(race, players, 1 / 60);
+  assert.equal(race.complete, true); assert.ok(raceResults(race).every(result => result.finished));
 });
