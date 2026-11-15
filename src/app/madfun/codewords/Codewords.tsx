@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import QuickStart from '../shared/QuickStart';
 import HostRemote, { type RemoteAction } from '../shared/HostRemote';
 import Link from 'next/link';
@@ -15,6 +15,7 @@ const quickSteps = [
  { title: 'Pick teams and roles', body: 'Each team needs one clue-giver and at least one guesser. Only the clue-givers can see which cards belong to which team.' },
  { title: 'Give a clue, then guess', body: 'On your turn, the clue-giver sends one word and a number, like Space, 2. Guessers tap a word and confirm it. You can guess up to one more than the number or end your turn early. A wrong pick ends your turn.' },
  { title: 'Optional host phone or timer', body: 'The shared screen can pair a private Host controller. Auto-run starts when both teams are ready and moves on after the clue or guess timer expires. People still choose teams, give clues, and guess.' },
+ { title: 'Rejoin the current game', body: 'Reopen your player link in the same browser. If asked, use your original name. Returning clue-givers keep their team, role, and private key. Leave the host screen open.' },
  { title: 'Find all your words', body: 'Reveal every word of your team’s color first to win. Pick the trap card and your team immediately loses.' },
 ] as const;
 
@@ -40,12 +41,16 @@ export default function Codewords() {
  const [clock, setClock] = useState<number | null>(null);
  const [pick, setPick] = useState<{ index: number; turn: number; match: number } | null>(null);
 
+ const restorePlayer = useEffectEvent((code: string) => session.restorePlayer(code || undefined));
  useEffect(() => {
   const query = new URLSearchParams(window.location.search);
   const timer = window.setTimeout(() => {
-   setCode((query.get('room') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0,6));
-   setTvMode(query.get('watch') === '1');
-   setInvited(!!query.get('room'));
+   const code = (query.get('room') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0,6);
+   const watch = query.get('watch') === '1';
+   setCode(code);
+   setTvMode(watch);
+   setInvited(!!code);
+   if (!watch) restorePlayer(code);
   }, 0);
   return () => window.clearTimeout(timer);
  }, []);
@@ -82,7 +87,7 @@ export default function Codewords() {
   return () => { window.clearTimeout(first);window.clearInterval(tick); };
  },[deadline]);
  const seconds = deadline !== null && clock !== null ? Math.max(0,Math.ceil((deadline-clock)/1000)) : null;
- const canClue = gameLive && me?.team === game?.turn && me?.role === 'spymaster' && game?.phase === 'clue';
+ const canClue = gameLive && !!session.key && me?.team === game?.turn && me?.role === 'spymaster' && game?.phase === 'clue';
  const canGuess = gameLive && me?.team === game?.turn && me?.role === 'guesser' && game?.phase === 'guess';
  const picked = canGuess && pick && game.turnNumber === pick.turn && state?.match === pick.match && !game.board[pick.index]?.revealed ? pick.index : null;
  const joinPath = `${gamePath}?room=${roomCode}`;
@@ -208,7 +213,8 @@ export default function Codewords() {
      </section>
      <div className={styles.gameIdentity}>
       <p className={styles.small}>{display ? 'Shared board · private clues stay on player phones' : me?.team ? `You’re on ${teamName[me.team]} · ${me.role === 'spymaster' ? 'Clue-giver' : 'Guesser'}` : 'Watching this round'}</p>
-      {session.key && <p className={styles.keyNotice}>Private key · don’t share this screen</p>}
+      {session.key ? <p className={styles.keyNotice}>Private key · don’t share this screen</p> :
+       me?.role === 'spymaster' && game.phase !== 'finished' && <p className={styles.small} role="status">Restoring your private key…</p>}
      </div>
      <div className={styles.board} role="group" aria-label="Word board">
       {game.board.map((card,index) => {

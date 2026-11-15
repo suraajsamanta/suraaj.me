@@ -17,8 +17,9 @@ function phaseDeadline(game: Game | null, autoRun: boolean) {
   return !autoRun || !game || game.phase === 'finished' ? null : Date.now() + (game.phase === 'clue' ? 45_000 : 35_000);
 }
 
-const config: PhonePartyConfig<Model, CodewordsPublic> = {
+export const codewordsPartyConfig: PhonePartyConfig<Model, CodewordsPublic> = {
   protocol: 'madfun.codewords.v1',
+  recoverPlayersKey: 'madfun.codewords.player.v1',
   initial: () => ({ autoRun: false, deadline: null, match: 0, game: null, seats: {} }),
   view(model, participants, hostId) {
     const seats = seatsFor(model, participants);
@@ -74,11 +75,14 @@ const config: PhonePartyConfig<Model, CodewordsPublic> = {
 };
 
 export function useCodewordsSession() {
-  const party = usePhoneParty(config);
+  const party = usePhoneParty(codewordsPartyConfig);
   const own = party.secret as { match?: number; key?: CardKind[] } | null;
+  const seat = party.state?.seats.find(player => player.id === party.participantId);
+  const key = !party.host && !party.watching && party.status === 'connected' && party.hostConnected &&
+    seat?.connected && seat.role === 'spymaster' && own?.match === party.state?.match && own?.key?.length === 25 ? own.key : null;
   return {
     ...party,
-    key: own?.match === party.state?.match && own?.key?.length === 25 ? own.key : null,
+    key,
     dispatch: (action: CodewordsAction) => party.dispatch({ action, match: party.state?.match, turn: party.state?.game?.turnNumber }),
   };
 }
