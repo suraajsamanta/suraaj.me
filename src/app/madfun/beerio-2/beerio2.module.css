@@ -891,3 +891,14 @@
 
 /* The pre-race guide spans the showroom and setup columns. */
 .quickStart { grid-column: 1 / -1; min-width: 0; }
+
+.withRemote { z-index: 5; }
+.hostTools { justify-self: end; min-width: 0; display: flex; align-items: center; justify-content: end; gap: 8px; }
+.autoRun { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.autoRun .secondaryAction { min-height: 42px; }
+.autoRun .secondaryAction[aria-pressed="true"] { border-color: #baffde; color: #baffde; }
+.autoRun p { flex: 1 1 180px; margin: 0; font-size: 13px; }
+@media (max-width: 680px) {
+  .hostTools > .edition { display: none; }
+  .autoRun p { font-size: 11px; }
+}

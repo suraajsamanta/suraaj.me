@@ -4,7 +4,7 @@ import { createSimdRoadQuery } from './road-simd';
 export type DriveInput = { steer: number; throttle: boolean; brake: boolean; drift: boolean; reset: boolean };
 export type CarState = {
   x: number; y: number; z: number; yaw: number; facing: number; pitch: number; steer: number;
-  /** Metres per second, not the display's miles per hour. */
+  /** Signed metres per second: negative while backing up. */
   speed: number;
   lap: number; seconds: number; best: number | null; boost: boolean; driftCharge?: number;
   finished: boolean; finishTime: number | null;
@@ -27,10 +27,12 @@ export type DrivingWorld = {
 
 type DriverData = {
   grid: number; gate: number; trackProgress: number; charge: number; boost: number;
-  elapsed: number; started: boolean; resetHeld: boolean;
+  elapsed: number; started: boolean; resetHeld: boolean; stoppedBrake: number;
 };
 const UP = Math.PI / 2;
 const FIXED_STEP = 1 / 60;
+const REVERSE_HOLD = 0.25;
+const REVERSE_LIMIT = 8;
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (t: number, a: number, b: number) => Math.min(b, Math.max(a, t));
 const turn = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
@@ -98,6 +100,7 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     data.gate = 1;
     data.charge = data.boost = data.elapsed = 0;
     data.started = false;
+    data.stoppedBrake = 0;
   }
 
   function spawn(grid = 0): Driver {
@@ -105,7 +108,7 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     const driver: Driver = { state: { best: null } as CarState };
     const data: DriverData = {
       grid: Number.isFinite(grid) ? clamp(Math.floor(grid), 0, 31) : 0,
-      gate: 1, trackProgress: 0, charge: 0, boost: 0, elapsed: 0, started: false, resetHeld: false,
+      gate: 1, trackProgress: 0, charge: 0, boost: 0, elapsed: 0, started: false, resetHeld: false, stoppedBrake: 0,
     };
     reset(driver, data);
     drivers.set(driver, data);
@@ -115,9 +118,9 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
   function advance(driver: Driver, data: DriverData, input: DriveInput, dt: number, laps: number | undefined) {
     const s = driver.state;
     // Online races share the server's GO clock, including time spent stationary.
-    if (laps !== undefined || input.throttle || s.speed > 0.25) data.started = true;
+    if (laps !== undefined || input.throttle || Math.abs(s.speed) > 0.25) data.started = true;
     if (data.started) { data.elapsed += dt; s.seconds += dt; }
-    const drift = input.drift && s.speed > 9 && Math.abs(s.steer) > 0.22;
+    const drift = input.drift && !input.brake && s.speed > 9 && Math.abs(s.steer) > 0.22;
     s.steer = mix(s.steer, clamp(Number.isFinite(input.steer) ? input.steer : 0, -1, 1), 1 - Math.exp(-dt * 12));
     if (drift) data.charge = Math.min(1.25, data.charge + dt);
     else if (data.charge > 0) {
@@ -126,9 +129,30 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     }
     data.boost = Math.max(0, data.boost - dt);
     const limit = data.boost > 0 ? 37 : 29;
-    const accel = input.brake ? -25 : input.throttle ? 13 + (data.boost > 0 ? 10 : 0) : -5;
-    s.speed = clamp(s.speed + (accel - (drift ? 3.4 : 0)) * dt, 0, limit);
-    if (s.speed > 0.12) s.yaw += s.steer * dt * (drift ? 2.15 : 1.51) * clamp(s.speed / 7, 0, 1);
+    if (input.brake && !input.throttle) {
+      if (s.speed > 0) {
+        s.speed = Math.max(0, s.speed - 25 * dt);
+        data.stoppedBrake = 0;
+      } else {
+        data.stoppedBrake += dt;
+        if (s.speed < 0 || data.stoppedBrake + 1e-9 >= REVERSE_HOLD) {
+          s.speed = Math.max(-REVERSE_LIMIT, s.speed - 9 * dt);
+          data.boost = data.charge = 0;
+        }
+      }
+    } else {
+      data.stoppedBrake = 0;
+      if (input.brake) { // Both pedals stop the car without engaging reverse.
+        s.speed = Math.sign(s.speed) * Math.max(0, Math.abs(s.speed) - 25 * dt);
+      } else if (s.speed < 0) {
+        // Opposing throttle first slows the backward roll before driving forward.
+        s.speed = Math.min(0, s.speed + (input.throttle ? 25 : 7) * dt);
+      } else {
+        const accel = input.throttle ? 13 + (data.boost > 0 ? 10 : 0) : -5;
+        s.speed = clamp(s.speed + (accel - (drift ? 3.4 : 0)) * dt, 0, limit);
+      }
+    }
+    if (Math.abs(s.speed) > 0.12) s.yaw += s.steer * dt * (drift ? 2.15 : 1.51) * clamp(s.speed / 7, -1, 1);
     s.facing += turn(s.facing, s.yaw) * (1 - Math.exp(-(drift ? 3.3 : 12) * dt));
     s.x += Math.sin(s.facing) * s.speed * dt;
     s.z += Math.cos(s.facing) * s.speed * dt;
@@ -136,7 +160,7 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     const boundary = track.roadWidth / 2 - 1;
     if (p.distance > boundary) {
       const nx = (s.x - p.x) / p.distance, nz = (s.z - p.z) / p.distance;
-      const outward = Math.max(0, nx * Math.sin(s.facing) + nz * Math.cos(s.facing));
+      const outward = Math.max(0, Math.sign(s.speed) * (nx * Math.sin(s.facing) + nz * Math.cos(s.facing)));
       s.x = p.x + nx * boundary; s.z = p.z + nz * boundary;
       s.speed *= Math.exp(-dt * (1.55 + 5.1 * outward));
       const along = angleAt(p.segment);
@@ -151,8 +175,8 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     s.pitch = mix(s.pitch, -slope * direction, dt * 9);
     const delta = ((p.progress - data.trackProgress + course.length * 1.5) % course.length) - course.length * 0.5;
     s.progress += delta;
-    if (data.gate < 4 && crossedForward(data.trackProgress, p.progress, data.gate * course.length / 4, course.length)) data.gate += 1;
-    if (data.gate === 4 && crossedForward(data.trackProgress, p.progress, 0, course.length)) {
+    if (s.speed >= 0 && data.gate < 4 && crossedForward(data.trackProgress, p.progress, data.gate * course.length / 4, course.length)) data.gate += 1;
+    if (s.speed >= 0 && data.gate === 4 && crossedForward(data.trackProgress, p.progress, 0, course.length)) {
       if (s.best === null || s.seconds < s.best) s.best = s.seconds;
       if (laps !== undefined && s.lap >= laps) {
         s.finished = true; s.finishTime = data.elapsed;

@@ -84,6 +84,68 @@ test('drift earns a temporary release boost, and braking overrides throttle', as
   } finally { world.dispose(); }
 });
 
+test('hold Brake after stopping to reverse, then Gas resumes forward travel', async () => {
+  const world = await flatWorld();
+  try {
+    const driver = world.spawn();
+    const brake = { ...idle(), brake: true };
+    world.step(driver, gas(), tick * 8);
+    assert.ok(driver.state.speed > 0);
+    const step = (input, count) => {
+      for (let i = 0; i < count; i++) world.step(driver, input, tick);
+    };
+    step(brake, 5);
+    assert.equal(driver.state.speed, 0);
+    const stopped = { ...driver.state };
+    step(brake, 8);
+    assert.equal(driver.state.speed, 0, 'a brief brake press does not select reverse');
+    assert.equal(driver.state.x, stopped.x);
+    assert.equal(driver.state.z, stopped.z);
+    step(brake, 70);
+    assert.equal(driver.state.speed, -8);
+    assert.ok(driver.state.progress < stopped.progress, 'reverse drives backwards along the grid');
+    assert.equal(driver.state.boost, false);
+    assert.equal(driver.state.lap, 1);
+    step(idle(), 15);
+    assert.ok(driver.state.speed > -8 && driver.state.speed < 0, 'releasing Brake coasts toward zero');
+    step(gas(), 30);
+    assert.ok(driver.state.speed > 0);
+    step({ ...gas(), brake: true }, 120);
+    assert.equal(driver.state.speed, 0, 'both pedals brake without reversing');
+  } finally { world.dispose(); }
+});
+
+test('steering changes sign in reverse and backing across the line cannot award a lap', async () => {
+  const world = await flatWorld();
+  try {
+    const backing = world.spawn(), driving = world.spawn();
+    const originalYaw = backing.state.yaw;
+    for (let i = 0; i < 30; i++) {
+      world.step(backing, { ...idle(), brake: true, steer: 1 }, tick);
+      world.step(driving, { ...gas(), steer: 1 }, tick);
+    }
+    assert.ok(backing.state.yaw < originalYaw);
+    assert.ok(driving.state.yaw > originalYaw);
+
+    const driver = world.spawn();
+    for (let i = 1; i < course.length; i++) place(world, driver, i);
+    const start = course[0], last = course.at(-1), nearLine = {
+      x: start.x + (last.x - start.x) * 0.01,
+      z: start.z + (last.z - start.z) * 0.01,
+    };
+    const forward = heading(course.length - 1);
+    Object.assign(driver.state, nearLine, { speed: 0, yaw: forward + Math.PI, facing: forward + Math.PI });
+    world.step(driver, idle(), tick, 3);
+    const before = driver.state.progress;
+    Object.assign(driver.state, { speed: -8 });
+    world.step(driver, { ...idle(), brake: true }, tick, 3);
+    assert.ok(driver.state.progress > before, 'the car crossed the line in course order but in reverse gear');
+    assert.ok(driver.state.progress > course.length - 0.01);
+    assert.equal(driver.state.lap, 1);
+    assert.equal(driver.state.best, null);
+  } finally { world.dispose(); }
+});
+
 test('larger frame intervals use the same fixed-size driving steps', async () => {
   const world = await flatWorld();
   try {

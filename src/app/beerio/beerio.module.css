@@ -380,3 +380,13 @@
 .withQuickStart:has(.quickStart details[open]) { height: auto; min-height: 100dvh; overflow: visible; }
 .withQuickStart:has(.quickStart details[open]) .content { flex: 1 0 auto; }
 .withQuickStart:has(.quickStart details[open]) :is(.hero, .panel, .lobby) { flex: 1 0 auto; }
+
+.hostRemoteDock {
+  position: fixed; z-index: 32; top: max(58px, calc(env(safe-area-inset-top) + 54px));
+  right: max(12px, env(safe-area-inset-right)); display: flex; flex-wrap: wrap;
+  align-items: center; justify-content: flex-end; gap: 6px; max-width: min(410px, calc(100vw - 24px));
+}
+.autoRunHint {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip-path: inset(50%); white-space: nowrap;
+}

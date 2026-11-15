@@ -109,6 +109,10 @@ function advance(game: Game): Game {
   return { ...game, turn: otherTeam(game.turn), phase: 'clue', clue: null, guessesRemaining: 0, turnNumber: game.turnNumber + 1 };
 }
 
+export function skipTurn(game: Game): Game | null {
+  return game.phase === 'finished' ? null : { ...advance(game), lastGuess: null };
+}
+
 function finish(game: Game, winner: Team): Game {
   return { ...game, phase: 'finished', winner, guessesRemaining: 0 };
 }

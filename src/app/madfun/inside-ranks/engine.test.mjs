@@ -29,7 +29,7 @@ test('ranking and guessing redact the correct prompt and identities until allowe
   assert.equal(e.publicView(s).correct,null);
   assert.equal(e.privateView(s,s.rankTargets[0].id),null);
   assert.deepEqual(e.privateView(s,s.ranker.id),{prompt:s.correct});
-  const guessed=e.submitGuess(rank(s),s.rankTargets[0].id,s.correct.id);
+  const guessed=e.submitGuess(e.showOptions(rank(s)),s.rankTargets[0].id,s.correct.id);
   const view=e.publicView(guessed);
   assert.equal(view.options.length,4);
   assert(new Set(view.options.map(p=>p.id)).size===4);
@@ -46,7 +46,7 @@ test('only ranker can rank each friend exactly once; eligible friends each lock 
   assert.equal(e.submitRanking(s,s.ranker.id,[a.id,b.id,b.id]),null);
   assert.equal(e.submitRanking(s,s.ranker.id,[a.id,b.id,'unknown']),null);
   assert.equal(e.submitGuess(s,a.id,s.correct.id),null);
-  const g=rank(s);
+  const g=e.showOptions(rank(s));
   assert.deepEqual(g.ranking.map(p=>p.id),[c.id,b.id,a.id]);
   assert.equal(e.submitGuess(g,s.ranker.id,s.correct.id),null);
   assert.equal(e.submitGuess(g,a.id,'made-up'),null);
@@ -65,7 +65,7 @@ test('one point for a correct guess; only reveal unlocks the answer; rotate all 
       assert(!seen.has(option.id));
       seen.add(option.id);
     }
-    const g=rank(s), [a,b]=s.rankTargets;
+    const g=e.showOptions(rank(s)), [a,b]=s.rankTargets;
     const correct=e.submitGuess(g,a.id,s.correct.id);
     const wrong=e.submitGuess(correct,b.id,s.options.find(p=>p.id!==s.correct.id).id);
     const revealed=e.reveal(wrong);
@@ -93,4 +93,45 @@ test('host can skip during ranking; late joiners guess next round, and skipped p
   assert.equal(finished.phase,'finished');
   assert.equal(e.publicView(finished).correct,null);
   assert.deepEqual(e.publicView(finished).options,[]);
+});
+
+test('hint stage exposes context and ranking, but no candidate wording, IDs, or answers', () => {
+  const s = round();
+  assert.equal(e.showOptions(s), null);
+  const hint = rank(s);
+  const view = e.publicView(hint);
+  assert.equal(view.phase, 'hint');
+  assert.equal(view.ranking.length, 3);
+  assert.match(view.hint, /^Think|^Picture/);
+  assert.deepEqual(view.options, []);
+  assert.equal(view.correct, null);
+  assert.equal(e.privateView(hint, s.ranker.id), null);
+  for (const option of s.options) {
+    assert(!JSON.stringify(view).includes(option.text));
+    assert(!JSON.stringify(view).includes(option.id));
+  }
+  assert.equal(e.submitGuess(hint, s.rankTargets[0].id, s.correct.id), null);
+  const choosing = e.showOptions(hint);
+  assert.equal(e.showOptions(choosing), null);
+  assert.equal(e.publicView(choosing).options.length, 4);
+  assert.equal(e.publicView(choosing).correct, null);
+});
+
+test('verbal solve reveals the correct question without opening options or changing scores', () => {
+  const s = round();
+  const revealed = e.reveal(rank(s));
+  const view = e.publicView(revealed);
+  assert.equal(view.phase, 'reveal');
+  assert.deepEqual(view.correct, s.correct);
+  assert.deepEqual(view.options, []);
+  assert.deepEqual(view.scores, s.scores);
+  assert.equal(e.nextRound(revealed, players, bank).phase, 'ranking');
+});
+
+test('auto-run sets deadlines without choosing rankings or guesses', () => {
+  assert.deepEqual(e.phaseTimer('ranking'), { seconds: 75, action: 'expire_ranking' });
+  assert.equal(e.phaseTimer('finished'), null);
+  assert.deepEqual(e.phaseTimer('hint'), { seconds: 20, action: 'show_options' });
+  assert.deepEqual(e.phaseTimer('guessing'), { seconds: 25, action: 'reveal' });
+  assert.deepEqual(e.phaseTimer('reveal'), { seconds: 8, action: 'next' });
 });

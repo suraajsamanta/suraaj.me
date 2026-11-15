@@ -96,3 +96,15 @@
   font-weight: 850; text-transform: uppercase;
 }
 @media(max-width: 550px) { .share { grid-template-columns: minmax(0,1fr); } .share img { max-width: 100%; } }
+
+.hint {
+  display: grid; gap: 5px; padding: 1rem; border: 1px solid #fdaaef65;
+  border-radius: 12px; background: #43253e; color: #fff3fb;
+}
+.shell .autoRun {
+  display: inline-flex; align-items: flex-start; gap: .65rem; justify-self: start;
+  padding: .65rem .8rem; border: 1px solid #f9ceff40; border-radius: 12px;
+}
+.shell .autoRun input { width: 1.1rem; height: 1.1rem; min-height: 0; margin: .2rem 0 0; padding: 0; accent-color: #ffa5d6; }
+.autoRun span { display: grid; gap: .08rem; }
+.autoRun small { color: #e1d3e7; font-weight: 500; }

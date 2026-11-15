@@ -12,3 +12,4 @@
 .privateInvite{display:grid;justify-items:start;gap:10px;margin:12px 0}
 .phoneResults{max-width:620px;margin:0 auto}.phoneResults .reveal{grid-template-columns:minmax(0,1fr)}.phoneResults .reveal article{overflow-wrap:anywhere}
 @media(max-width:500px){.top{flex-wrap:wrap;gap:8px}.roomControls{margin-left:auto}.roomControls button{padding:10px;min-height:42px}.joinPanel{flex-wrap:wrap;text-align:center}.phoneResults .reveal article{padding:16px}}
+.shell .autoRun{display:flex;align-items:center;gap:.55rem;width:fit-content}.shell .autoRun input{display:inline-block;inline-size:1.15rem;block-size:1.15rem;margin:0;padding:0;accent-color:#d5fc75}.top{flex-wrap:wrap}

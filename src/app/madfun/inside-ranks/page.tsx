@@ -1,10 +1,7 @@
-import type { Metadata } from 'next';
+import { madfunMetadata } from '../shared/share-metadata';
 import InsideRanks from './InsideRanks';
 
-export const metadata: Metadata = {
-  title: 'Inside Ranks | Madfun',
-  description: 'One friend ranks the group. Everyone else guesses the secret question.',
-};
+export const metadata = madfunMetadata('inside-ranks');
 
 export default function Page() {
   return <InsideRanks />;

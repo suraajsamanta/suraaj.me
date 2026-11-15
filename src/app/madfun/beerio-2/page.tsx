@@ -10,6 +10,7 @@ import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
 import QuickStart from "../shared/QuickStart";
+import type { RemoteAction } from "../shared/HostRemote";
 import { FINISHES, readFinish, type CarFinish } from "./finishes";
 import { CHARACTERS, DEFAULT_RIDE, RIDES, readRide, saveRide, type RideSelection } from "./ride-selection";
 const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <main className={styles.shell}><section className={styles.entryStage}>Opening the car lab…</section></main> });
@@ -17,8 +18,8 @@ const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <
 type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
 const quickStartSteps = [
   { title: "Pick a circuit and car", body: "Choose Seattle Night or Neon Orbit. Open Car Lab to pick your car and character. Race AI puts you on the grid against three rivals; Time Trial is for chasing your best lap." },
-  { title: "Create a race or join friends", body: "Choose Create on shared screen on the TV or laptop. Everyone who wants to drive scans the player QR on a separate device. Tap Start race on the shared screen once two drivers have joined." },
-  { title: "Drive on your own screen", body: "Every driver gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE as needed. Hold DRIFT while steering, then release it to get a boost." },
+  { title: "Create a race or join friends", body: "Choose Create on shared screen on the TV or laptop. Everyone who wants to drive scans the player QR on a separate device. Start when two drivers are ready. Use Host controller to pair a phone privately, or turn on Auto-run for a 10-second lobby timer." },
+  { title: "Drive on your own screen", body: "Every driver gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE to slow down. Keep holding BRAKE after stopping to reverse. Hold DRIFT while steering, then release it to get a boost." },
   { title: "Race three laps", body: "First across the finish line wins the race. The screen that created the room shows the race and results without entering as a driver." },
 ] as const;
 const tvQuickStartSteps = [
@@ -26,6 +27,8 @@ const tvQuickStartSteps = [
   { title: "Join from phones", body: "Drivers use the separate player invite, room code, or QR. The host starts and controls the race on the screen that created it. This screen only watches and does not take a driver slot." },
 ] as const;
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
+const AUTO_START_MS = 10_000;
+const END_ROOM_CONFIRMATION = "End this Beerio 2 room for everyone?";
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
 const readInvite = () => cleanCode(new URLSearchParams(window.location.search).get("room") ?? "");
@@ -83,6 +86,7 @@ export default function Beerio2Page() {
   const [typedCode, setTypedCode] = useState<string | null>(null);
   const [validation, setValidation] = useState("");
   const [shareStatus, setShareStatus] = useState("");
+  const [autoRun, setAutoRun] = useState(false);
   const [session] = useState(() => new Beerio2Session());
   const room = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const screen = choice ?? (ROOM_CODE.test(inviteCode) ? watchToken ? "watch" : "join" : labLink ? "lab" : "menu");
@@ -93,6 +97,8 @@ export default function Beerio2Page() {
   const seatId = room.playerId;
   const inRoom = !!room.code && (host || !!seatId);
   const connecting = room.status === "connecting" || room.status === "reconnecting" || room.loading;
+  const readyToStart = host && inRoom && room.status === "connected" && room.hostConnected && !room.loading &&
+    room.phase === "lobby" && room.players.filter(p => p.connected && p.ready).length >= MIN_DRIVERS;
   const onlineView = useMemo<OnlineRaceView | undefined>(() => inRoom ? {
     get id() {
       if (!spectator) return seatId ?? "";
@@ -111,6 +117,23 @@ export default function Beerio2Page() {
     return () => { document.removeEventListener("visibilitychange", whenHidden); session.leave(); };
   }, [session]);
 
+  useEffect(() => {
+    if (!autoRun || !readyToStart) return;
+    let timer: number | undefined;
+    const arm = () => {
+      window.clearTimeout(timer);
+      if (document.hidden) return;
+      timer = window.setTimeout(() => {
+        const liveRoom = session.getSnapshot();
+        if (!document.hidden && liveRoom.code === room.code && liveRoom.role === "host" && liveRoom.phase === "lobby" && liveRoom.status === "connected" &&
+          liveRoom.hostConnected && !liveRoom.loading && liveRoom.players.filter(p => p.connected && p.ready).length >= MIN_DRIVERS) session.start();
+      }, AUTO_START_MS);
+    };
+    arm();
+    document.addEventListener("visibilitychange", arm);
+    return () => { window.clearTimeout(timer); document.removeEventListener("visibilitychange", arm); };
+  }, [autoRun, readyToStart, room.code, session]);
+
   function choose(next: Screen) {
     setValidation("");
     setShareStatus("");
@@ -124,8 +147,9 @@ export default function Beerio2Page() {
     if (next !== "menu" && next !== "lab") void import("./race").catch(() => {});
   }
 
-  function leave() {
-    if (host && inRoom && !window.confirm("End this Beerio 2 room for everyone?")) return;
+  function leave(confirmOnDisplay = true) {
+    if (confirmOnDisplay && host && inRoom && !window.confirm(END_ROOM_CONFIRMATION)) return;
+    setAutoRun(false);
     session.leave();
     if (additionalScreen || screen === "watch") window.history.replaceState(window.history.state, "", "/madfun/beerio-2");
     choose("menu");
@@ -137,6 +161,7 @@ export default function Beerio2Page() {
     if (screen === "host") {
       setValidation("");
       setShareStatus("");
+      setAutoRun(false);
       session.create(trackId);
       return;
     }
@@ -195,6 +220,21 @@ export default function Beerio2Page() {
     const racers = room.players.filter((player) => player.connected);
     const placeItems = raceFrame?.results ?? [];
     const closed = room.status === "closed" || room.status === "error";
+    const canPause = host && hostAvailable && (room.phase === "race" || countdown);
+    const remoteActions: RemoteAction[] = [];
+    if (host && !closed) {
+      if (lobby) {
+        remoteActions.push({ id: "start", label: "Start race", disabled: !readyToStart, run: session.start });
+        remoteActions.push({ id: autoRun ? "auto-off" : "auto-on", label: autoRun ? "Turn Auto-run off" : "Turn Auto-run on", disabled: !hostAvailable, run: () => setAutoRun(!autoRun) });
+      }
+      if (room.phase === "race" || countdown) remoteActions.push({ id: "pause", label: "Pause race", disabled: !canPause, run: () => session.setPaused(true) });
+      if (room.phase === "paused") remoteActions.push({ id: "resume", label: "Resume race", disabled: !hostAvailable, run: () => session.setPaused(false) });
+      if (results) remoteActions.push({ id: "rematch", label: "Back to starting grid", disabled: !hostAvailable, run: session.rematch });
+      remoteActions.push({ id: "end", label: "End room", confirm: END_ROOM_CONFIRMATION, run: () => leave(false) });
+    }
+    const remotePhase = !hostAvailable ? "Shared screen disconnected" : lobby
+      ? `Starting grid · ${racers.length}/${MAX_DRIVERS} drivers${autoRun ? " · Auto-run on" : ""}`
+      : countdown ? "Race countdown" : room.phase === "race" ? "Race in progress" : room.phase === "paused" ? "Race paused" : "Race results";
     let banner: RaceBanner | undefined;
     if (closed) {
       banner = { label: "ROOM UNAVAILABLE", title: "Connection ended", detail: room.error ?? "Leave the room and rejoin with a fresh code." };
@@ -211,9 +251,13 @@ export default function Beerio2Page() {
         <div className={styles.codeDisplay}><small>ROOM CODE</small><b>{room.code}</b></div>
       </div>
       <div className={styles.lobbyActionBar}>
-        {host && <button className={styles.primaryAction} type="button" disabled={racers.length < MIN_DRIVERS || !hostAvailable || room.loading} onClick={() => void session.start()}>
+        {host && <button className={styles.primaryAction} type="button" disabled={!readyToStart} onClick={() => void session.start()}>
           {room.loading ? "Preparing the race…" : racers.length < MIN_DRIVERS ? "Waiting for two drivers" : "Start race"}
         </button>}
+        {host && <div className={styles.autoRun}>
+          <button className={styles.secondaryAction} type="button" aria-pressed={autoRun} disabled={!hostAvailable} onClick={() => setAutoRun(!autoRun)}>{autoRun ? "Auto-run on" : "Auto-run off"}</button>
+          <p role="status">{autoRun ? readyToStart ? "Race starts automatically after 10 seconds with two or more ready drivers." : "Waiting for at least two ready drivers to start the 10-second timer." : "Optional: start automatically after two drivers are ready for 10 seconds."}</p>
+        </div>}
         {!additionalScreen && <div className={styles.shareRow}>
           <button className={styles.secondaryAction} type="button" onClick={() => void share(true)}>Invite players</button>
           <button className={styles.secondaryAction} type="button" onClick={() => void share(false)}>Copy driver link</button>
@@ -260,11 +304,12 @@ export default function Beerio2Page() {
       trackId={room.trackId}
       onlineView={onlineView}
       banner={banner}
-      exit={leave}
+      exit={() => leave()}
       spectator={spectator}
       host={host}
       racing={!spectator && hostAvailable && !lobby && !results && room.phase !== "paused"}
-      pause={host && room.phase === "race" ? () => session.setPaused(true) : undefined}
+      pause={canPause ? () => session.setPaused(true) : undefined}
+      hostRemote={host && !closed ? { phase: remotePhase, actions: remoteActions } : undefined}
       laps={3}
       panel={lobbyPanel || resultsPanel || resumePanel}
     />;
@@ -280,7 +325,7 @@ export default function Beerio2Page() {
         <p>This is a watch-only screen. The screen that created the room still runs the race.</p>
         {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
         <button type="button" className={styles.primaryAction} disabled={connecting || !watchToken || !ROOM_CODE.test(inviteCode)} onClick={() => session.watch(inviteCode, watchToken)}>{connecting ? "Connecting…" : "Open TV view"}</button>
-        <button type="button" className={styles.backAction} onClick={leave}>‹ Back to Beerio 2</button>
+        <button type="button" className={styles.backAction} onClick={() => leave()}>‹ Back to Beerio 2</button>
       </div>
     </section>
   </main>;

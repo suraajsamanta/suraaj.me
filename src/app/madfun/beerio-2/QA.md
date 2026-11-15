@@ -18,11 +18,13 @@ The solo prototype was exercised in Chromium’s software view on desktop and at
 - **Online:** Host chooses the circuit; invite opens the same circuit on guest. Room protocol and shared relay are unchanged. Host draws its authoritative 60 Hz state without waiting for its own snapshot. Guests use the latest authoritative own-car pose; only rivals use a 100 ms smoothing buffer. Active matches stay in their original browser session.
 - **Benchmarks:** Deterministic 10-driver simulation, 25 ms each way with ±12 ms jitter: input-to-authoritative-update mean 107 → 90 ms, p95 160 → 126 ms (54 events); snapshot rate remains 15 Hz. Loopback integration verified 10 drivers connected and receiving frames. NullEngine geometry audit: hero 54 → 27 draw-ready meshes, rivals 9 → 6 near / 1 far. These are synthetic / headless measurements, not claims about gameplay FPS or latency on a real phone.
 
-## Phone host and optional TV companion
+## Shared-screen host and phone drivers
 
-- Host & Drive creates a race on the same phone the host uses to drive. Start, Pause/Resume, and Back to Starting Grid stay on the host phone. An optional platform screen wake lock is held while hosting/watching and released on exit; keep the host tab visible.
-- Optional TV view uses a separate private link. Open it on one TV browser or TV-connected computer, select Open TV View once, then no controls are needed. In the lobby the display surfaces the normal driver QR; in-race it follows the host's view; results/rematch follow automatically.
-- The TV uses the existing invitation-zoned non-player relay seat, not a driver's slot. Race packets never contain the TV invite; credentials stay in the URL fragment until the spectator connects. The spectator cannot send racing commands. In-tab reconnect resumes, but reload can require waiting up to 90 seconds for the prior leased slot; explicit Exit TV View releases it immediately.
+- On the primary TV browser or a connected laptop, open Beerio 2, choose a circuit, then select **Create on shared screen → Create room**. Verify that the lobby starts with **0/10 drivers**, shows **Player QR · Scan to drive**, and cannot start yet. This device hosts and displays the race without a driver seat.
+- On two separate phones, scan the player QR (or use the regular invite link or room code), enter driver names, and join. Confirm one joined driver is not enough to start, then verify both names appear and **Start race** is enabled after the second driver joins. Include the person setting up the room as a player only if they join separately from their phone.
+- Start from the shared screen. Verify that only the phones have race input, while the shared screen follows a real driver. Start, Pause/Resume, and Back to Starting Grid stay on the primary display. Keep its tab visible during play. Test wake lock where available, then end the test room from that display.
+- To test a second, optional display, use **Optional extra display** in the host lobby to send the private TV link to another browser and select **Open TV view** there. The second TV is watch-only and does not replace the primary host or use a driver slot. Check the player QR, race camera, and results on the second display.
+- The second TV uses an invitation-gated non-player relay seat. Race packets never contain the TV invite; its token stays in the URL fragment until connecting. In-tab reconnect resumes, but reload can require waiting up to 90 seconds for the prior seat to expire. **Exit TV view** releases it immediately.
 
 ## NIGHTJAR R and SIMD128
 

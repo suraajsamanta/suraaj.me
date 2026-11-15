@@ -1,10 +1,11 @@
 'use client';
 import Link from 'next/link';
 import QuickStart from '../shared/QuickStart';
+import HostRemote from '../shared/HostRemote';
 import QRCode from 'qrcode';
 import {useEffect,useMemo,useState,useSyncExternalStore} from 'react';
 import {PartyClient} from '../shared/party-client';
-import {makeQueue,move,newRun,publicRun,type PublicRun,type Question,type Run} from './engine';
+import {advanceReviewed,loreAutoStep,makeQueue,move,newRun,publicRun,type PublicRun,type Question,type Run} from './engine';
 import {unlockEeshaDeck} from './deck';
 import type {Deck} from './engine';
 import s from './trivia.module.css';
@@ -12,6 +13,7 @@ import s from './trivia.module.css';
 const quickSteps = [
  { title: 'Host with the private link', body: 'Open the private Eesha Lore Night host link on the shared screen and tap Create room. It runs the game without taking a player slot. Point everyone to the Player QR, not the private host link. Start with at least two players on separate phones.' },
  { title: 'Join and answer on your phone', body: 'Scan the player QR or enter the room code and your name. Pick a choice or type your answer, then tap Lock answer before time runs out. Everyone answers every question.' },
+ { title: 'Optional: run the show from your phone', body: 'Pair a host controller privately. Auto-run advances round intros, automatically scored questions, and the final reveal. Questions that need a person to score them still wait for the host.' },
  { title: 'Reveal the answers at the end', body: 'After all 26 questions, the host taps Start the big reveal and reveals each answer one at a time. Correct answers earn that question’s points. The final leaderboard shows who scored most.' },
 ] as const;
 const savedHostKey='madfun.eesha-lore.host-unlock.v1';
@@ -20,6 +22,7 @@ export default function Trivia(){
  const room=useSyncExternalStore(client.subscribe,client.getSnapshot,client.getSnapshot);
  const [deck,setDeck]=useState<Deck|null>(null),[queue,setQueue]=useState<Question[]>([]);
  const [run,setRun]=useState<Run|null>(null),[remote,setRemote]=useState<PublicRun|null>(null),[name,setName]=useState(''),[invited,setInvited]=useState(false),[code,setCode]=useState(''),[qr,setQr]=useState(''),[error,setError]=useState(''),[now,setNow]=useState(0),[inviteNotice,setInviteNotice]=useState('');
+ const [autoRun,setAutoRun]=useState(false),[privateReviewVersion,setPrivateReviewVersion]=useState<number|null>(null);
  const host=room.role==='host',online=room.status==='connected',canAct=online&&(host||room.hostConnected),view=host?(run?publicRun(run,queue,deck?.title??'Eesha Lore Night'):null):remote;
  const me=room.playerId??'',active=run?queue[run.index]:null;
  const mascot='/madfun/eesha-sticker.png';
@@ -56,19 +59,41 @@ export default function Trivia(){
  },[host,now,online,queue,room.players,run]);
  const act=(type:string,value?:string)=>{if(!view||!canAct)return;const a={type,value,version:view.version};if(host)setRun(g=>g?move(g,queue,'host',a):g);else client.sendAction(a);};
  const start=()=>{if(!deck||!online||room.players.filter(p=>p.connected).length<2)return;setQueue(makeQueue(deck));setRun(newRun(room.players,Date.now()));client.setLocked(true);};
- const leave=()=>{client.leave();setRun(null);setRemote(null);setQr('');setInviteNotice('');};
- const nextAfterReview=()=>{if(!host||!online)return;setRun(g=>{
-  if(!g||g.phase!=='review')return g;
-  const graded=move(g,queue,'host',{type:'reveal',version:g.version});
-  return move(graded,queue,'host',{type:'next',version:graded.version});
- });};
+ const leave=()=>{client.leave();setAutoRun(false);setPrivateReviewVersion(null);setRun(null);setRemote(null);setQr('');setInviteNotice('');};
+ const reviewLabel=view&&view.index+1===view.total?'Start the big reveal':view&&queue[view.index+1]?.start?'Next round':'Next question';
+ const recapLabel=!view?.recapOpen?'Reveal answer':view.revealCard?.index===view.total-1?'Show final leaderboard':'Next answer';
+ const nextAfterReview=()=>{if(!host||!online)return;setRun(g=>g?advanceReviewed(g,queue):g);};
+ const canStart=online&&!!deck&&room.players.filter(p=>p.connected).length>=2;
+ const privateReviewOpen=run?.phase==='review'&&privateReviewVersion===run.version;
+ const autoStep=run&&!privateReviewOpen?loreAutoStep(run,queue):null;
+ const autoAction=autoStep?.action, autoDelay=autoStep?.delay, runVersion=run?.version;
+ useEffect(()=>{
+  if(!autoRun||!host||!online||!autoAction||!autoDelay||runVersion===undefined)return;
+  const timer=setTimeout(()=>setRun(g=>{
+   if(!g||g.version!==runVersion)return g;
+   return autoAction==='advance_review'?advanceReviewed(g,queue):move(g,queue,'host',{type:autoAction,version:g.version});
+  }),autoDelay);
+  return()=>clearTimeout(timer);
+ },[autoRun,host,online,queue,autoAction,autoDelay,runVersion]);
+ const remoteActions=[
+  {id:'lore-auto',label:autoRun?'Turn off Auto-run':'Turn on Auto-run',run:()=>setAutoRun(v=>!v)},
+  ...(!run?[{id:'lore-start',label:'Start game',run:start,disabled:!canStart}]:[]),
+  ...(view?.phase==='round'?[{id:'lore-open',label:'Show question',run:()=>act('open')}]:[]),
+  ...(view?.phase==='answer'?[{id:'lore-close',label:'Close answers',run:()=>act('close')}]:[]),
+  ...(view?.phase==='review'&&!active?.manual?[{id:'lore-next',label:reviewLabel,run:nextAfterReview}]:[]),
+  ...(view?.phase==='recap'?[{id:'lore-recap',label:recapLabel,run:()=>act(view.recapOpen?'next_recap':'reveal_recap')}]:[]),
+  ...(view?.phase==='results'?[{id:'lore-rematch',label:'Play again',run:start,disabled:!canStart}]:[]),
+  {id:'lore-end',label:'End room',run:leave,confirm:'End the room for everyone?'},
+ ];
  const copyInvite=async()=>{
   if(!joinUrl)return;
   try{await navigator.clipboard.writeText(joinUrl);setInviteNotice('Join link copied.');}
   catch{setInviteNotice('Send your friends the room code: '+room.code);}
  };
  const scores=view&&[...view.players].sort((a,b)=>(view.scores[b.id]??0)-(view.scores[a.id]??0));
- return <main className={s.page}><header className={s.header}><Link href="/madfun">madfun<span>✳</span></Link><small>EVERYONE IN · GROUP TRIVIA</small>{room.role&&<button onClick={leave}>{host?'End room':'Leave room'}</button>}</header>
+ return <main className={s.page}><header className={s.header}><Link href="/madfun">madfun<span>✳</span></Link><small>EVERYONE IN · GROUP TRIVIA</small>{host&&<HostRemote game="Eesha Lore Night" active={online} phase={view?.phase==='review'&&active?.manual?'Manual judging: use the host screen':view?.phase==='results'?'Final scores':!run?'Waiting for players':'Trivia in progress'} actions={remoteActions}/>}{room.role&&<button onClick={leave}>{host?'End room':'Leave room'}</button>}</header>
+ {host&&<label className={s.autoRun}><input type="checkbox" checked={autoRun} onChange={e=>setAutoRun(e.target.checked)}/> Auto-run questions and reveals</label>}
+ {host&&autoRun&&run&&<p role="status">{run.phase==='review'&&active?.manual?'Auto-run paused · host judging required':privateReviewOpen?'Auto-run paused · private review open':autoStep?'Auto-run · advancing after '+(autoStep.delay/1000)+' seconds':'Auto-run is on'}</p>}
  {room.error&&<p role="alert">{room.error} <button onClick={()=>client.retry()}>Retry</button></p>}
  {room.role&&!online&&!room.error&&<p role="status">Connecting to the room…</p>}{online&&!host&&!room.hostConnected&&view&&<p role="status">Host disconnected. Keep this screen open to reconnect.</p>}
  {!room.role&&<section className={s.stage}><p className={s.kicker}>NO BUZZERS. EVERYONE PLAYS.</p><h1>Eesha <em>Lore Night</em></h1><p>Create the room on the shared screen. All players answer on their own phones. Answers and scores are revealed at the end.</p><QuickStart game="Eesha Lore Night" steps={quickSteps}/>{!invited&&(deck?<button className={s.primary} onClick={()=>client.create('jeopardy')}>Create room</button>:<p>Hosting? Open the private Eesha Lore Night host link on the shared screen.</p>)}{error&&<p role="alert">{error}</p>}<form className={s.form} onSubmit={e=>{e.preventDefault();client.join(code,name,'jeopardy');}}><input aria-label="Room code" placeholder="Room code" value={code} maxLength={6} onChange={e=>setCode(e.target.value.toUpperCase())} required/><input aria-label="Player name" placeholder="Your name" value={name} maxLength={32} onChange={e=>setName(e.target.value)} required/><button>Join game</button></form></section>}
@@ -86,13 +111,13 @@ export default function Trivia(){
   <div className={s.recapAnswer} data-revealed={!!view.recapOpen} aria-live="polite">{view.recapOpen
    ?<div className={s.recapHit}><span>THE ANSWER</span><strong>{view.revealCard.answer??'Host’s call'}</strong></div>
    :<div className={s.recapCovered}><span aria-hidden="true">✦</span><b>Answer sealed</b></div>}</div>
-  {host?<button className={s.primary} disabled={!online} onClick={()=>act(view.recapOpen?'next_recap':'reveal_recap')}>{!view.recapOpen?'Reveal answer':view.revealCard.index+1===view.total?'Show final leaderboard':'Next answer'}</button>:<p>The answers appear here, one by one. The leaderboard follows the last answer.</p>}
+  {host?<button className={s.primary} disabled={!online} onClick={()=>act(view.recapOpen?'next_recap':'reveal_recap')}>{recapLabel}</button>:<p>The answers appear here, one by one. The leaderboard follows the last answer.</p>}
  </div>}
  {view.phase==='results'&&<><h1>{scores?.filter(p=>(view.scores[p.id]??0)===(view.scores[scores[0]?.id]??0)).map(p=>p.name).join(' & ')}</h1><p>Top of the leaderboard</p><ol className={s.leaders}>{scores?.map(p=><li key={p.id}>{p.name}<b>{view.scores[p.id]??0}</b></li>)}</ol>{host&&<button className={s.primary} onClick={start} disabled={!online}>Play again</button>}</>}
  {['answer','review','reveal'].includes(view.phase)&&<><p className={s.kicker}>{view.round}{view.deadline&&now?' · '+Math.max(0,Math.ceil((view.deadline-now)/1000))+'s':''}</p><h2>{view.prompt}</h2>
  {host&&view.phase==='answer'&&view.choices&&<div className={s.choices}>{view.choices.map((x,i)=><span key={x}><b>{'ABCDEFGH'[i]}</b> {x}</span>)}</div>}
  {view.phase==='answer'&&(host?<><p>{view.submitted.length} / {view.players.length} answers locked</p><button onClick={()=>act('close')} disabled={!online}>Close answers</button></>:view.submitted.includes(me)?<p>Answer locked. The next question will appear here.</p>:<Answer key={view.version} choices={view.choices} disabled={!canAct} submit={v=>act('answer',v)}/>)}
- {view.phase==='review'&&(host&&run?<><p>Answers locked. The answer key and scores stay hidden until the end.</p><details><summary onClick={e=>{if(!e.currentTarget.parentElement?.hasAttribute('open')&&!window.confirm('Open private scoring? Make sure players cannot see this screen before continuing.'))e.preventDefault();}}>{active?.manual?'Private judging (hide shared screen first)':'Private scoring (hide shared screen first)'}</summary><p>Close this panel before showing the screen to players.</p><div className={s.replies}>{run.players.map(p=><div key={p.id}><b>{p.name}</b><span>{run.answers[p.id]??'No answer'}</span>{Object.hasOwn(run.answers,p.id)&&<button aria-pressed={run.marks[p.id]??false} onClick={()=>act('mark',p.id)}>{run.marks[p.id]?'Correct':'Incorrect'}</button>}</div>)}</div></details><button className={s.primary} onClick={nextAfterReview} disabled={!online}>{view.index+1===view.total?'Start the big reveal':queue[view.index+1]?.start?'Next round':'Next question'}</button></>:<p>Answers locked. The answer key and scores will appear at the end.</p>)}
+ {view.phase==='review'&&(host&&run?<><p>Answers locked. The answer key and scores stay hidden until the end.</p><details key={run.version} onToggle={e=>setPrivateReviewVersion(e.currentTarget.open?run.version:null)}><summary onClick={e=>{if(!e.currentTarget.parentElement?.hasAttribute('open')&&!window.confirm('Open private scoring? Make sure players cannot see this screen before continuing.'))e.preventDefault();}}>{active?.manual?'Private judging (hide shared screen first)':'Private scoring (hide shared screen first)'}</summary><p>Close this panel before showing the screen to players.</p><div className={s.replies}>{run.players.map(p=><div key={p.id}><b>{p.name}</b><span>{run.answers[p.id]??'No answer'}</span>{Object.hasOwn(run.answers,p.id)&&<button aria-pressed={run.marks[p.id]??false} onClick={()=>act('mark',p.id)}>{run.marks[p.id]?'Correct':'Incorrect'}</button>}</div>)}</div></details><button className={s.primary} onClick={nextAfterReview} disabled={!online}>{reviewLabel}</button></>:<p>Answers locked. The answer key and scores will appear at the end.</p>)}
  {view.phase==='reveal'&&<p>Answers locked. The answer key and scores will appear at the end.</p>}
  </>}</section></>}
  </main>;

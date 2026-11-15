@@ -22,7 +22,7 @@ export type OnlineRaceView = RaceView;
 export type RaceInput = DriveInput;
 export type RaceSettings = { ride?: RideSelection; paint?: string; muted?: boolean; reducedMotion?: boolean; trackId?: TrackId; mode?: 'race' | 'time-trial' };
 export type RaceHud = {
-  speed: number; lap: number; seconds: number; best: number | null; boost: boolean; renderer: string;
+  speed: number; reverse?: boolean; lap: number; seconds: number; best: number | null; boost: boolean; renderer: string;
   roadKernel?: string; drifting?: boolean; driftCharge?: number; boostPower?: number; gear?: number; audioReady?: boolean; muted?: boolean; fps?: number;
   soloRace?: ReturnType<ReturnType<typeof createSoloRace>['status']>;
   map?: { id: string; x: number; z: number; color?: string; own?: boolean }[];
@@ -147,8 +147,8 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     const desired = Vector3.Zero();
     const look = Vector3.Zero();
     const hud = (state: CarState) => onHud({
-      speed: Math.round(state.speed * 2.236936), lap: state.lap, seconds: state.seconds, best: state.best, boost: state.boost, renderer,
-      drifting: driftCharge > 0, driftCharge: clamp(driftCharge / .5, 0, 1), boostPower, gear: Math.min(6, 1 + Math.floor(state.speed / 7)),
+      speed: Math.round(Math.abs(state.speed) * 2.236936), reverse: state.speed < 0, lap: state.lap, seconds: state.seconds, best: state.best, boost: state.boost, renderer,
+      drifting: driftCharge > 0, driftCharge: clamp(driftCharge / .5, 0, 1), boostPower, gear: Math.min(6, 1 + Math.floor(Math.abs(state.speed) / 7)),
       roadKernel: world?.roadKernel, audioReady: sound.ready, muted: !!settings.muted, fps: Math.round(fps), soloRace: soloRace?.status(),
       map: [...(!online || online.id ? [{ id: online?.id ?? 'you', x: state.x, z: state.z, color: ownColor ?? '#38bdf8', own: true }] : []),
         ...[...rivals].map(([id, rival]) => ({ id, x: rival.pose.x, z: rival.pose.z, color: rival.color }))],
@@ -219,7 +219,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
         ? clamp(source.driftCharge, 0, 1) * .5
         : drifting ? Math.min(1.25, driftCharge + dt) : 0;
       if (jump) { driftCharge = 0; previousSpeed = speed; effects?.clear(); }
-      sound.update({ speed, throttle: input.throttle, drift: drifting ? .45 + Math.abs(steer) * .55 : 0, boost, active, muted: !!settings.muted });
+      sound.update({ speed: Math.abs(speed), throttle: input.throttle || (input.brake && speed < 0), drift: drifting ? .45 + Math.abs(steer) * .55 : 0, boost, active, muted: !!settings.muted });
       if (phase === 'countdown' && countdown > 0 && countdown !== countdownNote) { sound.cue('countdown'); countdownNote = countdown; }
       if (phase === 'race' && previousPhase === 'countdown') sound.cue('go');
       if (phase !== 'countdown') countdownNote = -1;
@@ -229,7 +229,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       if (source.lap > previousLap) sound.cue('lap');
       if (source.finished && !wasFinished) sound.cue('finish');
       impactCooldown -= dt;
-      if (!jump && !input.brake && !source.finished && previousSpeed - speed > 1.5 && impactCooldown <= 0) { sound.cue('impact'); impactCooldown = .5; }
+      if (!jump && !input.brake && !source.finished && Math.abs(previousSpeed) - Math.abs(speed) > 1.5 && impactCooldown <= 0) { sound.cue('impact'); impactCooldown = .5; }
       boostPower = mix(boostPower, boost ? 1 : 0, 1 - Math.exp(-dt * (boost ? 10 : 5)));
       previousPhase = phase; wasBoost = boost; previousLap = source.lap; wasFinished = source.finished;
       const acceleration = dt > 0 ? clamp((speed - previousSpeed) / dt, -25, 20) : 0;

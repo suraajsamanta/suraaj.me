@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { OnlineRaceView, RaceHud, RaceInput, RaceSettings } from "./race";
+import HostRemote, { type RemoteAction } from "../shared/HostRemote";
 import { getTrack, type TrackId } from "./course";
 import raceUi from "./race-ui.module.css";
 import styles from "./beerio2.module.css";
@@ -20,8 +21,8 @@ function clock(seconds: number) {
 }
 
 export type RaceBanner = { label: string; title: string; detail?: string; countdown?: boolean };
-type RaceScreenProps = { ride?: import("./ride-selection").RideSelection; paint?: string; spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
-export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, paint, ride, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
+type RaceScreenProps = { ride?: import("./ride-selection").RideSelection; paint?: string; spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; hostRemote?: { phase: string; actions: readonly RemoteAction[] }; };
+export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, hostRemote, paint, ride, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
   const live = !!onlineView;
   const soloGrid = !live && mode === "race";
   const track = getTrack(trackId);
@@ -254,14 +255,24 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
   const onlinePlace = frame?.phase === "lobby" || place < 0 ? "—" : `${place + 1}/${order.length}`;
 
   const cameraDriver = spectator ? frame?.players.find(p => p.id === onlineView?.id)?.name : null;
+  const edition = <span className={`${styles.edition} ${spectator ? styles.tvTitle : ""}`}><i aria-hidden /> <span>{host ? "SHARED SCREEN · HOST" : spectator ? "TV VIEW · LIVE" : live ? "ONLINE RACE" : soloGrid ? "RACE AI" : "TIME TRIAL"}</span></span>;
+  function toggleSound() {
+    const next = !muted;
+    soundSettings.current.muted = next;
+    setMuted(next);
+    if (!spectator) { try { localStorage.setItem("beerio2-muted", String(next)); } catch {} }
+  }
   return (
     <main ref={shell} className={`${styles.shell}${spectator ? ` ${styles.tvShell}` : ""}`}>
-      <header className={styles.top}>
+      <header className={`${styles.top}${hostRemote ? ` ${styles.withRemote}` : ""}`}>
         {live
           ? <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label={host ? "End room" : spectator ? "Exit TV view" : "Leave online race"}><span aria-hidden>‹</span> Exit</button>
           : <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label="Back to Beerio 2 garage"><span aria-hidden>‹</span> Garage</button>}
         <h1>BEERIO<span>02</span></h1>
-        <span className={`${styles.edition} ${spectator ? styles.tvTitle : ""}`}><i aria-hidden /> <span>{host ? "SHARED SCREEN · HOST" : spectator ? "TV VIEW · LIVE" : live ? "ONLINE RACE" : soloGrid ? "RACE AI" : "TIME TRIAL"}</span></span>
+        {hostRemote ? <div className={styles.hostTools}>{edition}<HostRemote game="Beerio 2" phase={hostRemote.phase} actions={[
+          ...hostRemote.actions,
+          { id: muted ? "unmute" : "mute", label: muted ? "Turn sound on" : "Turn sound off", run: toggleSound },
+        ]} /></div> : edition}
       </header>
       <section className={styles.stage} data-course={trackId} aria-label={`${track.name} ${spectator ? "TV race view" : live ? "online race" : soloGrid ? "AI race" : "time trial"}`}>
         <canvas key={retry} ref={canvas} className={styles.canvas} aria-label="Live 3D race view" />
@@ -280,8 +291,8 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
           <rect x={map.x(track.points[0].x) - 2} y={map.y(track.points[0].z) - 2} width="4" height="4" fill="white" opacity=".75"/>
           {(hud.map ?? []).map(mark => <circle key={mark.id} cx={map.x(mark.x)} cy={map.y(mark.z)} r={mark.own ? 3.4 : 2.25} fill={mark.own ? "#fff" : mark.color ?? "#82edff"} stroke="#071024" strokeWidth="1.2"/>)}
         </svg>}
-        <div className={styles.speed} aria-label={`${Math.round(hud.speed)} miles per hour`}>
-          <b>{String(Math.max(0, Math.round(hud.speed))).padStart(2, "0")}</b><span>MPH</span>
+        <div className={styles.speed} aria-label={`${Math.round(hud.speed)} miles per hour${hud.reverse ? " in reverse" : ""}`}>
+          <b>{String(Math.max(0, Math.round(hud.speed))).padStart(2, "0")}</b><span>{hud.reverse ? "MPH · R" : "MPH"}</span>
           <span className={hud.boost ? styles.boostOn : styles.boostOff}>↯ BOOST</span>
           {!!hud.driftCharge && !hud.boost && <span className={raceUi.driftCharge} aria-label="Drift boost charge"><i style={{width: `${Math.min(100, hud.driftCharge * 100)}%`}}/></span>}
         </div>
@@ -300,7 +311,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
           <div className={styles.pedals}>
             {(["drift", "brake", "throttle"] as const).map((name) => (
               <button key={name} type="button" className={`${styles.pedal} ${styles[name]}`}
-                aria-label={PAD_LABELS[name]} aria-pressed={controls[name]} disabled={!driving}
+                aria-label={PAD_LABELS[name]} title={name === "brake" ? "Hold after stopping to reverse" : undefined} aria-pressed={controls[name]} disabled={!driving}
                 onPointerDown={(event) => {
                   if (!driveEnabled.current || event.button !== 0 || pedals.current[name] !== null) return;
                   event.currentTarget.setPointerCapture(event.pointerId);
@@ -364,12 +375,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
             if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
             else void shell.current?.requestFullscreen?.().catch(() => {});
           }}>{fullScreen ? "Exit full screen" : "Full screen"}</button>}
-          <button className={styles.reset} type="button" aria-pressed={muted} onClick={() => {
-            const next = !muted;
-            soundSettings.current.muted = next;
-            setMuted(next);
-            if (!spectator) { try { localStorage.setItem("beerio2-muted", String(next)); } catch {} }
-          }}>{muted ? "Sound off" : "Sound on"}</button>
+          <button className={styles.reset} type="button" aria-pressed={muted} onClick={toggleSound}>{muted ? "Sound off" : "Sound on"}</button>
           {!live && !soloGrid && <button className={styles.reset} type="button" onClick={() => { input.current.reset = true; }} aria-label="Reset car to track">↺ Reset</button>}
           {!spectator && <button className={styles.reset} type="button" onClick={exit}>{live ? "Leave room" : "Garage"}</button>}
         </div>

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import { madfunMetadata } from '../shared/share-metadata';
 import FloorGame from "./FloorGame";
-export const metadata: Metadata = { title: "Floor Is Trouble | Madfun", description: "Watch the tiles. Jump the gaps. Stay standing." };
+export const metadata = madfunMetadata('floor-is-trouble');
 export default function Page() { return <FloorGame />; }

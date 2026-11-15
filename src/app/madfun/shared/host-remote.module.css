@@ -1,0 +1,8 @@
+.wrap { position: relative; min-width: 0; color: #f3f7ff; isolation: isolate; z-index: 18; text-align: left; }
+.wrap .trigger { min-height: 40px; border-radius: 9px; padding: 6px 11px; cursor: pointer; font: 750 .82rem/1.2 system-ui,sans-serif; color:#eaf3ff; background:#17283b; border:1px solid #91c9e566; white-space:normal; }
+.popup { position: absolute; right: 0; top: calc(100% + 8px); width: min(280px, 78vw); box-sizing:border-box; padding: 14px; background: #111d2c; border:1px solid #7bacc977; border-radius:12px; display:grid; gap:10px; box-shadow:0 16px 38px #0008; font: 600 .88rem/1.35 system-ui,sans-serif; }
+.popup h2 { margin:0!important; font-size:1.1rem!important; color:#fff; }
+.popup p { margin:0!important; color:#d7e5f1!important; }
+.popup button { min-height:42px; border-radius:8px; border:1px solid #6297b077; color:#f4faff; background:#21354c; cursor:pointer; padding:7px 10px; }
+.popup img { border-radius:8px; max-width:100%; height:auto; }
+.wrap button:focus-visible { outline:2px solid #92edff; outline-offset:2px; }

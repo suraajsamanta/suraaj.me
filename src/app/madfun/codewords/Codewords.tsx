@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import QuickStart from '../shared/QuickStart';
+import HostRemote, { type RemoteAction } from '../shared/HostRemote';
 import Link from 'next/link';
 import Image from 'next/image';
 import QRCode from 'qrcode';
@@ -13,6 +14,7 @@ const quickSteps = [
  { title: 'Create the shared board', body: 'On the big screen, choose Create room. This screen shows the board and starts each game. It doesn’t join a team. At least four players scan the player QR on their phones.' },
  { title: 'Pick teams and roles', body: 'Each team needs one clue-giver and at least one guesser. Only the clue-givers can see which cards belong to which team.' },
  { title: 'Give a clue, then guess', body: 'On your turn, the clue-giver sends one word and a number, like Space, 2. Guessers tap a word and confirm it. You can guess up to one more than the number or end your turn early. A wrong pick ends your turn.' },
+ { title: 'Optional host phone or timer', body: 'The shared screen can pair a private Host controller. Auto-run starts when both teams are ready and moves on after the clue or guess timer expires. People still choose teams, give clues, and guess.' },
  { title: 'Find all your words', body: 'Reveal every word of your team’s color first to win. Pick the trap card and your team immediately loses.' },
 ] as const;
 
@@ -35,6 +37,7 @@ export default function Codewords() {
  const [clue, setClue] = useState('');
  const [count, setCount] = useState(1);
  const [clueNotice, setClueNotice] = useState('');
+ const [clock, setClock] = useState<number | null>(null);
  const [pick, setPick] = useState<{ index: number; turn: number; match: number } | null>(null);
 
  useEffect(() => {
@@ -60,6 +63,25 @@ export default function Codewords() {
  const me = !display ? state?.seats.find(s => s.id === participantId) : undefined;
  const connected = session.status === 'connected';
  const gameLive = connected && session.hostConnected;
+ const deadline = state?.deadline ?? null;
+ const autoRun = state?.autoRun === true;
+ const canAutoStart = host && gameLive && autoRun && !game && state?.canStart === true;
+ const dispatchRef = useRef(session.dispatch);
+ useEffect(() => { dispatchRef.current = session.dispatch; }, [session.dispatch]);
+ useEffect(() => {
+  if (!host || !gameLive || (!canAutoStart && deadline === null)) return;
+  const end = deadline ?? Date.now() + 10_000;
+  const timer = window.setTimeout(() => dispatchRef.current({type: deadline === null ? 'start' : 'expire_turn'}), Math.max(0,end - Date.now()) + 35);
+  return () => window.clearTimeout(timer);
+ }, [canAutoStart, deadline, gameLive, host]);
+ useEffect(() => {
+  if (deadline === null) return;
+  const update = () => setClock(Date.now());
+  const first = window.setTimeout(update,0);
+  const tick = window.setInterval(update,500);
+  return () => { window.clearTimeout(first);window.clearInterval(tick); };
+ },[deadline]);
+ const seconds = deadline !== null && clock !== null ? Math.max(0,Math.ceil((deadline-clock)/1000)) : null;
  const canClue = gameLive && me?.team === game?.turn && me?.role === 'spymaster' && game?.phase === 'clue';
  const canGuess = gameLive && me?.team === game?.turn && me?.role === 'guesser' && game?.phase === 'guess';
  const picked = canGuess && pick && game.turnNumber === pick.turn && state?.match === pick.match && !game.board[pick.index]?.revealed ? pick.index : null;
@@ -94,6 +116,15 @@ export default function Codewords() {
   setClue('');
   setCount(1);
  };
+ const remote: RemoteAction[] = [
+  {id:'auto',label:autoRun?'Turn auto-run off':'Turn auto-run on',disabled:!gameLive,run:()=>session.dispatch({type:'set_auto',enabled:!autoRun})},
+  {id:'invite',label:showInvite?'Hide player QR':'Show player QR',disabled:!game,run:()=>setShowInvite(!showInvite)},
+  ...(!game ? [{id:'start',label:'Start game',disabled:!gameLive || !state?.canStart,run:()=>session.dispatch({type:'start'})}] :
+    game.phase === 'finished' ? [{id:'rematch',label:'Play again',disabled:!gameLive || !state?.canStart,run:()=>session.dispatch({type:'rematch'})},
+      {id:'teams',label:'Show teams for next game',run:()=>{if(state)setEditTeamsMatch(state.match);}}] :
+    [{id:'skip',label:'Skip this turn',disabled:!gameLive,run:()=>session.dispatch({type:'skip_turn'}),confirm:'End this team’s current turn without making a guess?'}]),
+  {id:'end',label:'End room',confirm:'End the Codewords room for everyone?',run:leave},
+ ];
  const teams: Team[] = ['red','blue'];
  const invite = roomCode && <aside className={`${styles.panel} ${styles.invite}`} aria-label="Player invite">
   {qr && <Image src={qr} unoptimized alt="Player QR: scan to play Codewords on your phone" width={display ? 146 : 108} height={display ? 146 : 108}/>}
@@ -108,6 +139,7 @@ export default function Codewords() {
    {active && <div className={styles.headerTools}>
     {roomCode && <span className={styles.roomBadge}>{roomCode}</span>}{display && <span className={styles.roomBadge}>{host ? "Host display" : "Watch only"}</span>}
     {roomCode && !watching && <button aria-expanded={showInvite || !game} onClick={() => setShowInvite(!showInvite)} hidden={!game}>Invite</button>}
+    {host && roomCode && <HostRemote game="Codewords" phase={!game ? 'Lobby' : game.phase === 'finished' ? 'Results' : `Turn ${game.turnNumber} · ${teamName[game.turn]} team`} actions={remote}/>}
     <button onClick={() => { if(!host || !game || game.phase==='finished' || window.confirm('End this room for everyone?')) leave(); }}>{host ? 'End room' : 'Leave'}</button>
    </div>}
   </header>
@@ -142,6 +174,11 @@ export default function Codewords() {
     {!state && !session.error && <p className={styles.status} role="status">Connecting to the room…</p>}
     {state && !gameLive && !session.error && <p className={styles.status} role="status">Reconnecting…</p>}
     {(!game || showInvite) && invite}
+    {host && state && <div className={styles.actions}>
+      <button type="button" aria-pressed={autoRun} disabled={!gameLive} onClick={() => session.dispatch({type:'set_auto',enabled:!autoRun})}>Auto-run: {autoRun ? 'On' : 'Off'}</button>
+      {canAutoStart && <span className={styles.small} role="status">Both teams are ready. Auto-run starts in 10 seconds.</span>}
+      {game && game.phase !== 'finished' && <button type="button" disabled={!gameLive} onClick={() => { if(window.confirm('Skip this turn?'))session.dispatch({type:'skip_turn'}); }}>Skip turn</button>}
+    </div>}
     {state && game?.phase === 'finished' && state.canStart && !watching && editTeamsMatch !== state.match && <button onClick={() => setEditTeamsMatch(state.match)}>{host ? "View teams for next game" : "Change teams for next game"}</button>}
     {state && (!game || (game.phase === 'finished' && (!state.canStart || editTeamsMatch === state.match))) && <>
      <div><span className={styles.kicker}>Mission briefing</span><h1>{display ? 'Teams are getting ready.' : 'Pick a team on this phone.'}</h1>
@@ -167,6 +204,7 @@ export default function Codewords() {
        {game.winner ? `${teamName[game.winner]} team wins!` : game.clue && game.phase==='guess' ? `${game.clue.word.toUpperCase()} · ${game.clue.count}` : canClue ? 'Your turn to give a clue' : 'Waiting for a clue…'}
       </strong></div>
       {game.phase==='guess' && <p className={styles.guesses}>{game.guessesRemaining} {game.guessesRemaining===1 ? 'guess' : 'guesses'} left</p>}
+      {seconds !== null && game.phase !== 'finished' && <span aria-label="Seconds remaining" className={styles.guesses}>{seconds}s</span>}
      </section>
      <div className={styles.gameIdentity}>
       <p className={styles.small}>{display ? 'Shared board · private clues stay on player phones' : me?.team ? `You’re on ${teamName[me.team]} · ${me.role === 'spymaster' ? 'Clue-giver' : 'Guesser'}` : 'Watching this round'}</p>

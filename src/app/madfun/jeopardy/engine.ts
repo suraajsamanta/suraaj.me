@@ -62,3 +62,18 @@ export function publicRun(g:Run,q:Question[],title:string){
  return {...base,index,round,points,recapOpen:g.recapOpen,revealCard:{index,round,points,prompt,...(g.recapOpen&&answer!==undefined?{answer}:{})}} as WithRecap;
 }
 export type PublicRun=ReturnType<typeof publicRun>;
+
+/** Same grading path for a local host, remote host, and automatic transitions. */
+export function advanceReviewed(run:Run,queue:Question[],now=Date.now()):Run{
+ if(run.phase!=='review')return run;
+ const scored=move(run,queue,'host',{type:'reveal',version:run.version},now);
+ return move(scored,queue,'host',{type:'next',version:scored.version},now);
+}
+export function loreAutoStep(run:Run,queue:Question[]):{action:'open'|'advance_review'|'reveal_recap'|'next_recap';delay:number}|null{
+ switch(run.phase){
+ case 'round':return {action:'open',delay:5000};
+ case 'review':return queue[run.index]&&!queue[run.index].manual ? {action:'advance_review',delay:4500}:null;
+ case 'recap':return run.recapOpen?{action:'next_recap',delay:6500}:{action:'reveal_recap',delay:4000};
+ default:return null;
+ }
+}

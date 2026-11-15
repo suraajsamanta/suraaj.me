@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import { madfunMetadata } from '../shared/share-metadata';
 import BoomerangGame from "./BoomerangGame";
-export const metadata: Metadata = { title: "Ricochet | Madfun", description: "Catch it. Throw it. Dodge it. A boomerang arena for your whole group." };
+export const metadata = madfunMetadata('boomerang');
 export default function Page() { return <BoomerangGame />; }

@@ -17,6 +17,8 @@ export type KartState = {
 export type RaceState = { elapsed: number; countdown: number; karts: KartState[]; complete: boolean; laps: number; firstFinish: number | null; powers: PowerWorld };
 export const COUNTDOWN_SECONDS = 5;
 export const MAX_SPEED = 43;
+export const REVERSE_MAX_SPEED = 10;
+const REVERSE_ACCELERATION = 8;
 export const MANUAL_STEERING_SCALE = 0.68;
 export const FALL_SECONDS = 1.8;
 export const RESPAWN_GRACE_SECONDS = 1.25;
@@ -124,7 +126,6 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     // (or tiny controller noise) keeps the current world heading through bends,
     // so the driver must keep steering. Jet Keg is the explicit autopilot item.
     const steeringActive = Math.abs(steer) > 0.12;
-    const assisted = driving.autoDrive || (autoSteer && steeringActive);
     const offRoad = ACTIVE_TRACK.edgeBehavior !== 'fall' && Math.abs(kart.lane) > ROAD_HALF_WIDTH - 0.5;
     kart.boost = Math.max(0, kart.boost - dt);
     kart.bump = Math.max(0, kart.bump - dt);
@@ -141,7 +142,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       kart.driftCharge = 0; kart.drifting = false;
     } else if (input.drift) {
       kart.drifting = true;
-      if (accelerating && kart.speed > 8 && Math.abs(steer) > 0.2) kart.driftCharge = Math.min(3, kart.driftCharge + dt);
+      if (accelerating && !braking && kart.speed > 8 && Math.abs(steer) > 0.2) kart.driftCharge = Math.min(3, kart.driftCharge + dt);
     } else {
       if (kart.drifting && kart.driftCharge >= 0.6) kart.boost = Math.max(kart.boost, kart.driftCharge >= 2 ? 2 : kart.driftCharge >= 1.2 ? 1.4 : 0.8);
       kart.driftCharge = 0; kart.drifting = false;
@@ -154,7 +155,20 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     const surfaceMaximum = driving.autoDrive ? driving.maximumSpeed! : offRoad ? MAX_SPEED * (1 - shoulder * 0.1) : Math.max(MAX_SPEED + 15, driving.maximumSpeed ?? 0);
     const maximum = finished ? 14 : Math.min(surfaceMaximum, kart.power.slow > 0 ? 24 : driving.maximumSpeed ?? (boost ? MAX_SPEED + 15 : MAX_SPEED));
     const engine = (finished ? 7 : accelerating ? driving.acceleration ?? (boost ? 23 : 13) : -5) * (kart.power.slow > 0 ? 0.55 : 1);
-    kart.speed = clamp(kart.speed + (braking ? -30 : engine) * dt, 0, Math.max(MAX_SPEED + 17, maximum));
+    const reverseLimit = REVERSE_MAX_SPEED * (1 - shoulder * 0.25) * (kart.power.slow > 0 ? .55 : 1);
+    if (braking) {
+      // First stop any forward motion. Holding Brake alone from rest engages
+      // reverse; holding both pedals always stops without reversing.
+      if (kart.speed > 0) kart.speed = Math.max(0, kart.speed - 30 * dt);
+      else if (accelerating) kart.speed = Math.min(0, kart.speed + 30 * dt);
+      else kart.speed = Math.max(-reverseLimit, kart.speed - REVERSE_ACCELERATION * dt);
+    } else if (kart.speed < 0) {
+      // Coasting in reverse must slow down, not apply more reverse throttle.
+      kart.speed = Math.min(0, kart.speed + (accelerating || finished ? 26 : 9) * dt);
+    } else {
+      kart.speed = clamp(kart.speed + engine * dt, 0, Math.max(MAX_SPEED + 17, maximum));
+    }
+    const assisted = driving.autoDrive || (autoSteer && steeringActive && kart.speed >= 0);
     if (kart.speed > maximum) kart.speed = Math.max(maximum, kart.speed - (offRoad ? 32 : 14) * dt);
     const previousDistance = kart.distance;
     const wasOnShortcut = kart.onShortcut;
@@ -176,8 +190,10 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     } else {
       // Manual or hands-off driving steers a heading rather than a lane. Release
       // keeps the kart pointed forward in the world instead of following bends.
-      // Limit the angle for arcade handling: no reversing or spinning in place.
-      const turnRate = MANUAL_STEERING_SCALE * (kart.drifting ? 1.25 : 1) * (1.4 + kart.speed * 0.025) * Math.min(1, kart.speed / 6);
+      // During reverse the nose swings opposite the steering input, so the
+      // rear of the car goes in the direction the player is steering.
+      const speed = Math.abs(kart.speed);
+      const turnRate = MANUAL_STEERING_SCALE * (kart.drifting && kart.speed > 0 ? 1.25 : 1) * (1.4 + speed * 0.025) * Math.min(1, speed / 6) * Math.sign(kart.speed);
       kart.heading = clamp(kart.heading - steer * turnRate * dt, -1.2, 1.2);
       kart.lateral = Math.sin(kart.heading) * kart.speed;
       kart.lane += kart.lateral * dt;
@@ -195,11 +211,11 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       const railGuidance = finished || driving.autoDrive || steeringActive;
       // A held turn can slide along a rail. A released control must not gain
       // a new tangent every frame and use the barrier as free autopilot.
-      if (railGuidance && kart.heading * side > 0) kart.heading = 0;
+      if (railGuidance && kart.heading * side * Math.sign(kart.speed) > 0) kart.heading = 0;
       forwardFraction = assisted || finished ? 1 : Math.cos(kart.heading);
       // Intentional wall sliding stays forgiving. Hands-off impacts scrub speed
       // until the driver steers away instead of completing a lap on the rail.
-      kart.speed = Math.max(0, kart.speed - (railGuidance ? 3 : 45) * dt);
+      kart.speed = Math.sign(kart.speed) * Math.max(0, Math.abs(kart.speed) - (railGuidance ? 3 : 45) * dt);
       kart.bump = Math.max(kart.bump, 0.08);
     }
     // Entrance can only be crossed forward from the indicated side. On the
@@ -208,7 +224,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     let travel = kart.speed * forwardFraction * dt;
     const start = ACTIVE_SHORTCUT.start * TRACK_LENGTH, end = ACTIVE_SHORTCUT.end * TRACK_LENGTH;
     const ratio = (end - start) / SHORTCUT_LENGTH;
-    if (!kart.onShortcut && !finished && !driving.autoDrive) {
+    if (!kart.onShortcut && !finished && !driving.autoDrive && travel > 0) {
       const entrance = (Math.floor((previousDistance - start) / TRACK_LENGTH) + 1) * TRACK_LENGTH + start;
       const toEntrance = entrance - previousDistance;
       if (travel >= toEntrance && kart.lane * ACTIVE_SHORTCUT.side >= 2) {
@@ -217,7 +233,16 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
         kart.onShortcut = true;
       }
     }
-    if (kart.onShortcut) {
+    if (kart.onShortcut && travel < 0) {
+      // Back out through the same entrance, preserving physical distance.
+      const progressFromEntrance = Math.max(0, wrap(kart.distance) - start);
+      const metresFromEntrance = progressFromEntrance / ratio;
+      if (-travel >= metresFromEntrance) {
+        kart.distance -= progressFromEntrance;
+        kart.distance += travel + metresFromEntrance;
+        kart.onShortcut = false;
+      } else kart.distance += travel * ratio;
+    } else if (kart.onShortcut) {
       // Work from the current wrapped position instead of dividing by lap
       // length: division at a freshly crossed entrance can round below an
       // integer and incorrectly select the previous lap's exit.
@@ -236,7 +261,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
       const turn = after.yaw - before.yaw;
       kart.heading = clamp(kart.heading - Math.atan2(Math.sin(turn), Math.cos(turn)), -1.2, 1.2);
     }
-    if (!finished && !wasOnShortcut && !kart.onShortcut && kart.padCooldown <= 0) {
+    if (!finished && !wasOnShortcut && !kart.onShortcut && travel >= 0 && kart.padCooldown <= 0) {
       BOOST_FRACTIONS.forEach((fraction, i) => {
         if (Math.abs(circularDistance(kart.distance, fraction * TRACK_LENGTH)) < 3 && Math.abs(kart.lane - BOOST_LANES[i]) < 1.8) {
           kart.boost = 1.8;
@@ -246,11 +271,11 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
     }
     // Hazards live in track-relative coordinates so collisions match the visible props.
     // Check the whole segment travelled this step to avoid tunnelling at high speed.
-    if (!finished && !wasOnShortcut && !kart.onShortcut && kart.obstacleCooldown <= 0 && kart.speed > 1) {
+    if (!finished && !wasOnShortcut && !kart.onShortcut && kart.obstacleCooldown <= 0 && Math.abs(kart.speed) > 1) {
       const travel = kart.distance - previousDistance;
       for (const obstacle of ACTIVE_TRACK.obstacles) {
         const offset = circularDistance(obstacle.fraction * TRACK_LENGTH, previousDistance);
-        const closest = clamp(offset, 0, travel);
+        const closest = clamp(offset, Math.min(0, travel), Math.max(0, travel));
         const longitudinal = Math.abs(offset - closest);
         const radius = obstacle.kind === 'barrel' ? 2 : 3;
         const laneRadius = obstacle.kind === 'barrel' ? 1.5 : 2.2;
@@ -276,7 +301,7 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
         }
       }
     }
-    if (!finished && kart.distance >= TRACK_LENGTH * race.laps) {
+    if (!finished && kart.distance > previousDistance && kart.distance >= TRACK_LENGTH * race.laps) {
       kart.finishTime = race.elapsed;
       if (race.firstFinish === null) race.firstFinish = race.elapsed;
     }
@@ -330,8 +355,8 @@ export function stepRace(race: RaceState, players: GamePlayer[], dt: number, aut
         }
         if (a.bump <= 0 && b.bump <= 0 && !(aDancing && bDancing)) {
           const average = (a.speed + b.speed) * 0.46;
-          if (!aDancing) a.speed = average;
-          if (!bDancing) b.speed = average;
+          if (!aDancing) a.speed = a.speed < 0 ? Math.min(0, average) : Math.max(0, average);
+          if (!bDancing) b.speed = b.speed < 0 ? Math.min(0, average) : Math.max(0, average);
           a.bump = 0.28; b.bump = 0.28;
         }
       }

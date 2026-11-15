@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import ts from 'typescript';
 const {outputText}=ts.transpileModule(await readFile(new URL('./engine.ts',import.meta.url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}});
-const {parseDeck,makeQueue,newRun,move,publicRun}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
+const {parseDeck,makeQueue,newRun,move,publicRun,advanceReviewed,loreAutoStep}=await import('data:text/javascript;base64,'+Buffer.from(outputText).toString('base64'));
 const deck=parseDeck(JSON.stringify({title:'Private deck',categories:[{name:'Round One',clues:[{prompt:'Question',answer:'Yes',aliases:['Yep'],choices:['Yes','No']},{prompt:'Manual',manual:true,choices:['Alpha','Beta']}]},{name:'Round Two',clues:[{prompt:'Typed',answer:'OK'}]}],final:{category:'Final round',prompt:'Final question',answer:'Fine'}}));
 const queue=makeQueue(deck,()=>0);
 const seats=[{id:'a',name:'A',connected:true},{id:'b',name:'B',connected:true}];
@@ -80,4 +80,25 @@ test('rejects duplicate, off-menu, late and stale answers',()=>{
  assert.equal(act(g,'answer','b','Not an option'),g);
  assert.equal(move(g,queue,'b',{type:'answer',value:'Yes',version:g.version},60000),g);
  assert.equal(move(g,queue,'b',{type:'answer',value:'Yes',version:g.version-1},100),g);
+});
+
+test('Auto-run proposes finite pacing steps without bypassing manual judging or exposing answers',()=>{
+ let g=newRun(seats,0);
+ assert.deepEqual(loreAutoStep(g,queue),{action:'open',delay:5000});
+ g=act(g,'open');assert.equal(loreAutoStep(g,queue),null);
+ g=act(g,'answer','a','Yes');g=act(g,'close');
+ assert.deepEqual(loreAutoStep(g,queue),{action:'advance_review',delay:4500});
+ g=advanceReviewed(g,queue,100);assert.equal(g.scores.a,100);
+ g=act(g,'answer','a','Alpha');g=act(g,'close');
+ assert.equal(g.phase,'review');assert.equal(loreAutoStep(g,queue),null);
+ assert.equal(publicRun(g,queue,deck.title).revealCard,undefined);
+ g=act(g,'mark','host','a');g=advanceReviewed(g,queue,100);assert.equal(g.scores.a,300);
+ for(let i=2;i<queue.length;i++){g=act(g,'open');g=act(g,'close');g=advanceReviewed(g,queue,100);}
+ assert.equal(g.phase,'recap');
+ for(let index=0;index<queue.length;index++){
+  assert.deepEqual(loreAutoStep(g,queue),{action:'reveal_recap',delay:4000});
+  assert.equal(publicRun(g,queue,deck.title).revealCard.answer,undefined);
+  g=act(g,'reveal_recap');assert.deepEqual(loreAutoStep(g,queue),{action:'next_recap',delay:6500});g=act(g,'next_recap');
+ }
+ assert.equal(g.phase,'results');assert.equal(loreAutoStep(g,queue),null);
 });

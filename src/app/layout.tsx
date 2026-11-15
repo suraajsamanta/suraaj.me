@@ -1,19 +1,10 @@
-import type { Metadata } from "next";
+import { madfunMetadata } from './madfun/shared/share-metadata';
 import "./globals.css";
 
-export const metadata: Metadata = {
-  metadataBase: new URL("https://suraaj.me"),
-  title: "Suraaj Samanta — Learning, Building, Exploring",
-  description: "Suraaj Samanta. Learning, building, exploring.",
-  openGraph: {
-    title: "Suraaj Samanta",
-    description: "Learning, building, exploring.",
-    url: "https://suraaj.me",
-    siteName: "Suraaj Samanta",
-    type: "website",
-  },
-  twitter: { card: "summary_large_image" },
+export const metadata = {
+  ...madfunMetadata('suraaj'),
   robots: { index: true, follow: true },
+  metadataBase: new URL("https://suraaj.me"),
 };
 
 export default function RootLayout({

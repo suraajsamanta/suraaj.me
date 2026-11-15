@@ -4,6 +4,8 @@ import Link from "next/link";
 import Image from "next/image";
 import QRCode from "qrcode";
 import QuickStart from "../shared/QuickStart";
+import HostRemote from "../shared/HostRemote";
+import { ARENA_AUTO_START_MS, arenaStartKey } from "../shared/arena-auto-start";
 import { ArenaRoomClient } from "./transport";
 import { ARENAS, createArena, startMatch, tickArena, syncRoster, type ArenaId, type ArenaState, type ArenaInput } from "./engine";
 import ArenaCanvas from "./ArenaCanvas";
@@ -12,7 +14,7 @@ import { useArenaAudio } from "./useArenaAudio";
 import styles from "./boomerang.module.css";
 const QUICK_START = [
   { title: "Set up the room", body: "On your shared screen, choose Create room. This device runs the game without joining as a player. For solo play, choose Practice with bots." },
-  { title: "Join and start", body: "Every player scans the QR code with their own phone, or enters the room code and their name. The host starts the match from the shared screen once there are 2–10 players." },
+  { title: "Join and start", body: "Every player scans the QR code with their own phone, or enters the room code and their name. With at least two fighters, start from the shared screen or via the private Game controller QR. Auto-run can start a ready room after 12 seconds." },
   { title: "Move and throw", body: "Use the joystick to move and aim. Tap Throw to send your boomerang, then tap Throw again to call it back early. Use Dash to dodge incoming throws." },
   { title: "Win the match", body: "Last one standing scores a round win. First to five round wins takes the match." },
 ] as const;
@@ -32,6 +34,8 @@ export default function BoomerangGame() {
   const [arenaId, setArenaId] = useState<ArenaId>("garden");
   const [bots, setBots] = useState(0); const [qr, setQr] = useState("");
   const [notice, setNotice] = useState("");
+  const [autoRun, setAutoRun] = useState(false);
+  const [autoStatus, setAutoStatus] = useState<{ cycle: string; seconds: number } | null>(null);
   const [arena, setArena] = useState<ArenaState>(() => createArena([]));
   const pendingStart = useRef(false);
   const arenaRef = useRef(arena); const localInput = useRef<ArenaInput>({ ...EMPTY_INPUT });
@@ -65,7 +69,8 @@ export default function BoomerangGame() {
     const timer = window.setInterval(() => {
       const now = performance.now(); const dt = Math.min((now-last)/1000, .05); last = now;
       const snapshot = roomRef.current;
-      if (mode === "host" && pendingStart.current && snapshot.locked) { pendingStart.current = false; syncRoster(arenaRef.current, arenaRef.current.players.filter(player => player.bot || snapshot.players.some(current => current.id === player.id && current.connected))); startMatch(arenaRef.current); }
+      if (mode === "host" && pendingStart.current && snapshot.locked) { pendingStart.current = false; syncRoster(arenaRef.current, arenaRef.current.players.filter(player => player.bot || snapshot.players.some(current => current.id === player.id && current.connected)));
+        if (!arenaRef.current.players.some(player => !player.bot) || !startMatch(arenaRef.current)) client.lobby(); }
       const inputs: Record<string, ArenaInput> = {};
       for (const player of snapshot.players) inputs[player.id] = player.connected ? player.input : EMPTY_INPUT;
       if (mode === "practice") inputs.you = localInput.current;
@@ -88,7 +93,7 @@ export default function BoomerangGame() {
   }, [mode]);
   const input = useCallback((value: ArenaInput) => { client.setInput(value); }, [client]);
   const practiceInput = useCallback((value: ArenaInput) => { localInput.current = value; }, []);
-  const leave = () => { pendingStart.current = false; client.leave(); setMode("entry"); setShowArena(true); resetArena(createArena([], arenaId)); setNotice(""); };
+  const leave = () => { pendingStart.current = false; setAutoRun(false); setAutoStatus(null); client.leave(); setMode("entry"); setShowArena(true); resetArena(createArena([], arenaId)); setNotice(""); };
   const fullscreen = async () => { try { if (document.fullscreenElement) await document.exitFullscreen(); else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen(); else setNotice("On iPhone, use Share → Add to Home Screen for a browser-free view."); } catch { setNotice("Fullscreen is unavailable in this browser. Try landscape or Add to Home Screen."); } };
   const host = () => { unlockAudio(); resetArena(createArena([], arenaId)); setBots(0); setMode("host"); client.create(); };
   const copyJoin = async () => {
@@ -97,7 +102,32 @@ export default function BoomerangGame() {
     catch { setNotice("Copy the room code and send it to your friends: " + room.code); }
   };
   const practice = () => { unlockAudio(); localInput.current = { ...EMPTY_INPUT }; const state = createArena([{ id: "you", name: name.trim() || "You", color: "#d6ff65" }, ...BOT_COLORS.slice(0,3).map((color,index) => ({ id: `bot-${index}`, name: ["Mochi","Pickle","Waffles"][index], color, bot:true }))], arenaId); startMatch(state); resetArena(state); setMode("practice"); };
-  const begin = () => { unlockAudio(); if (arenaRef.current.players.length < 2) return; pendingStart.current = true; client.start(); };
+  const startKey = arenaStartKey(room, bots);
+  const autoCycle = mode === "host" && autoRun && arena.phase === "lobby" && startKey
+    ? JSON.stringify([room.code, arenaId, startKey]) : null;
+  const countdown = autoStatus?.cycle === autoCycle ? autoStatus.seconds : ARENA_AUTO_START_MS / 1000;
+  const toggleAutoRun = () => { setAutoStatus(null); setAutoRun(value => !value); };
+  const begin = useCallback((manual = true, expectedKey?: string) => {
+    const ready = arenaStartKey(client.getSnapshot(), bots);
+    if (mode !== "host" || pendingStart.current || arenaRef.current.phase !== "lobby" ||
+      !ready || (expectedKey !== undefined && ready !== expectedKey)) return;
+    if (manual) unlockAudio();
+    setAutoStatus(null);
+    pendingStart.current = true;
+    client.start();
+  }, [bots, client, mode, unlockAudio]);
+
+  useEffect(() => {
+    if (!autoCycle || !startKey) return;
+    // A disconnected/unready phone, changed roster, or arena selection resets the lead-in.
+    const deadline = performance.now() + ARENA_AUTO_START_MS;
+    const watch = window.setInterval(() => {
+      const seconds = Math.max(1, Math.ceil((deadline - performance.now()) / 1000));
+      setAutoStatus(previous => previous?.cycle === autoCycle && previous.seconds === seconds ? previous : { cycle: autoCycle, seconds });
+    }, 250);
+    const timer = window.setTimeout(() => begin(false, startKey), ARENA_AUTO_START_MS);
+    return () => { window.clearInterval(watch); window.clearTimeout(timer); };
+  }, [autoCycle, begin, startKey]);
   const rematch = () => {
     unlockAudio();
     if (mode === "host") {
@@ -108,7 +138,30 @@ export default function BoomerangGame() {
     redraw(value => value+1);
   };
   const lobby = () => { client.lobby(); const roster = arenaRef.current.players.map(player => ({ id: player.id, name: player.name, color: player.color, bot: player.bot })); resetArena(createArena(roster, arenaId)); };
-  const topbar = <header className={styles.topbar}><Link href="/madfun" className={styles.brand}>mad<span>fun</span> / ricochet</Link><div className={styles.topActions}>{(mode === "host" || mode === "practice") && <button className={styles.subtle} aria-pressed={muted} aria-label={muted ? "Unmute game audio" : "Mute game audio"} onClick={toggleAudio}>{muted ? "Sound off" : "Sound on"}</button>}<button className={styles.subtle} onClick={fullscreen}>⛶ Fullscreen</button>{mode !== "entry" && <button className={styles.subtle} onClick={leave}>Leave</button>}</div></header>;
+  const pickArena = (id: ArenaId) => {
+    if (pendingStart.current || arenaRef.current.phase !== "lobby" || roomRef.current.locked) return;
+    setArenaId(id);
+    resetArena(createArena(arenaRef.current.players, id));
+  };
+  const roomActions = room.status !== "connected" ? [
+    { id: "reconnect", label: "Reconnect host display", run: client.retry },
+  ] : arena.phase === "lobby" ? [
+    { id: "start", label: "Start match", run: () => begin(), disabled: !startKey },
+    { id: "auto-run", label: autoRun ? "Turn Auto-run off" : "Turn Auto-run on", run: toggleAutoRun },
+    ...ARENAS.map(({ id, name: label }) => ({ id: `arena-${id}`, label: `Arena: ${label}`, run: () => pickArena(id), disabled: id === arenaId || room.locked })),
+    { id: "add-bot", label: "Add a bot", run: () => setBots(value => value + 1), disabled: arena.players.length >= 10 || room.locked },
+    { id: "remove-bots", label: "Remove bots", run: () => setBots(0), disabled: bots === 0 || room.locked },
+  ] : arena.phase === "matchOver" ? [
+    { id: "rematch", label: "Play again", run: rematch },
+    { id: "lobby", label: "Return to lobby", run: lobby },
+  ] : [];
+  const hostActions = [
+    ...roomActions,
+    { id: "audio", label: muted ? "Unmute display audio" : "Mute display audio", run: toggleAudio },
+    { id: "end-room", label: "End room", run: leave, confirm: "End the room for everyone?" },
+  ];
+  const remotePhase = room.status !== "connected" ? "Host display offline" : arena.phase === "lobby" ? "Starting lobby" : arena.phase === "matchOver" ? "Final scores" : `Round ${arena.round}`;
+  const topbar = <header className={styles.topbar}><Link href="/madfun" className={styles.brand}>mad<span>fun</span> / ricochet</Link><div className={styles.topActions}>{mode === "host" && room.code && <HostRemote game="Ricochet" phase={remotePhase} actions={hostActions} />}{(mode === "host" || mode === "practice") && <button className={styles.subtle} aria-pressed={muted} aria-label={muted ? "Unmute game audio" : "Mute game audio"} onClick={toggleAudio}>{muted ? "Sound off" : "Sound on"}</button>}<button className={styles.subtle} onClick={fullscreen}>⛶ Fullscreen</button>{mode !== "entry" && <button className={styles.subtle} onClick={() => { if (mode !== "host" || window.confirm("End the room for everyone?")) leave(); }}>{mode === "host" ? "End room" : "Leave"}</button>}</div></header>;
   const alerts = <>{notice && <div className={styles.notice}>{notice}</div>}{room.error && <div role="alert" className={styles.error}>{room.error} {room.status !== "connected" && mode !== "entry" && <button className={styles.subtle} onClick={() => client.retry()}>Retry</button>}</div>}</>;
   if (mode === "entry") return <main className={`${styles.shell} ${invited ? styles.invited : ""}`}>{topbar}<section className={styles.hero}><div className={styles.eyebrow}>ONE SCREEN. MANY GRUDGES.</div><h1>RICO<span>CHET.</span></h1><p className={styles.intro}>A tiny arena. A very big boomerang problem. Throw, dodge and catch your way to five wins.</p>{alerts}<QuickStart game="Ricochet" steps={QUICK_START} /><div className={styles.entryGrid}><div className={styles.panel}><h2>Host on the shared screen.</h2><p>This screen runs and shows the game. To play, scan the room QR on a separate phone.</p><div className={styles.form}><button className={styles.primary} onClick={host}>Create room ↗</button><button className={styles.secondary} onClick={practice}>Practice with bots</button></div><p className={styles.help}>2–10 players · 3 arenas · No accounts · Original arcade action</p></div><div className={styles.panel}><h2>Join on your phone.</h2><p>Scan the host’s QR code or enter their six-letter room code.</p><form className={styles.form} onSubmit={event => { event.preventDefault(); if (!name.trim()) return; setMode("phone"); client.join(code, name.trim()); }}><label>YOUR NAME<input required maxLength={64} autoComplete="nickname" placeholder="Pick a name" value={name} onChange={event => setName(event.target.value)} /></label><label>ROOM CODE<input required minLength={6} maxLength={6} autoCapitalize="characters" autoCorrect="off" placeholder="ABCDEF" value={code} onChange={event => setCode(event.target.value.replace(/\s/g, "").toUpperCase())} /></label><button className={styles.primary} type="submit">Join →</button></form></div></div></section></main>;
   if (mode === "phone") {
@@ -119,7 +172,7 @@ export default function BoomerangGame() {
     const endOfMatch = arena.phase === "matchOver";
     return <main className={`${styles.shell} ${styles.phone} ${active ? styles.phoneWithArena : ""}`}>{topbar}{alerts}<div className={styles.phoneStatus}><span className={styles.statusBadge}>{connected ? active ? `ROUND ${arena.round} · ${me?.score ?? 0} WINS` : `ROOM ${room.code}` : room.status.toUpperCase()}</span><h1 style={{ color: me?.color }}>{me?.name || name}</h1><p>{!connected ? "Connecting to your host…" : arena.phase === "countdown" ? `Get ready · ${Math.max(1,Math.ceil(arena.phaseTime))}` : arena.phase === "matchOver" ? matchWinner ? `${matchWinner.name} wins!` : "Match finished!" : me && !me.alive && active ? "You’re out this round. Back in the next!" : active ? "Move to aim. Throw to hit. Dash to dodge." : "You’re in. Waiting for the host to start."}</p></div>{active && !endOfMatch && <button className={styles.viewToggle} aria-pressed={showArena} onClick={() => setShowArena(value => !value)}>{showArena ? "Hide arena · controls only" : "Show arena on this phone"}</button>}{active && showArena && !endOfMatch && <div className={styles.phoneArena}><ArenaCanvas state={arena} /></div>}{endOfMatch ? <ol className={styles.phoneResults} aria-label="Final standings">{[...arena.players].sort((a,b) => b.score-a.score).map(player => <li key={player.id}><span>{player.name}</span><b>{player.score} wins</b></li>)}</ol> : active ? <PhoneControls disabled={!connected || arena.phase !== "playing" || !me?.alive} onInput={input} /> : <div className={styles.waiting}><div><div className={styles.waitingSymbol}>⌁</div><h2>IN THE MIX.</h2><p>Move to aim. Throw your boomerang, tap again to recall it. Dash through danger.</p></div></div>}<div className={styles.phoneFooter}>MOVE TO AIM · THROW TO RECALL · DASH TO DODGE</div></main>;
   }
-  if (arena.phase === "lobby") return <main className={styles.shell}>{topbar}<section className={styles.lobby}>{alerts}<QuickStart game="Ricochet" steps={QUICK_START} /><div className={styles.lobbyHead}><div><div className={styles.eyebrow}>HOST DISPLAY · NO PLAYER SLOT</div><h1>Gather your rivals.</h1><p className={styles.help}>Keep this display open. Everyone who wants to play scans the QR on their own phone.</p></div><div className={styles.qrBox}>{qr && <Image src={qr} alt="Scan to join Ricochet" width={140} height={140} unoptimized />}<div><span className={styles.eyebrow}>PLAYER QR · SCAN TO PLAY</span><div className={styles.roomCode}>{room.code || "······"}</div><p>{room.status === "connected" ? "Scan here or enter this code on your phone." : "Waking up the free game server. This can take a moment."}</p>{room.code && <button className={styles.subtle} onClick={() => void copyJoin()}>Copy join link</button>}</div></div></div><div className={styles.playerGrid}>{Array.from({ length: 10 }, (_,index) => { const player = arena.players[index]; return <div key={player?.id || index} className={`${styles.playerCard} ${!player ? styles.emptyCard : ""}`}><span className={styles.avatar} style={{ background: player?.color || "#535267" }}>{player ? "•ᴗ•" : "+"}</span><div><span className={styles.playerName}>{player?.name || "Open spot"}</span><span className={styles.playerLabel}>{player ? player.bot ? "BOT RIVAL" : "PHONE CONNECTED" : "JOIN WITH YOUR PHONE"}</span></div></div>; })}</div><div className={styles.settings}><div><p className={styles.eyebrow}>CHOOSE YOUR ARENA</p><div className={styles.arenaChoices}>{ARENAS.map(item => <button key={item.id} className={`${styles.arenaChoice} ${arenaId === item.id ? styles.selected : ""}`} onClick={() => { setArenaId(item.id); resetArena(createArena(arena.players, item.id)); }}>{item.name}</button>)}</div></div><div className={styles.form}><button className={styles.secondary} disabled={arena.players.length >= 10} onClick={() => setBots(value => value+1)}>+ Bot</button>{bots > 0 && <button className={styles.subtle} onClick={() => setBots(0)}>Remove bots</button>}<button className={styles.primary} disabled={arena.players.length < 2 || !room.players.some(player => player.connected) || room.players.some(player => player.connected && !player.ready) || room.status !== "connected"} onClick={begin}>Start match →</button></div></div><p className={styles.help}>Last one standing scores. First to 5 wins. Dash to dodge. Your boomerang comes back, so watch the return trip.</p></section></main>;
+  if (arena.phase === "lobby") return <main className={styles.shell}>{topbar}<section className={styles.lobby}>{alerts}<QuickStart game="Ricochet" steps={QUICK_START} /><div className={styles.lobbyHead}><div><div className={styles.eyebrow}>HOST DISPLAY · NO PLAYER SLOT</div><h1>Gather your rivals.</h1><p className={styles.help}>Keep this display open. Everyone who wants to play scans the QR on their own phone.</p></div><div className={styles.qrBox}>{qr && <Image src={qr} alt="Scan to join Ricochet" width={140} height={140} unoptimized />}<div><span className={styles.eyebrow}>PLAYER QR · SCAN TO PLAY</span><div className={styles.roomCode}>{room.code || "······"}</div><p>{room.status === "connected" ? "Scan here or enter this code on your phone." : "Waking up the free game server. This can take a moment."}</p>{room.code && <button className={styles.subtle} onClick={() => void copyJoin()}>Copy join link</button>}</div></div></div><div className={styles.playerGrid}>{Array.from({ length: 10 }, (_,index) => { const player = arena.players[index]; return <div key={player?.id || index} className={`${styles.playerCard} ${!player ? styles.emptyCard : ""}`}><span className={styles.avatar} style={{ background: player?.color || "#535267" }}>{player ? "•ᴗ•" : "+"}</span><div><span className={styles.playerName}>{player?.name || "Open spot"}</span><span className={styles.playerLabel}>{player ? player.bot ? "BOT RIVAL" : "PHONE CONNECTED" : "JOIN WITH YOUR PHONE"}</span></div></div>; })}</div><div className={styles.settings}><div><p className={styles.eyebrow}>CHOOSE YOUR ARENA</p><div className={styles.arenaChoices}>{ARENAS.map(item => <button key={item.id} className={`${styles.arenaChoice} ${arenaId === item.id ? styles.selected : ""}`} onClick={() => pickArena(item.id)}>{item.name}</button>)}</div></div><div className={styles.form}><button className={styles.secondary} disabled={arena.players.length >= 10} onClick={() => setBots(value => value+1)}>+ Bot</button>{bots > 0 && <button className={styles.subtle} onClick={() => setBots(0)}>Remove bots</button>}<button className={styles.primary} disabled={!startKey} onClick={() => begin()}>Start match →</button><button className={styles.secondary} aria-pressed={autoRun} onClick={toggleAutoRun}>Auto-run {autoRun ? "on" : "off"}</button>{autoRun && <p className={styles.help}>{autoCycle ? `Auto-start in ${countdown}s if the room stays ready.` : "Auto-run starts 12 seconds after the room is ready and stops at final scores."}</p>}</div></div><p className={styles.help}>Last one standing scores. First to 5 wins. Dash to dodge. Your boomerang comes back, so watch the return trip.</p></section></main>;
   const winner = arena.players.find(player => player.id === arena.winnerId);
   return <main className={`${styles.shell} ${styles.gameShell}`}>{topbar}{alerts}<div className={styles.arenaWrap}><ArenaCanvas state={arena} />{mode === "host" && room.status !== "connected" && <div className={styles.overlay}><div className={styles.overlayCard}><h2>Connection paused</h2><p>The match will continue when the host reconnects.</p><button className={styles.primary} onClick={() => client.retry()}>Reconnect</button></div></div>}{arena.phase === "matchOver" && <div className={styles.overlay}><div className={styles.overlayCard}><span className={styles.eyebrow}>WINNER TAKES THE GLORY</span><h2 style={{ color: winner?.color }}>{winner?.name || "Match complete"}</h2><ol className={styles.leaderboard}>{[...arena.players].sort((a,b) => b.score-a.score).map(player => <li key={player.id}><span>{player.name}</span><b>{player.score} wins · {player.kills} KOs</b></li>)}</ol><div className={styles.overlayButtons}><button className={styles.primary} onClick={rematch}>Play again ↗</button><button className={styles.secondary} onClick={mode === "practice" ? leave : lobby}>Lobby</button></div></div></div>}{mode === "practice" && <><div className={styles.localInstructions}>WASD / arrows move · Space throw / recall · Shift dash</div><div className={styles.practiceControls}><PhoneControls disabled={arena.phase !== "playing"} onInput={practiceInput} /></div></>}</div><div className={styles.scoreStrip}>{arena.players.map(player => <div className={styles.scorePill} key={player.id} style={{ opacity: player.alive ? 1 : .45 }}><span style={{ color: player.color }}>●</span>{player.name}<b>{player.score}/5</b></div>)}</div></main>;
 }

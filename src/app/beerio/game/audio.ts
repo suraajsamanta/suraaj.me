@@ -290,7 +290,7 @@ export class RaceAudio {
     this.updateVolume();
     const active = !race.complete && race.countdown <= 0;
     const moving = race.karts.filter(kart => kart.finishTime === null);
-    const speed = active ? Math.min(1.4, Math.max(0, ...moving.map(kart => kart.speed)) / MAX_SPEED) : 0;
+    const speed = active ? Math.min(1.4, Math.max(0, ...moving.map(kart => Math.abs(kart.speed))) / MAX_SPEED) : 0;
     const now = this.context.currentTime;
     this.motors.forEach((motor, index) => motor.frequency.setTargetAtTime((52 + speed * 60) * (index + 1), now, 0.15));
     this.engine.gain.setTargetAtTime(speed > 0.02 ? Math.min(0.022, 0.006 + speed * 0.012) : 0, now, 0.08);

@@ -1,6 +1,6 @@
 export type Player = { id: string; name: string; connected: boolean };
 export type Prompt = { id: string; text: string; category?: string };
-export type Phase = 'ranking' | 'guessing' | 'reveal' | 'finished';
+export type Phase = 'ranking' | 'hint' | 'guessing' | 'reveal' | 'finished';
 export type Result = { playerId: string; optionId: string; points: number };
 export type Match = {
   phase: Phase;
@@ -12,6 +12,7 @@ export type Match = {
   rankTargets: Player[];
   ranking: Player[];
   options: Prompt[];
+  optionsShown: boolean;
   correct: Prompt;
   usedPromptIds: string[];
   eligibleGuesserIds: string[];
@@ -28,12 +29,34 @@ export type PublicView = {
   rankTargets: Player[];
   ranking: Player[];
   options: Prompt[];
+  hint: string | null;
   correct: Prompt | null;
   eligibleGuesserIds: string[];
   guessedIds: string[];
   scores: Record<string, number>;
   results: Result[];
 };
+
+const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
+  party: 'Think about what this crew is like at a party.',
+  trip: 'Picture the group traveling somewhere together.',
+  chat: 'Think about how everyone acts in the group chat.',
+  food: 'Picture the group hanging out over food.',
+  games: 'Think about what people do on game night.',
+  cabin: 'Picture the group on a cabin weekend.',
+  everyday: 'Think about the little things people do in everyday life.',
+  spotlight: 'Picture this group in a moment that gets everyone’s attention.',
+});
+
+export function phaseTimer(phase: Phase | undefined) {
+  switch (phase) {
+    case 'ranking': return { seconds: 75, action: 'expire_ranking' } as const;
+    case 'hint': return { seconds: 20, action: 'show_options' } as const;
+    case 'guessing': return { seconds: 25, action: 'reveal' } as const;
+    case 'reveal': return { seconds: 8, action: 'next' } as const;
+    default: return null;
+  }
+}
 
 function shuffled<T>(entries: readonly T[], rng: () => number): T[] {
   const list = [...entries];
@@ -79,6 +102,7 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
     ranker,
     rankTargets,
     ranking: [],
+    optionsShown: false,
     ...chooseOptions(bank, [], rng),
     eligibleGuesserIds: rankTargets.map(player => player.id),
     guesses: {},
@@ -96,7 +120,10 @@ export function publicView(match: Match): PublicView {
     ranker: match.ranker,
     rankTargets: match.rankTargets,
     ranking: match.ranking,
-    options: match.ranking.length > 0 ? match.options : [],
+    options: match.optionsShown ? match.options : [],
+    hint: match.phase === 'hint'
+      ? (match.correct.category && Object.hasOwn(hintByCategory, match.correct.category) ? hintByCategory[match.correct.category] : 'Think about the situation this group’s ranking might fit.')
+      : null,
     correct: revealed ? match.correct : null,
     eligibleGuesserIds: match.eligibleGuesserIds,
     guessedIds: Object.keys(match.guesses),
@@ -114,7 +141,12 @@ export function submitRanking(match: Match, playerId: string, orderedIds: readon
   if (orderedIds.length !== match.rankTargets.length || new Set(orderedIds).size !== orderedIds.length) return null;
   const byId = new Map(match.rankTargets.map(player => [player.id, player]));
   if (!orderedIds.every(id => byId.has(id))) return null;
-  return { ...match, phase: 'guessing', ranking: orderedIds.map(id => byId.get(id)!) };
+  return { ...match, phase: 'hint', ranking: orderedIds.map(id => byId.get(id)!) };
+}
+
+export function showOptions(match: Match): Match | null {
+  if (match.phase !== 'hint') return null;
+  return { ...match, phase: 'guessing', optionsShown: true };
 }
 
 export function submitGuess(match: Match, playerId: string, optionId: string): Match | null {
@@ -124,7 +156,7 @@ export function submitGuess(match: Match, playerId: string, optionId: string): M
 }
 
 export function reveal(match: Match): Match | null {
-  if (match.phase !== 'guessing') return null;
+  if (match.phase !== 'guessing' && match.phase !== 'hint') return null;
   const scores = { ...match.scores };
   const results = Object.entries(match.guesses).map(([playerId, optionId]) => {
     const points = Number(optionId === match.correct.id);
@@ -164,6 +196,7 @@ function advance(match: Match, players: readonly Player[], prompts: readonly Pro
     ranker,
     rankTargets,
     ranking: [],
+    optionsShown: false,
     ...chooseOptions(bank, match.usedPromptIds, rng),
     eligibleGuesserIds: rankTargets.map(player => player.id),
     guesses: {},

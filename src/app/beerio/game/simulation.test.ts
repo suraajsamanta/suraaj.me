@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRace, currentLap, MAX_SPEED, raceResults, stepRace, type GamePlayer } from './simulation';
-import { BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, TRACK_LENGTH, trackPose, type Vec3 } from './track';
+import { createRace, currentLap, MAX_SPEED, REVERSE_MAX_SPEED, raceResults, stepRace, type GamePlayer } from './simulation';
+import { ACTIVE_SHORTCUT, BARRIER_OFFSET, BOOST_FRACTIONS, BOOST_LANES, circularDistance, TRACK_LENGTH, trackPose, type Vec3 } from './track';
 
 const driver = (id: string, steer = 0): GamePlayer => ({ id, name: `Racer ${id}`, color: '#ffbd59', input: { steer, accelerate: true, brake: false } });
 const advance = (race: ReturnType<typeof createRace>, players: GamePlayer[], seconds: number, autoSteer = true) => {
@@ -55,6 +55,59 @@ test('accelerator, braking, and coasting produce bounded speed', () => {
   players[0].input.brake = true;
   advance(race, players, 1);
   assert.equal(race.karts[0].speed, 0);
+});
+test('holding brake stops first, reverses at low speed, then coasts or drives forward', () => {
+  const players = [driver('reverse')], race = createRace(players); race.countdown = 0;
+  const kart = race.karts[0];
+  Object.assign(kart, { speed: 18, lane: 0, distance: 0 });
+  players[0].input = { steer: 0, accelerate: false, brake: true };
+  advance(race, players, 0.6);
+  assert.equal(kart.speed, 0);
+  assert.ok(kart.distance > 0, 'the car travels forward as it slows to a stop');
+  const stoppedAt = kart.distance;
+  advance(race, players, 2);
+  assert.equal(kart.speed, -REVERSE_MAX_SPEED);
+  assert.ok(kart.distance < stoppedAt, 'holding brake backs the car up');
+  players[0].input.brake = false;
+  advance(race, players, 1.5);
+  assert.equal(kart.speed, 0, 'releasing brake coasts to a stop');
+  players[0].input.accelerate = true;
+  advance(race, players, 0.5);
+  assert.ok(kart.speed > 0, 'the accelerator resumes forward driving');
+});
+
+test('both pedals stop a reversing car and cannot award a finishing lap', () => {
+  const players = [driver('reverse')], race = createRace(players); race.countdown = 0;
+  const kart = race.karts[0];
+  Object.assign(kart, { speed: -8, lane: 0, distance: TRACK_LENGTH - 0.1 });
+  players[0].input = { steer: 0, accelerate: true, brake: true };
+  advance(race, players, 1.5);
+  assert.equal(kart.speed, 0);
+  assert.ok(kart.distance < TRACK_LENGTH - 0.1);
+  assert.equal(currentLap(kart, 3), 1);
+  assert.equal(kart.finishTime, null);
+  // Even a future finish-line position cannot count while moving backwards.
+  Object.assign(kart, { speed: -8, distance: 3 * TRACK_LENGTH + 0.3 });
+  players[0].input.accelerate = false;
+  stepRace(race, players, 1 / 60);
+  assert.equal(kart.finishTime, null);
+});
+
+test('reverse steering moves the rear right and backing out exits a shortcut', () => {
+  for (const autoSteer of [true, false]) {
+    const players = [driver('reverse')], race = createRace(players); race.countdown = 0;
+    const kart = race.karts[0];
+    const entrance = ACTIVE_SHORTCUT.start * TRACK_LENGTH;
+    Object.assign(kart, { speed: -8, lane: 0, distance: entrance + 0.1, onShortcut: true });
+    players[0].input = { steer: 1, accelerate: false, brake: true };
+    advance(race, players, 0.25, autoSteer);
+    assert.equal(kart.onShortcut, false);
+    assert.ok(kart.distance < entrance && kart.distance > entrance - 3);
+    // Test on a straight tangent independent of the branch junction curvature.
+    Object.assign(kart, { heading: 0, lane: 0, distance: 0 });
+    stepRace(race, players, 1 / 60, autoSteer);
+    assert.ok(kart.lane < 0);
+  }
 });
 test('right steering decreases the track lane; guard rails bound and mildly slow scrapes', () => {
   const players = [driver('a', 1)], race = createRace(players); race.countdown = 0;

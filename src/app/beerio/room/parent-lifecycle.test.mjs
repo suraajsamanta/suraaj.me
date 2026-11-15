@@ -62,10 +62,11 @@ async function fixture(t, host = true) {
   const compiledModule = { exports: {} };
   new Function('require', 'module', 'exports', source)(name => {
     if (name === 'react') return react;
-    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
+    if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx, Fragment: 'Fragment' };
     if (name === 'qrcode') return { default: { toDataURL: () => Promise.resolve('data:image/test') } };
     if (name === 'next/link' || name === 'next/image') return { default: name };
     if (name === './appearance') return { CHARACTERS: [{ id: 'fox', name: 'Fox', icon: 'fox' }], VEHICLES: [{ id: 'kart', name: 'Kart', icon: 'kart' }], PALETTE: ['#ffce58'], DEFAULT_APPEARANCE: { character: 'fox', vehicle: 'kart', color: '#ffce58' }, validAppearance: () => false };
+    if (name === '../madfun/shared/HostRemote') return { default: 'HostRemote' };
     if (name === './FullscreenButton') return { default: 'FullscreenButton' };
     if (name === './game/SteeringJoystick') return { default: 'SteeringJoystick' };
     if (name === './lobby/CharacterSelection') return { CharacterGrid: 'CharacterGrid', CharacterController: 'CharacterController' };
@@ -764,4 +765,55 @@ test('the host display shares a player QR and never joins or drives on the host 
   game.onFinish(RESULTS);
   tree = await f.render();
   assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
+});
+
+
+test('private host controller stays mounted and follows game phases without becoming a racer', async t => {
+  const f = await fixture(t);
+  const allRemotes = tree => f.nodes(tree, node => node.type === 'HostRemote');
+  const [lobbyRemote] = allRemotes(await f.render());
+  assert.ok(lobbyRemote?.props.active);
+  assert.equal(lobbyRemote.props.game, 'Beerio');
+  assert.equal(lobbyRemote.props.phase, 'Starting grid');
+  const selected = lobbyRemote.props.actions.find(action => action.id === 'track-canyon');
+  assert.ok(selected && !selected.disabled);
+  selected.run();
+  const openSelection = allRemotes(await f.render())[0].props.actions.find(action => action.id === 'showroom');
+  assert.ok(openSelection && !openSelection.disabled);
+  openSelection.run();
+  await f.render();
+  assert.ok(f.messages.some(message => message.type === 'select_characters'));
+  f.lock();
+  const race = await f.render();
+  const [raceRemote] = allRemotes(race);
+  assert.equal(allRemotes(race).length, 1);
+  assert.equal(raceRemote.props.phase, 'Racing');
+  assert.equal(raceRemote.props.actions.some(action => action.id === 'showroom'), false);
+  assert.equal(f.game(race).localKeyboard, false);
+  assert.equal(f.game(race).trackId, 'canyon');
+  const end = raceRemote.props.actions.find(action => action.id === 'end');
+  assert.ok(end.confirm, 'the controller must ask the phone for confirmation');
+  f.setConfirm(false);
+  end.run();
+  assert.equal(allRemotes(await f.render()).length, 0);
+  assert.ok(f.messages.some(message => message.type === 'leave'), 'the approved phone action does not require a second prompt');
+});
+
+test('opt-in auto-run waits for two connected drivers and only opens character selection', async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  const f = await fixture(t);
+  f.room.players = [f.room.players[0]];
+  const remote = tree => f.nodes(tree, node => node.type === 'HostRemote')[0]?.props;
+  remote(await f.render()).actions.find(action => action.id === 'auto').run();
+  await f.render();
+  t.mock.timers.tick(16000);
+  assert.equal(f.messages.some(message => message.type === 'select_characters'), false);
+  f.room.players.push({ ...f.room.players[0], id:'new', name:'New driver' });
+  await f.render();
+  t.mock.timers.tick(14999);
+  assert.equal(f.messages.some(message => message.type === 'select_characters'), false);
+  t.mock.timers.tick(1);
+  const afterOpening = await f.render();
+  assert.equal(f.messages.filter(message => message.type === 'select_characters').length, 1);
+  assert.equal(f.game(afterOpening), undefined, 'no race until players confirm and relay locks');
 });
