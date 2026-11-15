@@ -9,14 +9,27 @@ import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
 
-type Screen = "menu" | "solo" | "host" | "join";
+type Screen = "menu" | "solo" | "host" | "join" | "watch";
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
 const readInvite = () => cleanCode(new URLSearchParams(window.location.search).get("room") ?? "");
+const readWatchInvite = () => {
+  const invite = new URLSearchParams(window.location.hash.slice(1)).get("tv") ?? "";
+  return /^[A-Za-z0-9_-]{32}$/.test(invite) ? invite : "";
+};
 const serverInvite = () => "";
-const listenInvite = (fn: () => void) => { window.addEventListener("popstate", fn); return () => window.removeEventListener("popstate", fn); };
+const listenInvite = (fn: () => void) => {
+  window.addEventListener("popstate", fn);
+  window.addEventListener("hashchange", fn);
+  return () => { window.removeEventListener("popstate", fn); window.removeEventListener("hashchange", fn); };
+};
 const inviteUrl = (code: string) => new URL(`/madfun/beerio-2?room=${code}`, window.location.origin).toString();
+function tvUrl(code: string, token: string) {
+  const url = new URL(inviteUrl(code));
+  url.hash = new URLSearchParams({ tv: token }).toString();
+  return url.toString();
+}
 
 function resultTime(time: number | null) {
   if (time === null) return "DNF";
@@ -34,6 +47,7 @@ function LobbyHeader() {
 
 export default function Beerio2Page() {
   const inviteCode = useSyncExternalStore(listenInvite, readInvite, serverInvite);
+  const watchToken = useSyncExternalStore(listenInvite, readWatchInvite, serverInvite);
   const [choice, setChoice] = useState<Screen | null>(null);
   const [name, setName] = useState("");
   const [trackId, setTrackId] = useState<TrackId>("seattle");
@@ -44,19 +58,20 @@ export default function Beerio2Page() {
   const [shareStatus, setShareStatus] = useState("");
   const [session] = useState(() => new Beerio2Session());
   const room = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  const screen = choice ?? (ROOM_CODE.test(inviteCode) ? "join" : "menu");
+  const screen = choice ?? (ROOM_CODE.test(inviteCode) ? watchToken ? "watch" : "join" : "menu");
   const code = typedCode ?? inviteCode;
   const inRoom = !!room.playerId && !!room.code;
   const seatId = inRoom ? room.playerId : null;
   const host = room.role === "host";
+  const spectator = room.role === "spectator";
   const connecting = room.status === "connecting" || room.status === "reconnecting" || room.loading;
   const onlineView = useMemo<OnlineRaceView | undefined>(() => seatId ? {
-    id: seatId,
+    id: spectator ? "host" : seatId,
     getFrame: session.getFrame,
     getRenderFrame: session.getRenderFrame,
-    getNetworkStats: session.getNetworkStats,
-    setInput: (input) => session.setInput(input),
-  } : undefined, [seatId, session]);
+    getNetworkStats: spectator ? undefined : session.getNetworkStats,
+    setInput: spectator ? () => {} : (input) => session.setInput(input),
+  } : undefined, [seatId, session, spectator]);
 
   useEffect(() => {
     const whenHidden = () => { if (document.hidden) session.setPaused(true); };
@@ -74,6 +89,7 @@ export default function Beerio2Page() {
   function leave() {
     if (host && inRoom && !window.confirm("End this Beerio 2 room for everyone?")) return;
     session.leave();
+    if (spectator || screen === "watch") window.history.replaceState(window.history.state, "", "/madfun/beerio-2");
     choose("menu");
   }
 
@@ -96,12 +112,13 @@ export default function Beerio2Page() {
     else session.join(code, driver);
   }
 
-  async function share(useShareSheet: boolean) {
-    if (!room.code) return;
-    const url = inviteUrl(room.code);
+  async function share(useShareSheet: boolean, tv = false) {
+    if (!room.code || (tv && (!host || !room.watchInvite))) return;
+    const code = room.code;
+    const url = tv && room.watchInvite ? tvUrl(code, room.watchInvite) : inviteUrl(code);
     if (useShareSheet && navigator.share) {
       try {
-        await navigator.share({ title: `Beerio 2 · ${getTrack(room.trackId).name}`, text: `Join my ${getTrack(room.trackId).name} race`, url });
+        await navigator.share({ title: tv ? "Beerio 2 · TV view" : `Beerio 2 · ${getTrack(room.trackId).name}`, text: tv ? "Open on a TV browser or a computer connected to your TV. The host phone controls the race." : `Join my ${getTrack(room.trackId).name} race`, url });
         return;
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
@@ -110,9 +127,9 @@ export default function Beerio2Page() {
     try {
       if (!navigator.clipboard) throw new Error("Clipboard unavailable.");
       await navigator.clipboard.writeText(url);
-      setShareStatus("Invite link copied.");
+      setShareStatus(tv ? "TV link copied. Open it on your display." : "Driver invite copied.");
     } catch {
-      setShareStatus(`Share this room code: ${room.code}`);
+      setShareStatus(tv ? "Select the TV link below to copy it." : `Share this room code: ${code}`);
     }
   }
 
@@ -127,28 +144,39 @@ export default function Beerio2Page() {
     const raceFrame = session.getFrame();
     const racers = room.players.filter((player) => player.connected);
     const placeItems = raceFrame?.results ?? [];
+    const closed = room.status === "closed" || room.status === "error";
     let banner: RaceBanner | undefined;
-    if (!lobby && !results && (room.status === "closed" || room.status === "error")) {
+    if (closed) {
       banner = { label: "ROOM UNAVAILABLE", title: "Connection ended", detail: room.error ?? "Leave the room and rejoin with a fresh code." };
     } else if (!lobby && !results && (!hostAvailable || room.phase === "paused")) {
-      banner = { label: "RACE PAUSED", title: "Reconnecting", detail: "Keep this screen open. Your seat is reserved briefly." };
+      banner = { label: "RACE PAUSED", title: hostAvailable ? "Waiting for host" : "Reconnecting", detail: spectator ? "The display will catch up automatically." : "Keep this screen open. Your seat is reserved briefly." };
     } else if (countdown) {
       banner = { label: `${roomTrack.name.toUpperCase()} · GET READY`, title: String(Math.max(1, Math.ceil(room.countdown))), countdown: true };
     }
 
-    const lobbyPanel = lobby && <section className={styles.roomPanel} aria-label="Race lobby">
-      <div className={styles.kicker}><i aria-hidden /> PRIVATE GRID</div>
+    const lobbyPanel = lobby && !closed && <section className={styles.roomPanel} aria-label="Race lobby" data-mobile-host={host ? "true" : undefined}>
+      <div className={styles.kicker}><i aria-hidden /> {spectator ? "TV VIEW · WAITING FOR THE PHONE HOST" : host ? "YOU’RE HOSTING ON THIS DEVICE" : "PRIVATE GRID"}</div>
       <div className={styles.roomTop}>
-        <div><h2>Starting grid</h2><p>{roomTrack.name} · Three laps</p></div>
+        <div><h2>{spectator ? "Ready to watch" : "Starting grid"}</h2><p>{roomTrack.name} · Three laps · {racers.length}/10 drivers</p></div>
         <div className={styles.codeDisplay}><small>ROOM CODE</small><b>{room.code}</b></div>
       </div>
-      <div className={styles.lobbyCircuit}><TrackMap trackId={room.trackId} /><div><small>LOCKED CIRCUIT</small><strong>{roomTrack.name}</strong><span>{host ? "Your room, your circuit. Invite your rivals below." : "Circuit selected by your host. You’re on the same grid."}</span></div></div>
-      <div className={styles.shareRow}>
-        <button className={styles.secondaryAction} type="button" onClick={() => void share(true)}>Share invite</button>
-        <button className={styles.secondaryAction} type="button" onClick={() => void share(false)}>Copy link</button>
-        <p className={styles.statusLine} role="status">{shareStatus}</p>
+      <div className={styles.lobbyActionBar}>
+        {host && <button className={styles.primaryAction} type="button" disabled={racers.length < 2 || !hostAvailable || room.loading} onClick={() => void session.start()}>
+          {room.loading ? "Preparing the race…" : racers.length < 2 ? "Waiting for another driver" : "Start race"}
+        </button>}
+        {!spectator && <div className={styles.shareRow}>
+          <button className={styles.secondaryAction} type="button" onClick={() => void share(true)}>Invite players</button>
+          <button className={styles.secondaryAction} type="button" onClick={() => void share(false)}>Copy driver link</button>
+        </div>}
       </div>
-      {room.code && <RoomQr code={room.code} />}
+      {room.code && <div className={styles.lobbyExtras}><RoomQr code={room.code} autoOpen={spectator} /></div>}
+      {host && room.code && room.watchInvite && <details className={styles.lobbyExtras}>
+        <summary>{room.spectatorConnected ? "TV view · Connected" : "Optional TV view"}</summary>
+        <p>Open this link once on a TV browser or a computer connected to it. You’ll start and run the race from this phone.</p>
+        <button className={styles.secondaryAction} type="button" onClick={() => void share(true, true)}>Share TV link</button>
+        <label>TV link<input readOnly value={tvUrl(room.code, room.watchInvite)} onFocus={event => event.currentTarget.select()} aria-label="Private TV link" /></label>
+      </details>}
+      <p className={styles.statusLine} role="status">{shareStatus}</p>
       <div className={styles.rosterTitle}><b>DRIVERS</b><span>{racers.length} / 10</span></div>
       <ol className={styles.roster}>
         {room.players.map((player) => <li key={player.id}>
@@ -157,20 +185,18 @@ export default function Beerio2Page() {
         </li>)}
       </ol>
       {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
-      {host ? <button className={styles.primaryAction} type="button" disabled={racers.length < 2 || !hostAvailable || room.loading} onClick={() => void session.start()}>
-        {room.loading ? "Preparing the race" : racers.length < 2 ? "Waiting for another driver" : "Start race"}
-      </button> : <p className={styles.lobbyWait} role="status">{hostAvailable ? "Waiting for the host to start" : "Waiting for the host to reconnect"}</p>}
+      {!host && <p className={styles.lobbyWait} role="status">{hostAvailable ? "Waiting for the host to start" : "Waiting for the host to reconnect"}</p>}
     </section>;
-
-    const resultsPanel = results && <section className={styles.roomPanel} aria-label="Race results">
+    const resultsPanel = results && !closed && <section className={styles.roomPanel} aria-label="Race results" data-mobile-host={host ? "true" : undefined}>
       <div className={styles.kicker}><i aria-hidden /> {roomTrack.name.toUpperCase()} · FINAL</div>
       <h2>Race results</h2>
+      {host && hostAvailable && <div className={styles.lobbyActionBar}><button className={styles.primaryAction} type="button" onClick={() => session.rematch()}>Back to starting grid</button></div>}
       <ol className={styles.roster}>
         {placeItems.map((item, index) => <li key={item.id}>
           <strong>{String(index + 1).padStart(2, "0")}</strong><span>{item.name}{item.id === room.playerId ? " (you)" : ""}</span><small>{resultTime(item.time)}</small>
         </li>)}
       </ol>
-      {host && hostAvailable ? <button className={styles.primaryAction} type="button" onClick={() => session.rematch()}>Back to starting grid</button> : <p className={styles.lobbyWait}>Waiting for the host to set up a rematch</p>}
+      {!host && <p className={styles.lobbyWait}>Waiting for the host to set up a rematch</p>}
     </section>;
 
     const resumePanel = host && hostAvailable && room.phase === "paused" && <section className={styles.roomPanel} aria-label="Race paused">
@@ -185,11 +211,28 @@ export default function Beerio2Page() {
       onlineView={onlineView}
       banner={banner}
       exit={leave}
-      racing={hostAvailable && !lobby && !results && room.phase !== "paused"}
+      spectator={spectator}
+      host={host}
+      racing={!spectator && hostAvailable && !lobby && !results && room.phase !== "paused"}
+      pause={host && room.phase === "race" ? () => session.setPaused(true) : undefined}
       laps={3}
       panel={lobbyPanel || resultsPanel || resumePanel}
     />;
   }
+
+  if (screen === "watch") return <main className={`${styles.shell} ${styles.menuShell} ${styles.tvShell}`}>
+    <LobbyHeader />
+    <section className={styles.entryStage} aria-label="Set up TV view">
+      <div className={styles.entryCard}>
+        <span className={styles.kicker}>BEERIO 2 · OPTIONAL TV VIEW</span>
+        <h2>Put the race on TV.</h2>
+        <p>This is a watch-only screen. Once connected, the host phone runs the race.</p>
+        {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
+        <button type="button" className={styles.primaryAction} disabled={connecting || !watchToken || !ROOM_CODE.test(inviteCode)} onClick={() => session.watch(inviteCode, watchToken)}>{connecting ? "Connecting…" : "Open TV view"}</button>
+        <button type="button" className={styles.backAction} onClick={leave}>‹ Back to Beerio 2</button>
+      </div>
+    </section>
+  </main>;
 
   return <main className={`${styles.shell} ${styles.menuShell}`} data-track={trackId}>
     <LobbyHeader />
@@ -219,7 +262,7 @@ export default function Beerio2Page() {
           <button className={styles.backAction} type="button" onClick={() => { session.leave(); choose("menu"); }}>‹ All modes</button>
           <div className={styles.kicker}>{screen === "host" ? "BUILD YOUR STARTING GRID" : "YOUR SEAT IS WAITING"}</div>
           <h2>{screen === "host" ? "Host & drive." : "Join the grid."}</h2>
-          <p>{screen === "host" ? "Create a private room, then share the invite. You race too." : "Same race. Your own screen. Enter the code from your host."}</p>
+          <p>{screen === "host" ? "Create a room, invite friends, and start from this phone. No TV or computer needed." : "Same race. Your own screen. Enter the code from your host."}</p>
           {screen === "host" ? <div className={styles.formCircuit}><TrackMap trackId={trackId} /><div><small>YOUR CIRCUIT</small><strong>{selectedTrack.name}</strong><span>Choose a circuit below before creating.</span></div></div> : <div className={styles.joinNote}>Your host’s circuit loads automatically.</div>}
           <label>DRIVER NAME<input value={name} onChange={(event) => setName(event.target.value)} name="driver-name" autoComplete="nickname" placeholder="What should we call you?" required maxLength={48} disabled={connecting} /></label>
           {screen === "join" && <label>ROOM CODE<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label>}
@@ -275,8 +318,8 @@ function CircuitArt({ trackId }: { trackId: TrackId }) {
   </svg>;
 }
 
-function RoomQr({ code }: { code: string }) {
-  const [open, setOpen] = useState(false);
+function RoomQr({ code, autoOpen = false }: { code: string; autoOpen?: boolean }) {
+  const [open, setOpen] = useState(autoOpen);
   const [qr, setQr] = useState<{ code: string; src: string } | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -285,8 +328,8 @@ function RoomQr({ code }: { code: string }) {
       .then((src) => { if (active) setQr({ code, src }); }).catch(() => {});
     return () => { active = false; };
   }, [code, open]);
-  return <details className={styles.roomQr} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>Show phone QR</summary>
+  return <details className={styles.roomQr} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>Join by scanning QR</summary>
     {qr?.code === code ? <Image src={qr.src} width={128} height={128} alt="Scan this Beerio 2 invite with your phone camera" unoptimized /> : <p>Preparing QR code…</p>}
   </details>;
 }

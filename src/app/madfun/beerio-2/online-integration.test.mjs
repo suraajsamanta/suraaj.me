@@ -269,6 +269,14 @@ test('Private lobby admits exactly ten racers including the host', { timeout: 14
     guests.every(p => p.getFrame()?.players.length === 10), 'all nine guest seats visible everywhere');
   assert.equal(new Set(host.getSnapshot().players.map(p => p.id)).size, 10);
   assert.equal(Object.keys(host.getFrame().cars).length, 10);
+  const tv = f.make();
+  tv.watch(code, host.getSnapshot().watchInvite);
+  await until(() => tv.getSnapshot().role === 'spectator' && tv.getFrame()?.players.length === 10, 'optional TV joins full ten-car grid without taking a driver seat');
+  assert.equal(host.getSnapshot().spectatorConnected, true);
+  assert.equal(host.getSnapshot().players.length, 10);
+  assert.equal(tv.getFrame().cars[tv.getSnapshot().playerId], undefined);
+  assert.equal(tv.getSnapshot().watchInvite, null);
+  assert.ok(!Object.hasOwn(tv.getFrame(), 'watchInvite'), 'TV invitation is never included in race frames');
   const over = f.make();
   over.join(code, 'Eleventh Driver');
   await until(() => over.getSnapshot().status === 'error', 'eleventh racer rejected');
@@ -434,4 +442,59 @@ test('rapid changed inputs stay below relay limit; a reset tap survives coalesci
   }
   assert.equal(phone.getSnapshot().trackId, 'seattle');
   phone.dispose();
+});
+
+
+test('invited TV can join a locked race, remains read-only and reconnects without a driving seat', { timeout: 14000 }, async t => {
+  const f = await fixture(t);
+  const host = f.make(), guest = f.make();
+  host.create('Phone Host', 'orbit');
+  const code = await until(() => host.getSnapshot().code && !host.getSnapshot().loading && host.getSnapshot().code, 'phone host prepared');
+  const invite = host.getSnapshot().watchInvite;
+  assert.match(invite, /^[A-Za-z0-9_-]{32}$/);
+  guest.join(code, 'Racer');
+  await until(() => host.getSnapshot().players.length === 2 && phase(guest) === 'lobby', 'driver admitted');
+  assert.equal(guest.getSnapshot().watchInvite, null, 'ordinary driver cannot obtain TV invitation from state');
+  host.start();
+  await until(() => phase(guest) === 'race', 'race locked and started');
+
+  const wrong = f.make();
+  wrong.watch(code, 'a'.repeat(32));
+  await until(() => wrong.getSnapshot().status === 'error', 'incorrect TV invitation is rejected');
+  assert.equal(host.getSnapshot().spectatorConnected, false);
+  const transport = f.raw();
+  let tvActions = 0;
+  const sendAction = transport.sendAction;
+  transport.sendAction = payload => { tvActions++; return sendAction(payload); };
+  const tv = f.make({ client: transport });
+  tv.watch(code, invite);
+  await until(() => phase(tv) === 'race', 'TV invitation works even after room is locked');
+  const tvSocket = f.latestSocket(), id = tv.getSnapshot().playerId;
+  assert.equal(tv.getSnapshot().role, 'spectator');
+  assert.equal(tv.getSnapshot().trackId, 'orbit');
+  assert.equal(host.getSnapshot().players.length, 2);
+  assert.equal(f.relay.parties.rooms.get(code).players.size, 1);
+  assert.equal(Object.keys(tv.getFrame().cars).length, 2);
+  assert.equal(tv.getFrame().cars[id], undefined);
+
+  const duplicate = f.make();
+  duplicate.watch(code, invite);
+  await until(() => duplicate.getSnapshot().status === 'error', 'only one TV invitation seat may be occupied');
+  tv.setInput(throttle); tv.start(); tv.rematch(); tv.setPaused(true);
+  assert.equal(tvActions, 0, 'TV emits neither input nor driver-admission hello packets');
+  transport.sendAction({ protocol: 'madfun-beerio-2-v1', kind: 'hello', stream: 'forged' });
+  transport.sendAction({ protocol: 'madfun-beerio-2-v1', kind: 'input', stream: 'forged', raceId: tv.getFrame().raceId,
+    seq: 1, input: throttle, playerId: guest.getSnapshot().playerId });
+  await sleep(180);
+  assert.equal(phase(host), 'race', 'TV cannot start, pause or reset the host race');
+  assert.equal(host.getSnapshot().players.length, 2, 'judge-role forged hello cannot join the driving roster');
+  assert.ok(Object.values(tv.getFrame().cars).every(car => car.speed === 0), 'TV and forged judge inputs cannot drive any car');
+
+  tvSocket.terminate();
+  await until(() => tv.getSnapshot().status === 'reconnecting', 'TV handles temporary socket loss');
+  await until(() => tv.getSnapshot().status === 'connected' && phase(tv) === 'race', 'TV resumes its read-only seat');
+  assert.equal(tv.getSnapshot().playerId, id);
+  assert.equal(host.getSnapshot().players.length, 2);
+  host.leave();
+  await until(() => ['closed', 'error'].includes(tv.getSnapshot().status), 'TV sees host close the room');
 });

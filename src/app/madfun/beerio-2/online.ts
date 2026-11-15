@@ -22,8 +22,10 @@ export type Beerio2Frame = {
 export type NetworkStats = { inputAckMs: number | null; frameIntervalMs: number | null; frameJitterMs: number; frameAgeMs: number; bufferedRemoteMs: number };
 export type RaceView = { id: string; getFrame: () => Readonly<Beerio2Frame> | null; getRenderFrame?: () => Readonly<Beerio2Frame> | null; getNetworkStats?: () => NetworkStats; setInput: (input: DriveInput) => void };
 export type Beerio2Snapshot = {
-  status: PartySnapshot['status']; role: 'host' | 'player' | null; code: string | null;
+  status: PartySnapshot['status']; role: 'host' | 'player' | 'spectator' | null; code: string | null;
   playerId: string | null; players: Beerio2Player[]; phase: Beerio2Phase; countdown: number;
+  /** Host-only invitation for the relay's separate, invitation-gated TV seat. Never broadcast in race frames. */
+  watchInvite: string | null; spectatorConnected: boolean;
   trackId: TrackId; hostConnected: boolean; error: string | null; loading: boolean;
 };
 type DrivingWorld = Awaited<ReturnType<typeof createDrivingWorld>>;
@@ -32,7 +34,7 @@ type ReceivedInput = { input: DriveInput; received: number; seq: number; stream:
 type Options = { url?: string; client?: PartyClient; now?: () => number; createWorld?: (trackId?: TrackId) => Promise<DrivingWorld>; autoTick?: boolean };
 const colors = ['#38bdf8', '#f97316', '#a78bfa', '#22c55e', '#f472b6', '#facc15', '#2dd4bf', '#fb7185', '#c084fc', '#e2e8f0'];
 const neutral = (): DriveInput => ({ steer: 0, throttle: false, brake: false, drift: false, reset: false });
-const initial = (): Beerio2Snapshot => ({ status: 'idle', role: null, code: null, playerId: null, players: [], phase: 'lobby', countdown: 0, trackId: 'seattle', hostConnected: false, error: null, loading: false });
+const initial = (): Beerio2Snapshot => ({ status: 'idle', role: null, code: null, playerId: null, players: [], phase: 'lobby', countdown: 0, watchInvite: null, spectatorConnected: false, trackId: 'seattle', hostConnected: false, error: null, loading: false });
 const object = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === 'object' && !Array.isArray(x);
 const finite = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const validId = (x: unknown): x is string => typeof x === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(x);
@@ -128,7 +130,7 @@ export class Beerio2Session {
   /** End-to-end input acknowledgement, NOT a network-only ping: includes host simulation and frame delivery. */
   getNetworkStats = (): NetworkStats => ({ inputAckMs: this.inputAckMs, frameIntervalMs: this.frameIntervalMs,
     frameJitterMs: this.frameJitterMs, frameAgeMs: this.frame ? Math.max(0, this.now() - this.lastFrame) : 0,
-    bufferedRemoteMs: this.snapshot.role === 'player' ? 100 : 0 });
+    bufferedRemoteMs: this.snapshot.role === 'host' ? 0 : 100 });
   /** Optional presentation buffer. Never delays the local car, lap state, controls or authoritative getFrame(). */
   getRenderFrame = (): Readonly<Beerio2Frame> | null => {
     const latest = this.frame;
@@ -186,6 +188,17 @@ export class Beerio2Session {
     this.run();
     this.client.join(code, name.trim(), 'simulator');
   };
+  /** One optional TV, using the existing invitation-gated non-player relay seat. No driver slot or authority. */
+  watch = (code: string, invite: string) => {
+    code = code.trim().toUpperCase(); invite = invite.trim();
+    if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code) || !/^[A-Za-z0-9_-]{32}$/.test(invite)) {
+      this.update({ error: 'Open the TV spectator link shared by the host.' }); return;
+    }
+    this.leave();
+    this.update({ role: 'spectator' });
+    this.run();
+    this.client.joinJudge(code, invite);
+  };
   private onRoom = () => {
     const room = this.client.getSnapshot();
     if (room.status === 'idle') return;
@@ -204,8 +217,10 @@ export class Beerio2Session {
       this.stream = streamId(); this.seq = 0; this.sentTimes.clear(); this.inputAckMs = null; this.lastInput = -Infinity;
       if (!host && !this.frame) this.verified = false;
     }
-    this.update({ status: room.status, role: host ? 'host' : room.role === 'player' ? 'player' : null,
-      playerId: host ? 'host' : room.playerId, code: room.code, hostConnected: room.hostConnected, error: room.error });
+    this.update({ status: room.status, role: host ? 'host' : room.role === 'player' ? 'player' : room.role === 'judge' ? 'spectator' : null,
+      playerId: host ? 'host' : room.playerId, code: room.code, hostConnected: room.hostConnected,
+      watchInvite: host ? room.judgeInvite : null, spectatorConnected: room.judgeConnected,
+      error: room.role === 'judge' && room.error?.includes('Judge link') ? 'This TV link is invalid or another TV is already connected.' : room.error });
     if (host) {
       const known = new Set(room.players.map(p => p.id));
       for (const id of this.accepted.keys()) if (!known.has(id)) this.accepted.delete(id);
@@ -255,7 +270,7 @@ export class Beerio2Session {
     this.inputs.set(sender.id, { input, received: this.now(), seq: p.seq as number, stream: p.stream as string });
   };
   private onState = (payload: unknown) => {
-    if (this.snapshot.role !== 'player') return;
+    if (this.snapshot.role !== 'player' && this.snapshot.role !== 'spectator') return;
     if (!object(payload) || payload.protocol !== BEERIO2_PROTOCOL) {
       this.fail('That code belongs to another game. Use the code on the Beerio 2 host screen.'); return;
     }
@@ -283,6 +298,7 @@ export class Beerio2Session {
     this.update({ phase: payload.phase, countdown: payload.countdown, players: payload.players, trackId: payload.trackId ?? 'seattle', error: null });
   };
   setInput = (input: DriveInput) => {
+    if (this.snapshot.role === 'spectator') return;
     const next = validateInput(input);
     // Preserve a one-frame reset tap until the sender/60Hz host consumes it.
     if (next) next.reset ||= this.localInput.reset;
@@ -343,13 +359,13 @@ export class Beerio2Session {
     const delta = Math.max(0, (now - this.lastTick) / 1000);
     this.lastTick = now;
     if (this.snapshot.status !== 'connected') return;
-    if (this.snapshot.role === 'player') {
+    if (this.snapshot.role === 'player' || this.snapshot.role === 'spectator') {
       if (!this.verified && now - this.connectedAt > 3500) { this.fail('No Beerio 2 host was found in that room. Check the game and code.'); return; }
       if (this.verified && now - this.lastFrame > 1200 && this.snapshot.phase !== 'paused') {
         this.localInput = neutral(); this.update({ phase: 'paused', countdown: 0 });
         if (this.frame) this.frame = { ...this.frame, phase: 'paused', countdown: 0 };
       }
-      if (this.snapshot.hostConnected && now - this.lastHello >= 1000) {
+      if (this.snapshot.role === 'player' && this.snapshot.hostConnected && now - this.lastHello >= 1000) {
         this.lastHello = now;
         this.client.sendAction({ protocol: BEERIO2_PROTOCOL, kind: 'hello', stream: this.stream });
       }

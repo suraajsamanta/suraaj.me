@@ -29,3 +29,4 @@
 .finish button { min-height: 42px; border: 1px solid #42617b; border-radius: 9px; color: inherit; background: #162941; cursor: pointer; }
 .finish button:first-of-type { background: #77dffa; color: #07101c; font-weight: 800; border-color: transparent; }
 @media (max-width: 550px) { .connection { display: none; } }
+@media (max-width: 560px) { .wakeStatus { display: none; } }
