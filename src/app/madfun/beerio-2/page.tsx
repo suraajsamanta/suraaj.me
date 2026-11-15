@@ -9,11 +9,22 @@ import RaceScreen, { type RaceBanner } from "./race-screen";
 import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
+import QuickStart from "../shared/QuickStart";
 import { FINISHES, readFinish, type CarFinish } from "./finishes";
 import { CHARACTERS, DEFAULT_RIDE, RIDES, readRide, saveRide, type RideSelection } from "./ride-selection";
 const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <main className={styles.shell}><section className={styles.entryStage}>Opening the car lab…</section></main> });
 
 type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
+const quickStartSteps = [
+  { title: "Pick a circuit and car", body: "Choose Seattle Night or Neon Orbit. Open Car Lab to pick your car and character. Race AI puts you on the grid against three rivals; Time Trial is for chasing your best lap." },
+  { title: "Create a race or join friends", body: "Choose Host & Drive, enter your name, and tap Create room. Share the player invite, QR, or room code. Guests choose Join a room, and the host taps Start race once at least two drivers are in." },
+  { title: "Drive on your own screen", body: "Everyone gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE as needed. Hold DRIFT while steering, then release it to get a boost." },
+  { title: "Race three laps", body: "First across the finish line wins the race. For a shared display, open Optional TV view from the host phone and share the TV link to the display. The TV watches; the phone still hosts." },
+] as const;
+const tvQuickStartSteps = [
+  { title: "Put this link on the big screen", body: "Open the TV link on a TV browser or on a computer connected to the TV, then select Open TV view." },
+  { title: "Join from phones", body: "Drivers use the separate player invite, room code, or QR. The host starts and controls the race from their phone. This screen only watches and does not take a driver slot." },
+] as const;
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
@@ -255,6 +266,7 @@ export default function Beerio2Page() {
       <div className={styles.entryCard}>
         <span className={styles.kicker}>BEERIO 2 · OPTIONAL TV VIEW</span>
         <h2>Put the race on TV.</h2>
+        <QuickStart game="Beerio 2 TV view" steps={tvQuickStartSteps} />
         <p>This is a watch-only screen. Once connected, the host phone runs the race.</p>
         {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
         <button type="button" className={styles.primaryAction} disabled={connecting || !watchToken || !ROOM_CODE.test(inviteCode)} onClick={() => session.watch(inviteCode, watchToken)}>{connecting ? "Connecting…" : "Open TV view"}</button>
@@ -267,6 +279,7 @@ export default function Beerio2Page() {
     <LobbyHeader />
     <section className={styles.entryStage} aria-label="Beerio 2 start screen">
       <div className={styles.entryWrap}>
+        <div className={styles.quickStart}><QuickStart game="Beerio 2" steps={quickStartSteps} /></div>
         <div className={styles.hero}>
           <div className={styles.heroEyebrow}><span className={styles.kicker}><i aria-hidden /> THE CITY IS YOUR CIRCUIT</span><span>VOL. 02</span></div>
           <div className={styles.heroHeadline}><p className={styles.trackIndex}>{trackId === "seattle" ? "01 / PACIFIC NORTHWEST" : "02 / BEYOND THE CITY"}</p>
@@ -312,7 +325,6 @@ export default function Beerio2Page() {
             <span className={styles.circuitSelected} aria-hidden>{trackId === track.id ? "✓" : "↗"}</span>
           </button>)}</div>
         </section>
-        <div className={styles.quickGuide}><div><span>01</span><p><b>Find your line</b>Arrows / WASD to drive</p></div><div><span>02</span><p><b>Hold the corner</b>Space to drift</p></div><div><span>03</span><p><b>Take it anywhere</b>Touch controls on mobile</p></div></div>
       </div>
     </section>
     <footer className={styles.bottom}><span className={styles.mode}>MADFUN MOTORSPORT <span> / </span> BEERIO 02</span><span className={styles.help}>BUILT FOR THE AFTERHOURS</span></footer>

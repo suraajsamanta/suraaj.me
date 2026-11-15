@@ -7,8 +7,15 @@ import { useEffect, useState } from 'react';
 import type { Player } from './engine';
 import { useInsideRanksSession } from './useInsideRanksSession';
 import styles from './inside-ranks.module.css';
+import QuickStart from '../shared/QuickStart';
 
 const path = '/madfun/inside-ranks';
+const quickSteps = [
+  { title: 'Join on your own phone', body: 'One player creates a room. Everyone else, including anyone who will rank, scans the same player QR or enters the room code under Join a room. Start with at least 3 players.' },
+  { title: 'Keep the shared screen separate', body: 'Optional: use Open TV view on a second screen, or choose Watch only (TV mode) there and enter the room code. Don’t mirror a player’s phone: that screen might get the secret prompt.' },
+  { title: 'Rank in private', body: 'The game picks a different ranker each round. When your phone says YOU’RE THE RANKER, read the secret question, move people up or down to put the best match at #1, then lock it in. No second QR is needed.' },
+  { title: 'Guess and score', body: 'Everyone else sees the ranking and picks which of four questions fits it. Correct guesses get 1 point. Most points after everyone has had a turn wins.' },
+] as const;
 const cleanCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 
 function Ranking({ players }: { players: readonly Player[] }) {
@@ -79,7 +86,7 @@ export default function InsideRanks() {
   useEffect(() => {
     if (!roomCode) return;
     let current = true;
-    QRCode.toDataURL(new URL(joinLink, window.location.origin).href, { width: 144, margin: 2 })
+    QRCode.toDataURL(new URL(joinLink, window.location.origin).href, { width: 208, margin: 3 })
       .then(value => { if (current) setQr(value); })
       .catch(() => {});
     return () => { current = false; };
@@ -114,6 +121,7 @@ export default function InsideRanks() {
     </header>
     <div className={styles.frame}>
       {session.error && <div className={styles.alert} role="alert">{session.error} {active && <button onClick={session.retry}>Reconnect</button>}</div>}
+      {(!active || !match) && <QuickStart game="Inside Ranks" steps={quickSteps} />}
       {!active ? <>
         <section className={styles.hero}>
           <span className={styles.kicker}>A social guessing game for 3+ players</span>
@@ -135,22 +143,24 @@ export default function InsideRanks() {
           </form>
           {!watchMode && <form className={styles.panel} onSubmit={event => { event.preventDefault(); if (name.trim()) session.create(name.trim()); }}>
             <h2>Host from your phone</h2>
-            <p>Share the room code with two or more friends. The TV is optional and doesn’t count as a player.</p>
+            <p>You play on this phone, too. Everyone uses the same player QR. When it’s your turn to rank, your phone gets the secret question.</p>
             <label>Your name<input required autoComplete="nickname" maxLength={40} value={name} onChange={event => setName(event.target.value)} placeholder="Sam"/></label>
             <button className={styles.primary} disabled={!name.trim()}>Create room</button>
           </form>}
         </div>
       </> : <>
         {!connected && !session.error && <p className={styles.alert} role="status">{state ? 'Reconnecting…' : 'Connecting to the room…'}</p>}
-        {roomCode && !watching && (!match || invite) && <aside className={`${styles.panel} ${styles.share}`} aria-label="Invite friends">
-          {qr && <Image src={qr} unoptimized alt="Scan to join Inside Ranks" width={104} height={104}/>}
-          <div className={styles.stack}><h2>Invite friends</h2><span className={styles.code}>{roomCode}</span>
-            <div className={styles.actions}><button onClick={share}>Share invite</button><Link href={tvLink} target="_blank" rel="noopener">Open TV view ↗</Link></div>
+        {roomCode && (!match || (invite && !watching)) && <aside className={`${styles.panel} ${styles.share}`} aria-label="Player invite">
+          {qr && <Image src={qr} unoptimized alt="Player QR: scan with your phone to join Inside Ranks" width={watching ? 144 : 112} height={watching ? 144 : 112}/>}
+          <div className={styles.stack}><h2>Player QR · Scan to play</h2><span className={styles.code}>{roomCode}</span>
+            <p>One QR for everyone. When it’s your turn to rank, the secret question appears on your phone automatically.</p>
+            {!watching && <div className={styles.actions}><button onClick={share}>Share player invite</button>{host && <Link href={tvLink} target="_blank" rel="noopener">Open TV view (watch only) ↗</Link>}</div>}
+            {host && <p className={styles.muted}>For a TV, open the watch-only view instead of mirroring a player’s screen.</p>}
             {copy && <small role="status">{copy}</small>}
           </div>
         </aside>}
         {state && !match && <section className={styles.panel}>
-          <span className={styles.kicker}>Waiting for the group</span>
+          <span className={styles.kicker}>{watching ? 'TV view · Watch only' : 'Waiting for the group'}</span>
           <h1>Who’s playing?</h1>
           <p>{online} connected · 3 minimum</p>
           <ul className={styles.players}>{players.map(player => <li key={player.id}>{player.name}{player.id === participantId ? ' (you)' : ''}{!player.connected ? ' · offline' : ''}</li>)}</ul>
@@ -159,9 +169,11 @@ export default function InsideRanks() {
         {match && <section className={styles.panel}>
           <span className={styles.kicker}>Round {match.round} of {match.totalRounds}</span>
           {match.phase === 'ranking' && <>
+            {isRanker && <span className={styles.roleBadge}>You’re the ranker · Private turn</span>}
+            {watching && <span className={styles.roleBadge}>TV view · Watch only</span>}
             <h1>{isRanker ? 'Rank your friends' : `${match.ranker.name} is ranking the group`}</h1>
             {isRanker && prompt ? <RankForm key={roundKey} players={match.rankTargets} prompt={prompt.text} disabled={!connected} onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/> :
-              <p role="status">{isRanker ? 'Loading your private question…' : 'The question is hidden. Once the ranking is locked, you’ll guess what it was.'}</p>}
+              <p role="status">{isRanker ? 'Loading your private question…' : 'Only the ranker’s phone shows the secret question. Guessing opens after they lock the order.'}</p>}
             {host && !players.some(player => player.id === match.ranker.id && player.connected) &&
               <button disabled={!connected} onClick={() => session.dispatch({type:'skip'})}>Skip offline ranker</button>}
           </>}

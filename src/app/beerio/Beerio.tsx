@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import QRCode from "qrcode";
 import Link from "next/link";
 import Image from "next/image";
@@ -253,7 +253,7 @@ function Controller({ send, useItem: activateItem, item, itemFeedback = "" }: { 
   </div>;
 }
 
-export default function Beerio() {
+export default function Beerio({ quickStart }: { quickStart?: ReactNode }) {
   const room = useBeerioRoom();
   const hostDriver = useBeerioRoom({ autoResume: false, storageKey: "beerio-local-driver-v1" });
   const { restoreSession: restoreHostDriver } = hostDriver;
@@ -555,9 +555,10 @@ export default function Beerio() {
     {room.status === "error" && room.canRetryConnection && <button className={styles.secondary} onClick={room.retryConnection}>RETRY CONNECTION</button>}
   </main>;
 
-  return <main className={`${styles.shell} ${mode === "join" ? styles.joinSetup : ""}`}>
+  return <main className={`${styles.shell} ${mode === "join" ? styles.joinSetup : ""} ${quickStart ? styles.withQuickStart : ""}`}>
     <header className={styles.header}><FullscreenButton /><Link href="/beerio" className={styles.wordmark}>BEERIO<span>★</span></Link><span>THE BIG SCREEN IS THE TRACK.</span><Link href="/">suraaj.me ↗</Link></header>
     <div className={styles.content}>
+      {quickStart && <div className={styles.quickStart}>{quickStart}</div>}
       {mode === "home" && <section className={styles.hero}>
         <div className={styles.eyebrow}>THE PARTY RACING GAME</div><h1>READY.<br /><em>SET.</em> RACE.</h1>
         <p>One big screen. Your phones as controllers. Up to ten friends racing for the glory.</p>

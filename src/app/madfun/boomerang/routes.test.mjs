@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL(p,import.meta.url),'utf8');
-test('Madfun hub links nested Beerio route while alias reuses unchanged original page',()=>{
+test('Madfun hub links the Beerio alias and the alias adds help to the shared game',()=>{
  assert.match(read('../page.tsx'),/href="\/madfun\/beerio"/);
- assert.match(read('../beerio/page.tsx'),/export \{ default, metadata \} from "\.\.\/\.\.\/beerio\/page"/);
+ const nested=read('../beerio/page.tsx');
+ assert.match(nested,/import Beerio from "\.\.\/\.\.\/beerio\/Beerio"/);
+ assert.match(nested,/export \{ metadata \} from "\.\.\/\.\.\/beerio\/page"/);
+ assert.match(nested,/<Beerio quickStart=\{<QuickStart game="Beerio"/);
  assert.match(read('../../beerio/page.tsx'),/return <Beerio \/>/);
 });
 test('Beerio QR and reconnect links retain either entry pathname and room query',()=>{

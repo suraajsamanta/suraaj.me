@@ -888,3 +888,6 @@
 .lobbyExtras .roomQr { border: none; }
 .tvShell.menuShell > .entryStage { display: grid; place-items: center; padding: 18px; }
 @media (pointer: coarse) { .raceActions .reset { min-height: 42px; } }
+
+/* The pre-race guide spans the showroom and setup columns. */
+.quickStart { grid-column: 1 / -1; min-width: 0; }

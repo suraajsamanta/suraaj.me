@@ -1,12 +1,20 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
+import QuickStart from '../shared/QuickStart';
 import Link from 'next/link';
 import Image from 'next/image';
 import QRCode from 'qrcode';
 import { useCodewordsSession } from './useCodewordsSession';
 import { clueError, type CardKind, type Team } from './engine';
 import styles from './codewords.module.css';
+
+const quickSteps = [
+ { title: 'Create a room for 4 or more', body: 'Choose Create room, then share the player QR, invite link or code. For a TV, use Watch only. Do not mirror a clue-giver’s phone.' },
+ { title: 'Pick teams and roles', body: 'Each team needs one clue-giver and at least one guesser. Only the clue-givers can see which cards belong to which team.' },
+ { title: 'Give a clue, then guess', body: 'On your turn, the clue-giver sends one word and a number, like Space, 2. Guessers tap a word and confirm it. You can guess up to one more than the number or end your turn early. A wrong pick ends your turn.' },
+ { title: 'Find all your words', body: 'Reveal every word of your team’s color first to win. Pick the trap card and your team immediately loses.' },
+] as const;
 
 const gamePath = '/madfun/codewords';
 const teamName = { red: 'Red', blue: 'Blue' } as const;
@@ -101,6 +109,7 @@ export default function Codewords() {
   </header>
   <div className={styles.frame}>
    {session.error && <div className={styles.alert} role="alert">{session.error} {active && <button onClick={session.retry}>Reconnect</button>}</div>}
+   <QuickStart game="Codewords" steps={quickSteps}/>
    {!active ? <>
     <section className={styles.hero}>
      <span className={styles.kicker}>The secret-word party game</span>
@@ -182,12 +191,6 @@ export default function Codewords() {
      {host && game.phase==='finished' && <button className={styles.primary} disabled={!gameLive || !state?.canStart} onClick={() => { setPick(null);session.dispatch({type:'rematch'}); }}>Play again with new words</button>}
     </>}
    </>}
-   <details className={styles.help}><summary>How to play</summary><ol>
-    <li>Pick a team and choose one clue-giver for each side. The clue-givers can see which words belong to which team.</li>
-    <li>On your turn, the clue-giver gives one word and the number of cards it points to. Guessers tap those cards together.</li>
-    <li>After a correct guess, you can keep going, up to one more guess than the clue number. A wrong card ends the turn. The trap card loses the game on the spot.</li>
-    <li>Find all your team’s cards to win.</li>
-   </ol></details>
   </div>
  </main>;
 }

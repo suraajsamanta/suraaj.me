@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import QuickStart from '../shared/QuickStart';
 import QRCode from 'qrcode';
 import {useEffect,useMemo,useState,useSyncExternalStore} from 'react';
 import {PartyClient} from '../shared/party-client';
@@ -7,6 +8,12 @@ import {makeQueue,move,newRun,publicRun,type PublicRun,type Question,type Run} f
 import {unlockEeshaDeck} from './deck';
 import type {Deck} from './engine';
 import s from './trivia.module.css';
+
+const quickSteps = [
+ { title: 'Host with the private link', body: 'Open the private Eesha Lore Night host link and tap Host on this screen. Share the lobby’s player QR or join link, not the private host link. Start when at least two players join; the host doesn’t count.' },
+ { title: 'Join and answer on your phone', body: 'Scan the player QR or enter the room code and your name. Pick a choice or type your answer, then tap Lock answer before time runs out. Everyone answers every question.' },
+ { title: 'Reveal the answers at the end', body: 'After all 26 questions, the host taps Start the big reveal and reveals each answer one at a time. Correct answers earn that question’s points. The final leaderboard shows who scored most.' },
+] as const;
 const savedHostKey='madfun.eesha-lore.host-unlock.v1';
 export default function Trivia(){
  const client=useMemo(()=>new PartyClient(),[]);
@@ -64,7 +71,8 @@ export default function Trivia(){
  return <main className={s.page}><header className={s.header}><Link href="/madfun">madfun<span>✳</span></Link><small>EVERYONE IN · GROUP TRIVIA</small>{room.role&&<button onClick={leave}>{host?'End room':'Leave room'}</button>}</header>
  {room.error&&<p role="alert">{room.error} <button onClick={()=>client.retry()}>Retry</button></p>}
  {room.role&&!online&&!room.error&&<p role="status">Connecting to the room…</p>}{online&&!host&&!room.hostConnected&&view&&<p role="status">Host disconnected. Keep this screen open to reconnect.</p>}
- {!room.role&&<section className={s.stage}><p className={s.kicker}>NO BUZZERS. EVERYONE PLAYS.</p><h1>Eesha <em>Lore Night</em></h1><p>Everyone plays on their phone. The big screen is optional. All answers and scores are revealed at the end.</p>{deck?<button className={s.primary} onClick={()=>client.create('jeopardy')}>Host on this screen</button>:<p>Hosting? Open the private Eesha Lore Night host link.</p>}{error&&<p role="alert">{error}</p>}<form className={s.form} onSubmit={e=>{e.preventDefault();client.join(code,name,'jeopardy');}}><input aria-label="Room code" placeholder="Room code" value={code} maxLength={6} onChange={e=>setCode(e.target.value.toUpperCase())} required/><input aria-label="Player name" placeholder="Your name" value={name} maxLength={32} onChange={e=>setName(e.target.value)} required/><button>Join game</button></form></section>}
+ {!room.role&&<section className={s.stage}><p className={s.kicker}>NO BUZZERS. EVERYONE PLAYS.</p><h1>Eesha <em>Lore Night</em></h1><p>Everyone plays on their phone. The big screen is optional. All answers and scores are revealed at the end.</p><QuickStart game="Eesha Lore Night" steps={quickSteps}/>{deck?<button className={s.primary} onClick={()=>client.create('jeopardy')}>Host on this screen</button>:<p>Hosting? Open the private Eesha Lore Night host link.</p>}{error&&<p role="alert">{error}</p>}<form className={s.form} onSubmit={e=>{e.preventDefault();client.join(code,name,'jeopardy');}}><input aria-label="Room code" placeholder="Room code" value={code} maxLength={6} onChange={e=>setCode(e.target.value.toUpperCase())} required/><input aria-label="Player name" placeholder="Your name" value={name} maxLength={32} onChange={e=>setName(e.target.value)} required/><button>Join game</button></form></section>}
+ {room.role&&!view&&<QuickStart game="Eesha Lore Night" steps={quickSteps}/>}
  {host&&room.code&&!run&&<section className={s.lobby}><article><p className={s.kicker}>SCAN TO JOIN</p>{qr&&<div role="img" aria-label="Join QR code" className={s.qr} style={{backgroundImage:'url('+qr+')'}}/>}<h2>{room.code}</h2><button onClick={()=>void copyInvite()}>Copy join link</button>{inviteNotice&&<p role="status">{inviteNotice}</p>}</article><article><p className={s.kicker}>HOST DESK</p><h2>Eesha Lore Night</h2><p>{room.players.filter(p=>p.connected).length} joined{deck&&' · '+deck.categories.length+' rounds + finale'}</p><div className={s.scores}>{room.players.map(p=><span key={p.id}>{p.name}{p.connected?'':' (offline)'}</span>)}</div><button className={s.primary} onClick={start} disabled={!online||!deck||room.players.filter(p=>p.connected).length<2}>Start game</button>
  {room.players.filter(p=>p.connected).length<2&&<p>Waiting for two players to join on their phones. The host doesn’t count.</p>}</article></section>}
  {!host&&room.role==='player'&&online&&!view&&<section className={s.stage}><p className={s.kicker}>ROOM {room.code}</p><h1>You’re in.</h1><p>The questions and your answers will appear here.</p></section>}

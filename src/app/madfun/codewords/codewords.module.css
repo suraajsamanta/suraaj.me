@@ -58,7 +58,6 @@
 .board .tile[data-color="blue"] { background:#a1d9e8;border-color:#60acc5; }
 .board .tile[data-color="neutral"] { background:#b7a78b;border-color:#a99470; }
 .board .tile[data-color="assassin"] { background:#332d32;color:#fff0de;border-color:#8b7483; }
-.board .tile[data-revealed="true"] { text-decoration:line-through;text-decoration-thickness:2px; }
 .board .tile[data-selected="true"] { outline:2px solid var(--lime);outline-offset:1px; }
 .board .tile[data-key="true"]::after { content:'';display:block;width:5px;height:5px;margin:.3rem auto 0;border-radius:50%;background:currentColor; }
 .confirm { display:flex;gap:.5rem;align-items:center;justify-content:flex-end;flex-wrap:wrap; }

@@ -390,3 +390,10 @@
 .joinSetup .panel { flex: 0 0 auto; justify-content: flex-start; padding-bottom: max(24px, calc(env(safe-area-inset-bottom) + 16px)); }
 .joinSetup .panel .back, .joinSetup .form > .primary { min-height: 44px; }
 .joinSetup .orbitStage { touch-action: pan-y; touch-action: pan-y pinch-zoom; }
+
+
+/* Only the Madfun Beerio setup has the expandable guide. Leave race and controller viewports alone. */
+.quickStart { flex: 0 0 auto; margin: 12px clamp(16px, 4vw, 60px) 0; }
+.withQuickStart:has(.quickStart details[open]) { height: auto; min-height: 100dvh; overflow: visible; }
+.withQuickStart:has(.quickStart details[open]) .content { flex: 1 0 auto; }
+.withQuickStart:has(.quickStart details[open]) :is(.hero, .panel, .lobby) { flex: 1 0 auto; }
