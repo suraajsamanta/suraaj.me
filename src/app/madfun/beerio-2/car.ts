@@ -6,6 +6,7 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 
 type Point = [number, number, number];
 
@@ -31,6 +32,7 @@ export function buildCar(scene: Scene): TransformNode {
   const brake = material('brake-caliper', '#ff5d42', 40);
   const rearLight = material('tail-light', '#ff304e', 60, '#ff163f');
   const frontLight = material('head-light', '#e1ffff', 50, '#b0f6ff');
+  const livery = material('ivory-livery', '#eff8ef', 90);
   const amber = material('amber', '#ffb849', 50, '#e97519');
 
   const surface = (name: string, points: Point[], indices: number[], mat: StandardMaterial, parent: TransformNode = car) => {
@@ -104,6 +106,29 @@ export function buildCar(scene: Scene): TransformNode {
     vent.rotation.x = .09;
   }
 
+  // Asymmetric endurance-racer livery follows the actual coachwork planes.
+  // Deliberately geometry, not a texture: crisp at chase distance, no downloads.
+  for (const [left, right] of [[.12, .29], [.34, .39]]) {
+    for (const [label, rows] of [
+      ['bonnet', stations.filter(([z]) => z >= .85 && z <= 2.10)],
+      ['deck', stations.filter(([z]) => z >= -2.09 && z <= -1.04)],
+    ] as [string, number[][]][]) {
+      const point = ([z, w, top]: number[], x: number): Point => [x, top + .025 * (1 - x / (w * .81)) + .006, z];
+      for (let i = 1; i < rows.length; i++) {
+        quad(`${label}-stripe-${left}-${i}`, [point(rows[i-1], left), point(rows[i-1], right), point(rows[i], right), point(rows[i], left)], livery);
+      }
+    }
+    quad(`roof-stripe-${left}`, [[left,1.604,.14],[right,1.604,.14],[right,1.574,-.48],[left,1.574,-.48]], livery);
+  }
+  // Body-colored endplates and contrasting rear identifier remain readable
+  // even when the car occupies only a small part of the chase-camera frame.
+  for (const side of [-1, 1]) {
+    box(`wing-endplate-${side}`, .045, .15, .34, side*.97, 1.235, -1.99, roofPaint);
+    box(`rear-reflector-${side}`, .20, .025, .018, side*.47, .56, -2.264, livery);
+  }
+  box('rear-registration', .31, .105, .018, 0, .66, -2.264, livery);
+  box('registration-inset', .22, .038, .022, 0, .66, -2.278, carbon);
+
   // Deep, wide rear fascia, illuminated thin lenses and exposed diffuser.
   box('rear-fascia', 1.67, .25, .06, 0, .66, -2.225, carbon);
   box('rear-light-bar', 1.57, .042, .035, 0, .86, -2.238, rearLight);
@@ -170,6 +195,25 @@ export function buildCar(scene: Scene): TransformNode {
     const merged = Mesh.MergeMeshes(batch, true, true);
     if (merged) { merged.name = `car-body-${mat.name}`; merged.parent = car; merged.isPickable = false; }
   }
+  // Merge within each spinning pivot, never across pivots. The original
+  // individual five spokes and stacked cylinders cost 40 draws on their own.
+  for (const spin of wheels) {
+    const byMaterial = new Map<StandardMaterial, Mesh[]>();
+    for (const mesh of spin.getChildMeshes(true)) {
+      if (!(mesh instanceof Mesh) || !(mesh.material instanceof StandardMaterial)) continue;
+      const group = byMaterial.get(mesh.material) ?? [];
+      group.push(mesh); byMaterial.set(mesh.material, group);
+    }
+    // MergeMeshes bakes world transforms; detach at the origin first so the
+    // resulting local geometry does not receive the wheel offset twice.
+    const parent = spin.parent; spin.parent = null;
+    for (const group of byMaterial.values()) {
+      if (group.length < 2) continue;
+      const merged = Mesh.MergeMeshes(group, true, true);
+      if (merged) { merged.parent = spin; merged.isPickable = false; }
+    }
+    spin.parent = parent;
+  }
   car.metadata = {
     wheels, frontWheels, wheelRadius: .405, length: 4.5, forward: '+Z',
     setPaint(hex: string) {
@@ -183,7 +227,7 @@ export function buildCar(scene: Scene): TransformNode {
 }
 
 /** Lower-draw-call version of the same coupe for the other racers. */
-export function buildRival(scene: Scene, hex: string): TransformNode {
+function buildFarRival(scene: Scene, hex: string): TransformNode {
   const car = new TransformNode('rival-coupe', scene);
   const material = (name: string, color: string, emissive = false) => {
     const m = new StandardMaterial('rival-' + name, scene);
@@ -214,9 +258,19 @@ export function buildRival(scene: Scene, hex: string): TransformNode {
   VertexData.ComputeNormals(positions,indices,normals);
   body.positions=positions;body.indices=indices;body.normals=normals;body.applyToMesh(shell);
   paint.backFaceCulling=false;shell.material=paint;shell.parent=car;shell.isPickable=false;
-  box('canopy',1.38,.41,1.45,0,1.13,.10,glass);
-  box('roof',1.12,.095,1.18,0,1.36,.16,paint);
-  box('wing',2.14,.09,.43,0,1.14,-1.84,trim);
+  // Keep the raked screen and low roofline at distance, not a box canopy.
+  const canopy = new Mesh('rival-raked-canopy', scene);
+  const canopyData = new VertexData();
+  const canopyPositions = [-.77,1.07,-1.04,.77,1.07,-1.04,.77,1.05,.87,-.77,1.05,.87,
+    -.61,1.53,-.56,.61,1.53,-.56,.61,1.56,.21,-.61,1.56,.21];
+  const canopyIndices = [0,1,5,0,5,4,1,2,6,1,6,5,2,3,7,2,7,6,3,0,4,3,4,7];
+  const canopyNormals: number[] = [];
+  VertexData.ComputeNormals(canopyPositions, canopyIndices, canopyNormals);
+  canopyData.positions = canopyPositions; canopyData.indices = canopyIndices; canopyData.normals = canopyNormals;
+  canopyData.applyToMesh(canopy); canopy.material = glass; canopy.parent = car; canopy.isPickable = false;
+  glass.backFaceCulling = false;
+  box('roof',1.22,.065,.77,0,1.565,-.175,paint);
+  box('wing',1.95,.065,.29,0,1.205,-1.99,trim);
   box('taillights',1.71,.12,.06,0,.74,-2.18,lamps);
   for(const x of [-.97,.97])for(const z of [-1.30,1.27]){
     const tire=MeshBuilder.CreateCylinder('rival-tire',{height:.25,diameter:.80,tessellation:12},scene);
@@ -224,4 +278,78 @@ export function buildRival(scene: Scene, hex: string): TransformNode {
   }
   car.metadata={materials:[paint,glass,trim,lamps]};
   return car;
+}
+
+/** Bake fixed material colors into vertices, keeping a single draw per pivot.
+ * Only used by rivals; the hero retains its separate paint/glass/metal response.
+ */
+function bakeRivalBatch(meshes: Mesh[], parent: TransformNode, material: StandardMaterial, name: string) {
+  if (!meshes.length) return;
+  for (const mesh of meshes) {
+    const color = (mesh.material as StandardMaterial).diffuseColor;
+    const colors: number[] = [];
+    for (let i = 0; i < mesh.getTotalVertices(); i++) colors.push(color.r, color.g, color.b, 1);
+    mesh.setVerticesData(VertexBuffer.ColorKind, colors);
+    if (!mesh.isVerticesDataPresent(VertexBuffer.UVKind)) {
+      mesh.setVerticesData(VertexBuffer.UVKind, new Array(mesh.getTotalVertices() * 2).fill(0));
+    }
+    mesh.material = material;
+    mesh.computeWorldMatrix(true);
+  }
+  const merged = Mesh.MergeMeshes(meshes, true, true);
+  if (merged) { merged.name = name; merged.parent = parent; merged.isPickable = false; }
+}
+
+/** Same sculpted coupe nearby; a one-draw silhouette beyond the racing action.
+ * Distance is in world metres. Hysteresis prevents flicker at the LOD boundary.
+ */
+export function buildRival(scene: Scene, hex: string): TransformNode {
+  const root = new TransformNode('rival-coupe', scene);
+  const near = buildCar(scene);
+  near.name = 'rival-detail';
+  near.metadata.setPaint(hex);
+  const wheels = near.metadata.wheels as TransformNode[];
+  const frontWheels = near.metadata.frontWheels as TransformNode[];
+  const oldMaterials = new Set(near.getChildMeshes().map(mesh => mesh.material));
+  const matte = new StandardMaterial('rival-vertex-finish', scene);
+  matte.diffuseColor = Color3.White();
+  matte.specularColor.set(.22, .27, .32);
+  matte.specularPower = 64;
+  matte.backFaceCulling = false;
+  const lamps = new StandardMaterial('rival-vertex-lamps', scene);
+  lamps.diffuseColor = Color3.White();
+  lamps.emissiveColor = Color3.White();
+  lamps.disableLighting = true;
+  // Fixed calipers join the shell; spinning wheels retain their own pivots.
+  const wheelMeshes = new Set(wheels.flatMap(wheel => wheel.getChildMeshes()));
+  const staticMeshes = near.getChildMeshes().filter(mesh => !wheelMeshes.has(mesh)) as Mesh[];
+  const lit = staticMeshes.filter(mesh => /tail-light|head-light|amber/.test(mesh.material?.name ?? ''));
+  bakeRivalBatch(staticMeshes.filter(mesh => !lit.includes(mesh)), near, matte, 'rival-coachwork');
+  bakeRivalBatch(lit, near, lamps, 'rival-lights');
+  for (const wheel of wheels) {
+    const parent = wheel.parent; wheel.parent = null;
+    bakeRivalBatch(wheel.getChildMeshes() as Mesh[], wheel, matte, 'rival-spinning-wheel');
+    wheel.parent = parent;
+  }
+  for (const material of oldMaterials) material?.dispose();
+  const far = buildFarRival(scene, hex);
+  const farMaterials = new Set(far.getChildMeshes().map(mesh => mesh.material));
+  bakeRivalBatch(far.getChildMeshes() as Mesh[], far, matte, 'rival-distant-silhouette');
+  for (const material of farMaterials) material?.dispose();
+  near.parent = root; far.parent = root;
+  far.setEnabled(false);
+  let detailed = true;
+  root.metadata = {
+    materials: [matte, lamps], wheels, frontWheels, wheelRadius: .405,
+    updateDetail(distance: number, dt = 0, speed = 0, steer = 0) {
+      const next = detailed ? distance < 65 : distance < 50;
+      if (next !== detailed) {
+        detailed = next; near.setEnabled(next); far.setEnabled(!next);
+      }
+      if (!detailed) return;
+      for (const wheel of wheels) wheel.rotation.x += speed * Math.min(.1, Math.max(0, dt)) / .405;
+      for (const wheel of frontWheels) wheel.rotation.y = Math.max(-.45, Math.min(.45, steer));
+    },
+  };
+  return root;
 }

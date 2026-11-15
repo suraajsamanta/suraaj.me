@@ -24,9 +24,9 @@ async function until(check, label, timeout = 7000) {
 
 // Load the exact browser client with the same test convention as the other
 // Madfun suites. Dynamic Rapier import must resolve from the file, not data:.
-async function moduleUrl(path, imports = {}) {
+async function moduleUrl(path, imports = {}, transform = source => source) {
   const source = await readFile(new URL(path, import.meta.url), 'utf8');
-  let js = ts.transpileModule(source, {
+  let js = ts.transpileModule(transform(source), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText;
   for (const [from, to] of Object.entries(imports)) {
@@ -41,7 +41,7 @@ const driveUrl = await moduleUrl('./drive.ts', {
   '@dimforge/rapier3d-compat': import.meta.resolve('@dimforge/rapier3d-compat'),
 });
 const partyUrl = await moduleUrl('../shared/party-client.ts');
-const { Beerio2Session } = await import(await moduleUrl('./online.ts', {
+const { Beerio2Session, validateFrame } = await import(await moduleUrl('./online.ts', {
   './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl,
 }));
 const { PartyClient } = await import(partyUrl);
@@ -277,4 +277,161 @@ test('Private lobby admits exactly ten racers including the host', { timeout: 14
   assert.ok(host.getSnapshot().players.every(p => p.connected));
   const room = f.relay.parties.rooms.get(code);
   await until(() => room.players.size === 9, 'full-lobby rejection also releases the relay seat');
+  host.start();
+  await until(() => guests.every(phone => phase(phone) === 'race'), 'ten-car race begins');
+  const counts = new Map(guests.map(phone => [phone, { tick: 0, frames: 0 }]));
+  const started = performance.now();
+  while (performance.now() - started < 1250) {
+    const input = { ...throttle, steer: Math.sin(performance.now() / 500) * .15 };
+    host.setInput(input);
+    for (const phone of guests) {
+      phone.setInput(input);
+      const count = counts.get(phone);
+      if (phone.getFrame().tick !== count.tick) { count.tick = phone.getFrame().tick; count.frames++; }
+    }
+    await sleep(16);
+  }
+  for (const phone of guests) {
+    assert.equal(phone.getSnapshot().status, 'connected', 'high-frequency steering does not trip relay rate limits');
+    assert.ok(car(phone).speed > 1, 'every admitted racer has authoritative moving physics');
+    assert.ok(counts.get(phone).frames >= 10, 'each phone keeps receiving snapshots under full grid load');
+    assert.ok(phone.getNetworkStats().inputAckMs !== null, 'each phone receives consumed-input telemetry');
+  }
+  t.diagnostic(JSON.stringify({ localRelayTenPlayer: guests.map(phone => ({ frames: counts.get(phone).frames, ...phone.getNetworkStats() })) }));
+});
+
+
+// The baseline restores the former timer-only, phase-aligned 20Hz input sender.
+// Both variants use identical host physics, packets, 15Hz snapshots and injected network delays.
+const { Beerio2Session: BaselineSession } = await import(await moduleUrl('./online.ts', {
+  './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl,
+}, source => source.replace('this.sendInput(this.inputAt);', '')
+  .replace('(changed ? 25 : 50)', '50')
+  .replace('this.lastInput = now;', 'this.lastInput = Number.isFinite(this.lastInput) ? this.lastInput + Math.floor((now - this.lastInput) / 50) * 50 : now;')));
+
+async function syntheticRun(Session, guests = 9) {
+  let now = 0, serial = 0, packets = 0, bytes = 0;
+  const queue = [], peers = [], delivery = new Map();
+  const schedule = (key, fn) => {
+    // Deterministic jitter without reordering a WebSocket stream.
+    const when = Math.max(now + 25 + ((serial++ * 17) % 25) - 12, (delivery.get(key) ?? 0) + .01);
+    delivery.set(key, when); queue.push({ when, fn });
+  };
+  const roster = Array.from({ length: guests }, (_, i) => ({ id: `p${i}`, name: `Guest ${i}`, connected: true }));
+  class Transport {
+    constructor(id) { this.id = id; this.room = { status: 'idle', role: id === 'host' ? 'host' : 'player',
+      code: 'ABCDEF', playerId: id, players: roster, hostConnected: true, error: null }; peers.push(this); }
+    subscribe(fn) { this.roomListener = fn; return () => {}; }
+    onAction(fn) { this.actionListener = fn; return () => {}; }
+    onState(fn) { this.stateListener = fn; return () => {}; }
+    getSnapshot() { return this.room; }
+    create() { this.room.status = 'connected'; this.roomListener(); }
+    join() { this.create(); }
+    sendAction(payload) { packets++; schedule(this.id + '-input', () => peers[0].actionListener({ role: 'player', playerId: this.id, payload: structuredClone(payload) })); }
+    publish(payload) {
+      bytes += JSON.stringify(payload).length * guests;
+      for (const peer of peers.slice(1)) schedule(peer.id + '-frame', () => peer.stateListener(structuredClone(payload)));
+    }
+    setLocked() {} leave() {} dispose() {} retry() {}
+  }
+  const createWorld = async () => ({
+    spawn: grid => ({ state: { x: grid, y: 0, z: 0, yaw: 0, facing: 0, pitch: 0, steer: 0, speed: 10,
+      lap: 1, seconds: 0, best: null, boost: false, finished: false, finishTime: null, progress: 0 } }),
+    step(driver, input, dt) { driver.state.x += 10 * dt; driver.state.steer = input.steer; }, dispose() {},
+  });
+  const host = new Session({ client: new Transport('host'), now: () => now, autoTick: false, createWorld });
+  host.create('Host', 'orbit');
+  await Promise.resolve(); await Promise.resolve();
+  const phones = roster.map(p => {
+    const phone = new Session({ client: new Transport(p.id), now: () => now, autoTick: false });
+    phone.join('ABCDEF', p.name); return phone;
+  });
+  let nextTick = 0, started = false, nextEvent = 5007, event = null, n = 0;
+  const latencies = [], held = [], smooth = [], acks = [];
+  const before = performance.now();
+  for (now = 0; now < 17000; now++) {
+    queue.sort((a,b) => a.when - b.when);
+    while (queue.length && queue[0].when <= now) queue.shift().fn();
+    if (now >= nextTick) {
+      for (const phone of phones) phone.advance();
+      host.advance(); nextTick += 1000 / 60;
+      if (!started && now > 1500) { assert.equal(host.getSnapshot().players.length, guests + 1); host.start(); started = true; }
+      if (now > 5500) {
+        assert.equal(phones[0].getRenderFrame().cars.p0, phones[0].getFrame().cars.p0, 'remote buffering never delays the local car');
+        assert.ok(host.getRenderFrame().cars.host.x >= host.getFrame().cars.host.x, 'host renders live authoritative physics, not its network copy');
+        held.push(phones[0].getFrame().cars.host.x);
+        smooth.push(phones[0].getRenderFrame().cars.host.x);
+      }
+    }
+    if (now >= nextEvent) {
+      const steer = ++n / 100;
+      event = { at: now, steer };
+      for (const phone of phones) phone.setInput({ ...throttle, steer });
+      nextEvent += 187 + (n * 19) % 71;
+    }
+    if (event && phones[0].getFrame()?.cars.p0?.steer === event.steer) {
+      latencies.push(now - event.at); event = null;
+      const ack = phones[0].getNetworkStats().inputAckMs;
+      if (ack !== null) acks.push(ack);
+    }
+  }
+  assert.equal(phones[0].getSnapshot().trackId, 'orbit');
+  assert.ok(acks.length > 30, 'consumed input acknowledgements arrive over the real session protocol');
+  assert.ok(phones[0].getNetworkStats().frameJitterMs > 0);
+  const elapsed = performance.now() - before;
+  const deltas = values => values.slice(1).map((x,i) => x-values[i]);
+  const deviation = values => { const mean = values.reduce((a,b) => a+b, 0)/values.length; return Math.sqrt(values.reduce((a,b) => a+(b-mean)**2, 0)/values.length); };
+  const result = { meanMs: latencies.reduce((a,b) => a+b, 0)/latencies.length,
+    p95Ms: [...latencies].sort((a,b) => a-b)[Math.floor(latencies.length*.95)], samples: latencies.length,
+    rawMotionJitter: deviation(deltas(held)), bufferedMotionJitter: deviation(deltas(smooth)), packetsPerPlayerSecond: packets/guests/17,
+    outboundKBPerSecond: bytes/1024/17, simulationMs: elapsed };
+  for (const phone of phones) phone.dispose(); host.dispose();
+  return result;
+}
+
+test('synthetic ten-player input-to-authoritative-frame latency beats timer-only baseline without raising snapshot rate', async t => {
+  const baseline = await syntheticRun(BaselineSession);
+  const improved = await syntheticRun(Beerio2Session);
+  t.diagnostic(JSON.stringify({ conditions: '10 players, 25ms each-way +/-12ms jitter, 60Hz host, unchanged 15Hz snapshots', baseline, improved }));
+  assert.ok(improved.meanMs < baseline.meanMs - 5, 'event-driven send measurably reduces input-to-visible-authority delay');
+  assert.ok(improved.p95Ms <= baseline.p95Ms, 'tail latency does not regress');
+  assert.ok(improved.bufferedMotionJitter < improved.rawMotionJitter * .6, 'remote buffer reduces frame-to-frame motion variance');
+  assert.ok(improved.packetsPerPlayerSecond < 30, 'held controls retain low-rate heartbeat');
+});
+
+
+test('rapid changed inputs stay below relay limit; a reset tap survives coalescing; legacy frames remain valid', () => {
+  let now = 0, onRoom, onState;
+  const messages = [];
+  const peer = {
+    subscribe(fn) { onRoom = fn; return () => {}; }, onAction() { return () => {}; },
+    onState(fn) { onState = fn; return () => {}; },
+    getSnapshot: () => ({ status: 'connected', role: 'player', playerId: 'p0', code: 'ABCDEF', hostConnected: true, players: [], error: null }),
+    join() { onRoom(); }, sendAction(payload) { messages.push({ at: now, payload }); }, leave() {}, dispose() {},
+  };
+  const phone = new Beerio2Session({ client: peer, now: () => now, autoTick: false });
+  phone.join('ABCDEF', 'Driver');
+  const frame = { protocol: 'madfun-beerio-2-v1', raceId: 1, tick: 1, phase: 'race', countdown: 0, elapsed: 0, totalLaps: 3,
+    players: [{ id: 'host', name: 'Host', color: '#ffffff', connected: true, ready: true },
+      { id: 'p0', name: 'Driver', color: '#ffffff', connected: true, ready: true }], cars: {}, results: [], rejected: [] };
+  assert.equal(validateFrame(frame), true, 'Seattle-only old host frames remain compatible');
+  assert.equal(validateFrame({ ...frame, trackId: 'unknown' }), false);
+  assert.equal(validateFrame({ ...frame, acknowledgements: { p0: { stream: 'x', seq: NaN } } }), false);
+  onState(frame);
+  phone.setInput(throttle);
+  now = 1; phone.setInput({ ...neutral, reset: true });
+  now = 2; phone.setInput(neutral);
+  now = 25; phone.advance();
+  assert.equal(messages.at(-1).payload.input.reset, true, 'one-frame reset must reach host even inside send cap');
+  for (now = 26; now < 2100; now++) {
+    if (now % 100 === 0) onState({ ...frame, tick: now });
+    phone.setInput({ ...throttle, steer: Math.sin(now) });
+    if (now % 16 === 0) phone.advance();
+  }
+  for (let from = 0; from < 1100; from++) {
+    assert.ok(messages.filter(m => m.at >= from && m.at < from + 1000).length <= 43,
+      'changing every millisecond still leaves headroom under 50 total relay messages/sec');
+  }
+  assert.equal(phone.getSnapshot().trackId, 'seattle');
+  phone.dispose();
 });

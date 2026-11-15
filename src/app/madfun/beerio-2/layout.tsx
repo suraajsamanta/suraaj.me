@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
 export const metadata: Metadata = {
-  title: 'Beerio 2 · Seattle Night',
-  description: 'Race the Seattle Night circuit solo or with friends. A separate 3D racer from Madfun.',
+  title: 'Beerio 2 · Afterhours Racing',
+  description: 'Race Seattle Night or Neon Orbit against AI, the clock, or friends. A separate 3D racer from Madfun.',
   robots: { index: false, follow: false },
 };
 

@@ -15,8 +15,8 @@ for (const name of ['course', 'drive']) {
   const result = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } });
   writeFileSync(join(output, `${name}.mjs`), result.outputText.replaceAll("'./course'", "'./course.mjs'"));
 }
-const { createDrivingWorld } = await import(pathToFileURL(join(output, 'drive.mjs')).href);
-const { course, locate, heading, ROAD_WIDTH } = await import(pathToFileURL(join(output, 'course.mjs')).href);
+const { createDrivingWorld, createSoloRace, indexRoad } = await import(pathToFileURL(join(output, 'drive.mjs')).href);
+const { course, locate, heading, ROAD_WIDTH, TRACKS } = await import(pathToFileURL(join(output, 'course.mjs')).href);
 const idle = () => ({ steer: 0, throttle: false, brake: false, drift: false, reset: false });
 const gas = () => ({ ...idle(), throttle: true });
 const flatWorld = () => createDrivingWorld({ sampleHeight: () => 0 });
@@ -196,4 +196,54 @@ test('production Rapier sampler works headlessly, follows elevated road, and fre
     assert.ok(driver.state.y > 15);
     assert.ok(Math.abs(driver.state.y - p.y) < 0.1);
   } finally { world.dispose(); world.dispose(); }
+});
+
+test('indexed nearest lookup matches a full scan for randomized near-track and off-track queries', (t) => {
+  let seed = 3741;
+  const random = () => ((seed = Math.imul(seed, 1664525) + 1013904223 | 0) >>> 0) / 2 ** 32;
+  for (const track of TRACKS) {
+    const lookup = indexRoad(track.points);
+    const queries = Array.from({ length: 8000 }, (_, i) => {
+      const a = track.points[i % track.points.length], range = i % 8 === 0 ? 400 : 16;
+      return [a.x + range * (random() - .5), a.z + range * (random() - .5)];
+    });
+    for (const [x, z] of queries) {
+      const a = lookup(x,z), b = locate(x,z,track.points);
+      assert.ok(Math.abs(a.distance - b.distance) < 1e-8);
+      assert.ok(Math.abs(a.y - b.y) < 1e-7);
+      assert.ok(Math.abs(a.progress - b.progress) < 1e-7);
+    }
+    const profile = fn => {
+      let sum = 0;
+      for (const [x,z] of queries) sum += fn(x,z).distance;
+      const start = performance.now();
+      for(let i=0;i<8;i++) for(const [x,z] of queries) sum += fn(x,z).distance;
+      assert.ok(sum > 0);
+      return performance.now() - start;
+    };
+    t.diagnostic(`${track.name} 64,000 lookups, full scan ${profile((x,z)=>locate(x,z,track.points)).toFixed(1)}ms vs indexed ${profile(lookup).toFixed(1)}ms`);
+  }
+});
+
+test('AI grid waits out countdown, stays on its selected WASM course, and completes three laps', async () => {
+  for (const track of TRACKS) {
+    const world = await createDrivingWorld({ trackId: track.id });
+    try {
+      const race = createSoloRace(world, track.id);
+      assert.equal(race.rivals.length, 3);
+      const start = { ...race.driver.state };
+      for(let i=0;i<179;i++) race.step(gas(), tick);
+      assert.deepEqual(race.driver.state, start);
+      assert.ok(race.status().countdown > 0);
+      for(let i=0;i<11_000;i++) race.step(idle(),tick);
+      assert.equal(race.driver.state.speed, 0);
+      assert.equal(race.status().place, 4);
+      for(const { driver } of race.rivals) {
+        assert.equal(driver.state.finished, true);
+        assert.equal(driver.state.lap, 3);
+        assert.ok(driver.state.finishTime > 0);
+        assert.ok(locate(driver.state.x,driver.state.z,track.points).distance < track.roadWidth / 2);
+      }
+    } finally { world.dispose(); }
+  }
 });

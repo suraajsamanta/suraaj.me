@@ -7,7 +7,7 @@ import { Scene } from '@babylonjs/core/scene.js';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector.js';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera.js';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight.js';
-import { course, roadTriangles } from './course.ts';
+import { course, roadTriangles, getTrack } from './course.ts';
 
 // Compile the isolated browser scene module without a DOM, WebGL, or generated files.
 const source = await readFile(new URL('./track.ts', import.meta.url), 'utf8');
@@ -54,4 +54,42 @@ test('Seattle scenery renders as a small static material batch set', () => {
   } finally {
     engine.dispose();
   }
+});
+
+
+test('Orbital set is distinct, finite, static, and aligned to its own collider', () => {
+  const engine = new NullEngine();
+  const scene = new Scene(engine);
+  try {
+    const config = getTrack('orbit');
+    const camera = new FreeCamera('camera', new Vector3(0, 18, -120), scene);
+    camera.setTarget(Vector3.Zero());
+    new HemisphericLight('light', Vector3.Up(), scene);
+    buildTrack(scene, config.points.map(p => new Vector3(p.x, p.y, p.z)), config.id);
+    scene.render();
+    assert.ok(scene.meshes.length <= 14, `orbital draw budget: ${scene.meshes.length}`);
+    assert.ok(scene.materials.some(m => m.name === 'orbit-planet-ocean'));
+    assert.ok(!scene.materials.some(m => m.name.startsWith('seattle-')));
+    for (const mesh of scene.meshes) {
+      assert.equal(mesh.isPickable, false);
+      assert.ok(mesh.isWorldMatrixFrozen);
+      assert.ok(mesh.getVerticesData('position').every(Number.isFinite));
+    }
+    const road = scene.meshes.find(m => m.material.name === 'orbit-racing-surface');
+    const positions = road.getVerticesData('position');
+    const physics = roadTriangles(config.points).positions;
+    assert.equal(positions.length, physics.length);
+    for (let i = 0; i < config.points.length; i++) {
+      for (let side = 0; side < 2; side++) {
+        for (let axis = 0; axis < 3; axis++) {
+          const visual = positions[i * 6 + side * 3 + axis];
+          const collider = physics[i * 6 + (1 - side) * 3 + axis];
+          assert.ok(Math.abs(visual - collider - (axis === 1 ? .025 : 0)) < .0001,
+            `orbital alignment at ${i}, side ${side}, axis ${axis}`);
+        }
+      }
+    }
+    assert.ok(road.getVerticesData('normal').filter((_, i) => i % 3 === 1).every(y => y > .8));
+    assert.ok(scene.meshes.reduce((sum, mesh) => sum + mesh.getTotalVertices(), 0) < 80000, 'mobile geometry budget');
+  } finally { engine.dispose(); }
 });

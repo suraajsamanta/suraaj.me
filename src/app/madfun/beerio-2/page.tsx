@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } fr
 import { Beerio2Session } from "./online";
 import RaceScreen, { type RaceBanner } from "./race-screen";
 import type { OnlineRaceView } from "./race";
+import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
 
 type Screen = "menu" | "solo" | "host" | "join";
@@ -27,7 +28,7 @@ function LobbyHeader() {
   return <header className={styles.top}>
     <Link className={styles.home} href="/madfun" aria-label="Back to Madfun"><span aria-hidden>‹</span> Madfun</Link>
     <h1>BEERIO<span>02</span></h1>
-    <span className={styles.edition}><i aria-hidden /><span>SEATTLE NIGHT</span></span>
+    <span className={styles.edition}><i aria-hidden /><span>AFTERHOURS RACING</span></span>
   </header>;
 }
 
@@ -35,6 +36,9 @@ export default function Beerio2Page() {
   const inviteCode = useSyncExternalStore(listenInvite, readInvite, serverInvite);
   const [choice, setChoice] = useState<Screen | null>(null);
   const [name, setName] = useState("");
+  const [trackId, setTrackId] = useState<TrackId>("seattle");
+  const [soloMode, setSoloMode] = useState<"race" | "time-trial">("race");
+  const selectedTrack = getTrack(trackId);
   const [typedCode, setTypedCode] = useState<string | null>(null);
   const [validation, setValidation] = useState("");
   const [shareStatus, setShareStatus] = useState("");
@@ -48,7 +52,9 @@ export default function Beerio2Page() {
   const connecting = room.status === "connecting" || room.status === "reconnecting" || room.loading;
   const onlineView = useMemo<OnlineRaceView | undefined>(() => seatId ? {
     id: seatId,
-    getFrame: () => session.getFrame(),
+    getFrame: session.getFrame,
+    getRenderFrame: session.getRenderFrame,
+    getNetworkStats: session.getNetworkStats,
     setInput: (input) => session.setInput(input),
   } : undefined, [seatId, session]);
 
@@ -86,7 +92,7 @@ export default function Beerio2Page() {
     setValidation("");
     setShareStatus("");
     void import("./race").catch(() => {});
-    if (screen === "host") void session.create(driver);
+    if (screen === "host") void session.create(driver, trackId);
     else session.join(code, driver);
   }
 
@@ -95,7 +101,7 @@ export default function Beerio2Page() {
     const url = inviteUrl(room.code);
     if (useShareSheet && navigator.share) {
       try {
-        await navigator.share({ title: "Beerio 2 · Seattle Night", text: "Join my Seattle Night race", url });
+        await navigator.share({ title: `Beerio 2 · ${getTrack(room.trackId).name}`, text: `Join my ${getTrack(room.trackId).name} race`, url });
         return;
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
@@ -110,9 +116,10 @@ export default function Beerio2Page() {
     }
   }
 
-  if (screen === "solo") return <RaceScreen exit={() => choose("menu")} />;
+  if (screen === "solo") return <RaceScreen trackId={trackId} mode={soloMode} exit={() => choose("menu")} />;
 
   if (inRoom && onlineView) {
+    const roomTrack = getTrack(room.trackId);
     const lobby = room.phase === "lobby";
     const results = room.phase === "results";
     const countdown = room.phase === "countdown";
@@ -126,15 +133,16 @@ export default function Beerio2Page() {
     } else if (!lobby && !results && (!hostAvailable || room.phase === "paused")) {
       banner = { label: "RACE PAUSED", title: "Reconnecting", detail: "Keep this screen open. Your seat is reserved briefly." };
     } else if (countdown) {
-      banner = { label: "SEATTLE NIGHT · GET READY", title: String(Math.max(1, Math.ceil(room.countdown))), countdown: true };
+      banner = { label: `${roomTrack.name.toUpperCase()} · GET READY`, title: String(Math.max(1, Math.ceil(room.countdown))), countdown: true };
     }
 
     const lobbyPanel = lobby && <section className={styles.roomPanel} aria-label="Race lobby">
       <div className={styles.kicker}><i aria-hidden /> PRIVATE GRID</div>
       <div className={styles.roomTop}>
-        <div><h2>Starting grid</h2><p>Seattle Night · Three laps</p></div>
+        <div><h2>Starting grid</h2><p>{roomTrack.name} · Three laps</p></div>
         <div className={styles.codeDisplay}><small>ROOM CODE</small><b>{room.code}</b></div>
       </div>
+      <div className={styles.lobbyCircuit}><TrackMap trackId={room.trackId} /><div><small>LOCKED CIRCUIT</small><strong>{roomTrack.name}</strong><span>{host ? "Your room, your circuit. Invite your rivals below." : "Circuit selected by your host. You’re on the same grid."}</span></div></div>
       <div className={styles.shareRow}>
         <button className={styles.secondaryAction} type="button" onClick={() => void share(true)}>Share invite</button>
         <button className={styles.secondaryAction} type="button" onClick={() => void share(false)}>Copy link</button>
@@ -155,7 +163,7 @@ export default function Beerio2Page() {
     </section>;
 
     const resultsPanel = results && <section className={styles.roomPanel} aria-label="Race results">
-      <div className={styles.kicker}><i aria-hidden /> SEATTLE NIGHT · FINAL</div>
+      <div className={styles.kicker}><i aria-hidden /> {roomTrack.name.toUpperCase()} · FINAL</div>
       <h2>Race results</h2>
       <ol className={styles.roster}>
         {placeItems.map((item, index) => <li key={item.id}>
@@ -166,13 +174,14 @@ export default function Beerio2Page() {
     </section>;
 
     const resumePanel = host && hostAvailable && room.phase === "paused" && <section className={styles.roomPanel} aria-label="Race paused">
-      <div className={styles.kicker}><i aria-hidden /> SEATTLE NIGHT</div>
+      <div className={styles.kicker}><i aria-hidden /> {roomTrack.name.toUpperCase()}</div>
       <h2>Race paused</h2>
       <p>Everyone can keep driving once you resume.</p>
       <button className={styles.primaryAction} type="button" onClick={() => session.setPaused(false)}>Resume race</button>
     </section>;
 
     return <RaceScreen
+      trackId={room.trackId}
       onlineView={onlineView}
       banner={banner}
       exit={leave}
@@ -182,38 +191,88 @@ export default function Beerio2Page() {
     />;
   }
 
-  return <main className={styles.shell}>
+  return <main className={`${styles.shell} ${styles.menuShell}`} data-track={trackId}>
     <LobbyHeader />
     <section className={styles.entryStage} aria-label="Beerio 2 start screen">
       <div className={styles.entryWrap}>
         <div className={styles.hero}>
-          <div className={styles.kicker}><i aria-hidden /> MADFUN MOTORSPORT</div>
-          <p className={styles.trackIndex}>CIRCUIT 01 / WASHINGTON</p>
-          <h2>SEATTLE<br /><em>NIGHT</em></h2>
-          <p className={styles.heroText}>Wet streets, neon corners, and your own cockpit. Drift through the city after dark.</p>
-          <div className={styles.heroTags}><span>10 DRIVER GRID</span><span>SOLO TIME TRIAL</span></div>
+          <div className={styles.heroEyebrow}><span className={styles.kicker}><i aria-hidden /> THE CITY IS YOUR CIRCUIT</span><span>VOL. 02</span></div>
+          <div className={styles.heroHeadline}><p className={styles.trackIndex}>{trackId === "seattle" ? "01 / PACIFIC NORTHWEST" : "02 / BEYOND THE CITY"}</p>
+            <h2>{trackId === "seattle" ? <>SEATTLE<br /><em>NIGHT.</em></> : <>NEON<br /><em>ORBIT.</em></>}</h2>
+          </div>
+          <CircuitArt trackId={trackId} />
+          <div className={styles.heroCaption}><span>{trackId === "seattle" ? "WET ASPHALT. CITY LIGHTS. FULL SEND." : "ELEVATED RIBBONS. ELECTRIC HORIZONS."}</span><span aria-hidden>↗</span></div>
         </div>
         {screen === "menu" ? <section className={styles.entryCard} aria-label="Choose race mode">
-          <div className={styles.kicker}>THE STARTING LINE</div>
-          <h2>Find your race</h2>
-          <p>Everyone drives on their own screen.</p>
-          <button className={styles.primaryAction} type="button" onClick={() => choose("host")}>Host &amp; drive <span aria-hidden>↗</span></button>
-          <button className={styles.secondaryAction} type="button" onClick={() => choose("join")}>Join a room <span aria-hidden>→</span></button>
-          <button className={styles.tertiaryAction} type="button" onClick={() => choose("solo")}>Solo time trial <span aria-hidden>›</span></button>
+          <div className={styles.cardEyebrow}><span className={styles.kicker}>YOUR NEXT GREEN LIGHT</span><span className={styles.livePill}>READY</span></div>
+          <h2>Make it a race.</h2>
+          <p>Chase the pack. Beat the clock.<br />Or settle it with your friends.</p>
+          <button className={`${styles.primaryAction} ${styles.raceAiAction}`} type="button" onClick={() => { setSoloMode("race"); choose("solo"); }}><span><b>Race AI</b><small>Jump in. Take on the grid.</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
+          <button className={styles.secondaryAction} type="button" onClick={() => { setSoloMode("time-trial"); choose("solo"); }}><span><b>Time trial</b><small>Just you and your best lap.</small></span><span className={styles.actionArrow} aria-hidden>→</span></button>
+          <div className={styles.modeDivider}><span>BETTER WITH RIVALS</span></div>
+          <div className={styles.onlineChoices}>
+            <button className={styles.secondaryAction} type="button" onClick={() => choose("host")}><span><b>Host &amp; drive</b><small>Create a private room</small></span><span aria-hidden>＋</span></button>
+            <button className={styles.secondaryAction} type="button" onClick={() => choose("join")}><span><b>Join a room</b><small>Enter an invite code</small></span><span aria-hidden>→</span></button>
+          </div>
+          <div className={styles.cardFoot}><span aria-hidden>◉</span> Up to 10 drivers · Every device is a cockpit</div>
         </section> : <form className={styles.entryCard} onSubmit={connect}>
           <button className={styles.backAction} type="button" onClick={() => { session.leave(); choose("menu"); }}>‹ All modes</button>
-          <h2>{screen === "host" ? "Host & drive" : "Join a room"}</h2>
-          <p>{screen === "host" ? "Create a private room, then invite friends to race." : "Enter a driver name and the code from your host."}</p>
-          <label>Driver name<input value={name} onChange={(event) => setName(event.target.value)} name="driver-name" autoComplete="nickname" placeholder="Your name" required maxLength={48} disabled={connecting} /></label>
-          {screen === "join" && <label>Room code<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label>}
+          <div className={styles.kicker}>{screen === "host" ? "BUILD YOUR STARTING GRID" : "YOUR SEAT IS WAITING"}</div>
+          <h2>{screen === "host" ? "Host & drive." : "Join the grid."}</h2>
+          <p>{screen === "host" ? "Create a private room, then share the invite. You race too." : "Same race. Your own screen. Enter the code from your host."}</p>
+          {screen === "host" ? <div className={styles.formCircuit}><TrackMap trackId={trackId} /><div><small>YOUR CIRCUIT</small><strong>{selectedTrack.name}</strong><span>Choose a circuit below before creating.</span></div></div> : <div className={styles.joinNote}>Your host’s circuit loads automatically.</div>}
+          <label>DRIVER NAME<input value={name} onChange={(event) => setName(event.target.value)} name="driver-name" autoComplete="nickname" placeholder="What should we call you?" required maxLength={48} disabled={connecting} /></label>
+          {screen === "join" && <label>ROOM CODE<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label>}
           {(validation || room.error) && <p className={styles.formError} role="alert">{validation || room.error}</p>}
           {connecting && <p className={styles.statusLine} role="status">Connecting to the race relay…</p>}
-          <button className={styles.primaryAction} type="submit" disabled={connecting}>{connecting ? "Connecting…" : screen === "host" ? "Create room" : "Join race"}</button>
+          <button className={styles.primaryAction} type="submit" disabled={connecting}>{connecting ? "Connecting…" : screen === "host" ? "Create room" : "Join race"}<span aria-hidden>↗</span></button>
+          <div className={styles.cardFoot}>No account. No download. Just race.</div>
         </form>}
+        <section className={styles.circuitSelector} aria-label="Select circuit">
+          <div className={styles.sectionLabel}><span>CHOOSE YOUR CIRCUIT</span><span>{screen === "join" ? "SOLO & HOST MODES" : "02 DESTINATIONS"}</span></div>
+          <div className={styles.circuitChoices}>{TRACKS.map((track, index) => <button key={track.id} type="button" className={styles.circuitChoice} aria-pressed={trackId === track.id} disabled={connecting} onClick={() => setTrackId(track.id)} data-circuit={track.id}>
+            <TrackMap trackId={track.id} />
+            <span className={styles.circuitCopy}><small>CIRCUIT 0{index + 1}</small><strong>{track.name}</strong><span>{track.id === "seattle" ? "City streets · Sweeping corners" : "Skyway · High-speed elevation"}</span></span>
+            <span className={styles.circuitSelected} aria-hidden>{trackId === track.id ? "✓" : "↗"}</span>
+          </button>)}</div>
+        </section>
+        <div className={styles.quickGuide}><div><span>01</span><p><b>Find your line</b>Arrows / WASD to drive</p></div><div><span>02</span><p><b>Hold the corner</b>Space to drift</p></div><div><span>03</span><p><b>Take it anywhere</b>Touch controls on mobile</p></div></div>
       </div>
     </section>
-    <footer className={styles.bottom}><span className={styles.mode}>BEERIO 02 <span>·</span> SEATTLE NIGHT</span><span className={styles.help}>NO ACCOUNT REQUIRED</span></footer>
+    <footer className={styles.bottom}><span className={styles.mode}>MADFUN MOTORSPORT <span> / </span> BEERIO 02</span><span className={styles.help}>BUILT FOR THE AFTERHOURS</span></footer>
   </main>;
+}
+
+function trackGeometry(trackId: TrackId) {
+  const points = getTrack(trackId).points;
+  const xs = points.map((point) => point.x), zs = points.map((point) => point.z);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+  const scale = 170 / Math.max(maxX - minX, maxZ - minZ);
+  const projected = points.map((point) => ({ x: (point.x - (minX + maxX) / 2) * scale, y: (point.z - (minZ + maxZ) / 2) * scale }));
+  const path = projected.map((point, i) => `${i ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ") + "Z";
+  const first = projected[0], before = projected[projected.length - 1], after = projected[1];
+  const dx = after.x - before.x, dy = after.y - before.y, length = Math.hypot(dx, dy) || 1;
+  const nx = -dy / length * 9, ny = dx / length * 9;
+  return { path, gate: `M${first.x - nx},${first.y - ny}L${first.x + nx},${first.y + ny}` };
+}
+function trackPath(trackId: TrackId) { return trackGeometry(trackId).path; }
+
+function TrackMap({ trackId }: { trackId: TrackId }) {
+  const geometry = trackGeometry(trackId);
+  return <svg className={styles.trackMap} viewBox="-104 -104 208 208" aria-hidden="true"><path d={geometry.path} fill="none" stroke="currentColor" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" /><path d={geometry.gate} stroke="#f1f5ff" strokeWidth="4" /></svg>;
+}
+
+function CircuitArt({ trackId }: { trackId: TrackId }) {
+  const orbit = trackId === "orbit";
+  return <svg className={styles.circuitArt} viewBox="0 0 660 390" aria-hidden="true">
+    <defs><linearGradient id="b2-road" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#314451" /><stop offset="1" stopColor="#0d1824" /></linearGradient><linearGradient id="b2-car" x1="0" y1="0" x2="0.6" y2="1"><stop stopColor="#e4ff8a" /><stop offset="1" stopColor="#709b38" /></linearGradient><radialGradient id="b2-halo"><stop stopColor={orbit ? "#af61ff" : "#57e2ce"} stopOpacity=".25" /><stop offset="1" stopColor="#121a24" stopOpacity="0" /></radialGradient></defs>
+    <ellipse cx="360" cy="230" rx="320" ry="160" fill="url(#b2-halo)" />
+    {[0, 1, 2, 3, 4, 5, 6].map((line) => <path key={line} d={`M${60 + line * 78} 100L${-50 + line * 110} 390M0 ${160 + line * 37}H660`} stroke="#8bb6d4" strokeOpacity=".055" />)}
+    {orbit ? <g fill="none" stroke="#be84ff"><ellipse cx="444" cy="132" rx="128" ry="45" transform="rotate(-28 444 132)" strokeWidth="1" opacity=".6" /><ellipse cx="444" cy="132" rx="106" ry="31" transform="rotate(-28 444 132)" strokeWidth="9" opacity=".12" /><circle cx="491" cy="103" r="39" fill="#392247" strokeWidth="1" /><path d="M230 176L260 19M574 251L603 109" opacity=".35" /></g> : <g opacity=".7">{[ [266,149,25,69], [303,122,32,88], [465,105,28,90], [506,152,36,62], [550,130,25,79] ].map(([x,y,w,h],i)=><g key={i}><path d={`M${x} ${y}l${w} -10v${h}l-${w} 10Z`} fill="#182c36" /><path d={`M${x+w} ${y-10}l14 8v${h}l-14 -8Z`} fill="#0e1b26" />{[0,1,2,3].map(n=><path key={n} d={`M${x+5} ${y+12+n*12}l${w-10} -6`} stroke="#65a9ab" strokeWidth="2" opacity=".7" />)}</g>)}<path d="M407 198L419 52L432 198M402 198L419 66L437 198" fill="none" stroke="#5b7a85" strokeWidth="4" /><path d="M390 65Q419 47 448 65L440 73H398Z" fill="#7b99a3" /><path d="M419 49V28" stroke="#8ab0b6" strokeWidth="2" /><path d="M393 66H445" stroke="#d0e98e" strokeWidth="2" /></g>}
+    <g transform="translate(360 249) rotate(-15) scale(2.65 1.05)"><path d={trackPath(trackId)} fill="none" stroke="#040b14" strokeWidth="21" transform="translate(0 9)" /><path d={trackPath(trackId)} fill="none" stroke={orbit ? "#bd7dff" : "#8cbeb6"} strokeWidth="20" opacity=".7" /><path d={trackPath(trackId)} fill="none" stroke="url(#b2-road)" strokeWidth="17" /><path d={trackPath(trackId)} fill="none" stroke="#c2e0d0" strokeWidth=".6" strokeDasharray="4 6" opacity=".55" /></g>
+    <g transform="translate(372 303) rotate(-15)"><ellipse cx="0" cy="12" rx="72" ry="19" fill="#030913" opacity=".7" /><path d="M-66 8L-65 -4L-40 -12L15 -12L59 -1L66 10L38 23L-45 23Z" fill="#17212b" /><path d="M-66 3L-49 -15L-12 -20L36 -12L61 1L43 16L-42 16Z" fill="url(#b2-car)" /><path d="M-27 -17L-13 -29L15 -29L35 -12L19 -5L-20 -6Z" fill="#97be66" /><path d="M-13 -26H12L27 -13L-19 -11Z" fill="#132c35" /><path d="M-64 3L-44 6M43 6L61 1" stroke="#e8ffdf" strokeWidth="4" /><path d="M-46 -12L-66 -14M-66 -14V-6" stroke="#d6f596" strokeWidth="4" /><path d="M-30 15L29 15" stroke="#c9e982" strokeWidth="3" /><path d="M-60 17L-49 20M41 18L52 14" stroke="#0a101a" strokeWidth="8" /></g>
+    <path d="M199 331L294 306M161 347L280 316M452 280L551 252" stroke={orbit ? "#c38cff" : "#d0f89a"} strokeOpacity=".4" strokeWidth="2" />
+  </svg>;
 }
 
 function RoomQr({ code }: { code: string }) {

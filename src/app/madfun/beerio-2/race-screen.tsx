@@ -1,8 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
-import type { OnlineRaceView, RaceHud, RaceInput } from "./race";
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import type { OnlineRaceView, RaceHud, RaceInput, RaceSettings } from "./race";
+import { getTrack, type TrackId } from "./course";
+import raceUi from "./race-ui.module.css";
 import styles from "./beerio2.module.css";
 
 type Pedal = "throttle" | "brake" | "drift";
@@ -19,20 +20,34 @@ function clock(seconds: number) {
 }
 
 export type RaceBanner = { label: string; title: string; detail?: string; countdown?: boolean };
-type RaceScreenProps = { onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
-export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel }: RaceScreenProps) {
+type RaceScreenProps = { trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
+export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
   const live = !!onlineView;
+  const soloGrid = !live && mode === "race";
+  const track = getTrack(trackId);
 
   const frame = onlineView?.getFrame();
   const finished = !!onlineView && !!frame?.cars[onlineView.id]?.finished;
-  const driving = racing && !finished;
-  const driveEnabled = useRef(driving);
+  const driveEnabled = useRef(racing && !finished);
   const canvas = useRef<HTMLCanvasElement>(null);
   const input = useRef<RaceInput>({ steer: 0, throttle: false, brake: false, drift: false, reset: false });
   const keys = useRef(new Set<string>());
-  const wheel = useRef<{ pointer: number; steer: number } | null>(null);
+  const wheel = useRef<{ pointer: number; steer: number; center: number; span: number } | null>(null);
+  const wheelKnob = useRef<HTMLSpanElement>(null);
+  const soundSettings = useRef<RaceSettings>({});
+  const [muted, setMuted] = useState(false);
+  const [bestLocal, setBestLocal] = useState<number | null>(null);
+  const map = useMemo(() => {
+    const x0 = Math.min(...track.points.map(p => p.x)), x1 = Math.max(...track.points.map(p => p.x));
+    const z0 = Math.min(...track.points.map(p => p.z)), z1 = Math.max(...track.points.map(p => p.z));
+    const scale = 67 / Math.max(x1 - x0, z1 - z0, 1);
+    const x = (value: number) => 40 + (value - (x0 + x1) / 2) * scale;
+    const y = (value: number) => 40 - (value - (z0 + z1) / 2) * scale;
+    return { x, y, outline: track.points.map(p => `${x(p.x).toFixed(1)},${y(p.z).toFixed(1)}`).join(" ") };
+  }, [track]);
   const pedals = useRef<Record<Pedal, number | null>>({ throttle: null, brake: null, drift: null });
   const [hud, setHud] = useState(DEFAULT_HUD);
+  const driving = racing && !finished && !(soloGrid && hud.soloRace?.finished);
   const [controls, setControls] = useState({ steer: 0, throttle: false, brake: false, drift: false });
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -43,6 +58,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
     if (driving) return;
     keys.current.clear();
     wheel.current = null;
+    wheelKnob.current?.style.setProperty("--steer", "0%");
     pedals.current = { throttle: null, brake: null, drift: null };
     Object.assign(input.current, { steer: 0, throttle: false, brake: false, drift: false, reset: false });
     onlineView?.setInput(input.current);
@@ -58,21 +74,40 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
       brake: pedals.current.brake !== null || isDown(...PEDAL_KEYS.brake, "focus-brake"),
       drift: pedals.current.drift !== null || isDown(...PEDAL_KEYS.drift, "focus-drift"),
     };
+    const changed = next.steer !== input.current.steer || next.throttle !== input.current.throttle
+      || next.brake !== input.current.brake || next.drift !== input.current.drift;
+    if (!changed) return;
+    const pedalsChanged = next.throttle !== input.current.throttle || next.brake !== input.current.brake || next.drift !== input.current.drift;
     Object.assign(input.current, next);
-    setControls(next);
-    if (next.throttle) setMoved(true);
+    wheelKnob.current?.style.setProperty("--steer", `${next.steer * 65}%`);
+    if (driveEnabled.current) onlineView?.setInput(input.current);
+    if (pedalsChanged) setControls(next);
+    if (next.throttle && pedalsChanged) setMoved(true);
   }
 
   useEffect(() => {
     const target = canvas.current;
     if (!target) return;
+    let restore = 0;
+    try {
+      const saved = Number(localStorage.getItem(`beerio2-best-v1:${trackId}`));
+      const startsMuted = localStorage.getItem("beerio2-muted") === "true";
+      soundSettings.current.muted = startsMuted;
+      restore = requestAnimationFrame(() => {
+        setMuted(startsMuted);
+        setBestLocal(Number.isFinite(saved) && saved > 0 ? saved : null);
+      });
+    } catch {}
+    soundSettings.current.trackId = trackId;
+    soundSettings.current.mode = mode;
+    soundSettings.current.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let cancelled = false;
     let dispose: (() => void) | undefined;
     void import("./race").then(({ startRace }) => {
       if (cancelled) return;
       return startRace(target, input.current, (next) => {
         if (!cancelled) setHud(next);
-      }, onlineView).then((stop) => {
+      }, onlineView, soundSettings.current).then((stop) => {
         if (cancelled) stop();
         else dispose = stop;
       });
@@ -82,8 +117,15 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
         setError(cause instanceof Error ? cause.message : "Unknown graphics error");
       }
     });
-    return () => { cancelled = true; dispose?.(); };
-  }, [retry, onlineView]);
+    return () => { cancelled = true; cancelAnimationFrame(restore); dispose?.(); };
+  }, [retry, onlineView, trackId, mode]);
+
+  useEffect(() => {
+    if (live || soloGrid || hud.best === null || (bestLocal !== null && hud.best >= bestLocal)) return;
+    try { localStorage.setItem(`beerio2-best-v1:${trackId}`, String(hud.best)); } catch {}
+    const id = requestAnimationFrame(() => setBestLocal(hud.best));
+    return () => cancelAnimationFrame(id);
+  }, [live, soloGrid, hud.best, bestLocal, trackId]);
 
   useEffect(() => {
     function keyDown(event: KeyboardEvent) {
@@ -119,17 +161,22 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
       document.removeEventListener("visibilitychange", clear);
       window.removeEventListener("blur", clear);
     };
-  }, [live]);
+    // The hardware input callback must follow a new online session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, onlineView]);
 
   function steer(event: PointerEvent<HTMLButtonElement>, start = false) {
     if (start) {
       if (!driveEnabled.current || wheel.current || event.button !== 0) return;
       event.currentTarget.setPointerCapture(event.pointerId);
-    } else if (wheel.current?.pointer !== event.pointerId) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const offset = (event.clientX - rect.left - rect.width / 2) / (rect.width * .37);
-    const amount = Math.sign(offset) * Math.max(0, Math.min(1, (Math.abs(offset) - .10) / .90));
-    wheel.current = { pointer: event.pointerId, steer: amount };
+      const rect = event.currentTarget.getBoundingClientRect();
+      wheel.current = { pointer: event.pointerId, steer: 0, center: rect.left + rect.width / 2, span: Math.max(1, rect.width * .36) };
+    }
+    const current = wheel.current;
+    if (!current || current.pointer !== event.pointerId) return;
+    const offset = (event.clientX - current.center) / current.span;
+    const unit = Math.max(0, Math.min(1, (Math.abs(offset) - .07) / .93));
+    current.steer = Math.sign(offset) * unit ** 1.2;
     sync();
   }
 
@@ -151,13 +198,21 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
     if (keys.current.delete(`focus-${name}`)) sync();
   }
 
-  const visibleBanner = banner ?? (frame?.phase === "race" && (finished ? {
+  const soloStatus = hud.soloRace;
+  const soloFinished = soloGrid && soloStatus?.finished === true;
+  const showCountdown = soloGrid && soloStatus && soloStatus.countdown > 0;
+  const startAgain = () => { setHud(DEFAULT_HUD); setMoved(false); setRetry(v => v + 1); };
+  const visibleBanner = banner ?? (showCountdown ? {
+    label: track.name.toUpperCase(), title: String(Math.ceil(soloStatus.countdown)), countdown: true,
+  } : undefined) ?? (frame?.phase === "race" && (finished ? {
     label: "FINISH LINE", title: "Race complete", detail: "Waiting for the remaining drivers.",
-  } : frame.elapsed < .65 ? { label: "SEATTLE NIGHT", title: "GO!", countdown: true } : undefined)) ?? undefined;
+  } : frame.elapsed < .65 ? { label: track.name.toUpperCase(), title: "GO!", countdown: true } : undefined)) ?? undefined;
   const order = frame ? Object.entries(frame.cars).sort(([idA, a], [idB, b]) =>
     ((a.finishTime ?? Infinity) - (b.finishTime ?? Infinity)) || b.progress - a.progress || idA.localeCompare(idB)
   ) : [];
   const place = order.findIndex(([id]) => id === onlineView?.id);
+  const stats = onlineView?.getNetworkStats?.();
+  const shownBest = hud.best === null ? bestLocal : bestLocal === null ? hud.best : Math.min(hud.best, bestLocal);
   const onlinePlace = frame?.phase === "lobby" || place < 0 ? "—" : `${place + 1}/${order.length}`;
 
   return (
@@ -165,26 +220,33 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
       <header className={styles.top}>
         {live
           ? <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label="Leave online race"><span aria-hidden>‹</span> Exit</button>
-          : <Link className={styles.home} href="/madfun" aria-label="Back to Madfun"><span aria-hidden>‹</span> Madfun</Link>}
+          : <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label="Back to Beerio 2 garage"><span aria-hidden>‹</span> Garage</button>}
         <h1>BEERIO<span>02</span></h1>
-        <span className={styles.edition}><i aria-hidden /> <span>{live ? "ONLINE RACE" : "TIME TRIAL"}</span></span>
+        <span className={styles.edition}><i aria-hidden /> <span>{live ? "ONLINE RACE" : soloGrid ? "RACE AI" : "TIME TRIAL"}</span></span>
       </header>
-      <section className={styles.stage} aria-label={live ? "Seattle Night online race" : "Seattle Night time trial"}>
+      <section className={styles.stage} data-course={trackId} aria-label={`${track.name} ${live ? "online race" : soloGrid ? "AI race" : "time trial"}`}>
         <canvas key={retry} ref={canvas} className={styles.canvas} aria-label="Live 3D race view" />
         <div className={styles.vignette} aria-hidden />
         <div className={styles.telemetry} aria-label="Lap and time">
-          <div className={styles.track}><span className={styles.marker} aria-hidden>◆</span><span>SEATTLE NIGHT<small>CIRCUIT 01</small></span></div>
+          <div className={styles.track}><span className={styles.marker} aria-hidden>◆</span><span>{track.name.toUpperCase()}<small>{trackId === "orbit" ? "CIRCUIT 02" : "CIRCUIT 01"}</small></span></div>
           <div className={styles.timing}>
-            <div><small>LAP</small><b>{String(hud.lap).padStart(2, "0")}{laps ? `/${laps}` : ""}</b></div>
+            <div><small>LAP</small><b>{String(hud.lap).padStart(2, "0")}{laps || soloGrid ? `/${laps ?? 3}` : ""}</b></div>
             <div><small>TIME</small><b>{clock(hud.seconds)}</b></div>
-            <div><small>{live ? "PLACE" : "BEST"}</small><b>{live ? onlinePlace : hud.best === null ? "—" : clock(hud.best)}</b></div>
+            <div><small>{live || soloGrid ? "PLACE" : "BEST"}</small><b>{live ? onlinePlace : soloGrid ? (soloStatus ? `${soloStatus.place}/${soloStatus.total}` : "—") : shownBest === null ? "—" : clock(shownBest)}</b></div>
           </div>
         </div>
+        {!!hud.renderer && <svg className={raceUi.minimap} viewBox="0 0 80 80" aria-label="Circuit map" role="img">
+          <polygon points={map.outline} className={raceUi.mapOutline}/>
+          <polygon points={map.outline} className={raceUi.mapLine}/>
+          <rect x={map.x(track.points[0].x) - 2} y={map.y(track.points[0].z) - 2} width="4" height="4" fill="white" opacity=".75"/>
+          {(hud.map ?? []).map(mark => <circle key={mark.id} cx={map.x(mark.x)} cy={map.y(mark.z)} r={mark.own ? 3.4 : 2.25} fill={mark.own ? "#fff" : mark.color ?? "#82edff"} stroke="#071024" strokeWidth="1.2"/>)}
+        </svg>}
         <div className={styles.speed} aria-label={`${Math.round(hud.speed)} miles per hour`}>
           <b>{String(Math.max(0, Math.round(hud.speed))).padStart(2, "0")}</b><span>MPH</span>
           <span className={hud.boost ? styles.boostOn : styles.boostOff}>↯ BOOST</span>
+          {!!hud.driftCharge && !hud.boost && <span className={raceUi.driftCharge} aria-label="Drift boost charge"><i style={{width: `${Math.min(100, hud.driftCharge * 100)}%`}}/></span>}
         </div>
-        {!live && !moved && hud.renderer && !error && <p className={styles.startHint}>Hold <strong>Gas</strong> to start<span className={styles.keysOnly}> <span aria-hidden>·</span> ↑ or W</span></p>}
+        {!live && !soloGrid && !moved && hud.renderer && !error && <p className={styles.startHint}>Hold <strong>Gas</strong> to start<span className={styles.keysOnly}> <span aria-hidden>·</span> ↑ or W</span></p>}
         <div className={styles.controls} aria-label="Race controls" data-disabled={driving ? undefined : true}>
           <div className={styles.wheelWrap}>
             <button type="button" className={styles.wheel} disabled={!driving} aria-label="Steer left or right. Drag horizontally or use the arrow keys."
@@ -192,7 +254,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
               onPointerUp={releaseSteer} onPointerCancel={releaseSteer} onLostPointerCapture={releaseSteer}
               onKeyDown={(event) => { if (event.key === " " || event.key === "Enter") event.preventDefault(); }}>
               <span className={styles.wheelTicks} aria-hidden>‹ <span>›</span></span>
-              <span className={styles.wheelKnob} aria-hidden style={{ transform: `translateX(${controls.steer * 55}%)` }}><i/><i/><i/></span>
+              <span className={styles.wheelKnob} aria-hidden ref={wheelKnob} style={{ transform: "translateX(var(--steer, 0%))" }}><i/><i/><i/></span>
             </button>
             <span className={styles.controlLabel} aria-hidden>STEERING</span>
           </div>
@@ -228,7 +290,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
         {visibleBanner && !error && <div className={`${styles.raceBanner} ${visibleBanner.countdown ? styles.countdownBanner : ""}`} role="status" aria-live="polite">
           <span>{visibleBanner.label}</span><strong key={visibleBanner.title}>{visibleBanner.title}</strong>{visibleBanner.detail && <small>{visibleBanner.detail}</small>}
         </div>}
-        {!panel && !visibleBanner && !hud.renderer && !error && <div className={styles.notice} role="status"><i /> Loading Seattle Night…</div>}
+        {!panel && !visibleBanner && !hud.renderer && !error && <div className={styles.notice} role="status"><i /> Loading {track.name}…</div>}
         {error && <div className={`${styles.notice} ${styles.error}`} role="alert">
           <strong>Couldn’t start the 3D engine.</strong>
           <span>{error}</span>
@@ -240,14 +302,30 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
             setError(""); setHud(DEFAULT_HUD); setMoved(false); setRetry((v) => v + 1);
           }}>Use compatibility renderer</button>
         </div>}
+        {soloFinished && !error && <div className={raceUi.finish} role="status">
+          <small>CHECKERED FLAG · {track.name.toUpperCase()}</small>
+          <strong>{soloStatus.place === 1 ? "You win" : `P${soloStatus.place} finish`}</strong>
+          <span>Best lap {hud.best === null ? "—" : clock(hud.best)}</span>
+          <button type="button" onClick={startAgain}>Race again</button>
+          <button type="button" onClick={exit}>Back to garage</button>
+        </div>}
         {panel && <div className={styles.racePanel}>{panel}</div>}
       </section>
       <footer className={styles.bottom}>
         <span className={styles.mode}>{live ? "ONLINE RACE" : "SOLO RUN"} <span>·</span> {hud.renderer || "3D"}</span>
+        <span className={raceUi.connection} title="FPS and applied-input round-trip time">
+          {!!hud.fps && `${hud.fps} FPS`}{stats?.inputAckMs != null && `  ·  ${Math.round(stats.inputAckMs)} ms input`}
+        </span>
         <span className={styles.help}>WASD / arrows <span>·</span> Space to drift</span>
         <div className={styles.raceActions}>
-          {!live && <button className={styles.reset} type="button" onClick={() => { input.current.reset = true; }} aria-label="Reset car to track">↺ Reset</button>}
-          <button className={styles.reset} type="button" onClick={exit}>{live ? "Leave room" : "Exit trial"}</button>
+          <button className={styles.reset} type="button" aria-pressed={muted} onClick={() => {
+            const next = !muted;
+            soundSettings.current.muted = next;
+            setMuted(next);
+            try { localStorage.setItem("beerio2-muted", String(next)); } catch {}
+          }}>{muted ? "Sound off" : "Sound on"}</button>
+          {!live && !soloGrid && <button className={styles.reset} type="button" onClick={() => { input.current.reset = true; }} aria-label="Reset car to track">↺ Reset</button>}
+          <button className={styles.reset} type="button" onClick={exit}>{live ? "Leave room" : "Garage"}</button>
         </div>
       </footer>
     </main>

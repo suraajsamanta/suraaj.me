@@ -9,3 +9,11 @@ Seattle Night is separate from the original game. Its web route is `/madfun/beer
 5. Record what passed, the renderer, and what was never exercised. Browser emulation does not certify physical touch controls or GPU stability.
 
 The solo prototype was exercised in Chromium’s software view on desktop and at phone width. The current online suite uses isolated relay rooms and checks concurrent races, the ten-driver cap, reconnecting, the wrong-game-code path, three complete laps with real WASM physics, results, and rematches. Neither accelerated rendering nor a physical phone session is verified by these tests.
+
+## Neon Orbit upgrade
+
+- **Renderer:** Seattle Night and Neon Orbit both support WebGPU, WebGL 2 and the CPU compatibility view. GPU view adapts pixel density to frame time. Check distant/nearby rival LOD and wheel animation, orbital gates and planet, boost trail and drift sparks; use reduced-motion preference to confirm streak/lean reduction.
+- **Input:** Try portrait and landscape. Hold Gas and drag the steering pad with separate fingers; add Drift, release it after the meter fills and check the boost and sound. Repeat with keyboard and background/restore. Sound starts after a trusted gesture and is independently mutable. Input Ack is elapsed send → host applies input → returned snapshot, not network ping.
+- **Solo:** Try both circuits in Time Trial (reset retains circuit-specific best); then Race AI, verify countdown, grid and finish/rematch. AI and guests use the actual three-lap WASM simulation.
+- **Online:** Host chooses the circuit; invite opens the same circuit on guest. Room protocol and shared relay are unchanged. Host draws its authoritative 60 Hz state without waiting for its own snapshot. Guests use the latest authoritative own-car pose; only rivals use a 100 ms smoothing buffer. Active matches stay in their original browser session.
+- **Benchmarks:** Deterministic 10-driver simulation, 25 ms each way with ±12 ms jitter: input-to-authoritative-update mean 107 → 90 ms, p95 160 → 126 ms (54 events); snapshot rate remains 15 Hz. Loopback integration verified 10 drivers connected and receiving frames. NullEngine geometry audit: hero 54 → 27 draw-ready meshes, rivals 9 → 6 near / 1 far. These are synthetic / headless measurements, not claims about gameplay FPS or latency on a real phone.
