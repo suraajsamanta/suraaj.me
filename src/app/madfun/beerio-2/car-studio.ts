@@ -8,11 +8,12 @@ import { CreateCylinder } from '@babylonjs/core/Meshes/Builders/cylinderBuilder'
 import { CreateTorus } from '@babylonjs/core/Meshes/Builders/torusBuilder';
 import { CreateDisc } from '@babylonjs/core/Meshes/Builders/discBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { buildCar } from './car';
+import { buildRide } from './rides';
+import type { RideSelection } from './ride-selection';
 import { makeEngine } from './graphics';
 
 const mixAngle = (from: number, to: number) => Math.atan2(Math.sin(to-from), Math.cos(to-from));
-export async function startStudio(canvas: HTMLCanvasElement, state: { angle: number; paint: string; reduced: boolean }, compatibility: boolean) {
+export async function startStudio(canvas: HTMLCanvasElement, state: { angle: number; paint: string; reduced: boolean; ride: RideSelection }, compatibility: boolean) {
   const { engine, renderer, software } = await makeEngine(canvas, 'seattle', true, compatibility);
   let scene: Scene | undefined;
   let resizeObserver: ResizeObserver | undefined;
@@ -23,7 +24,7 @@ export async function startStudio(canvas: HTMLCanvasElement, state: { angle: num
     const stage = software ? undefined : new Scene(engine);
     scene = stage;
     const camera = stage ? new FreeCamera('studio', cameraPosition.clone(), stage) : undefined;
-    const car = stage ? buildCar(stage, true) : undefined;
+    let car = stage ? buildRide(stage, state.ride, state.paint, true) : undefined;
     if (stage && camera) {
       stage.clearColor = Color4.FromHexString('#111824ff');
       stage.ambientColor = new Color3(.65,.69,.82);
@@ -58,6 +59,7 @@ export async function startStudio(canvas: HTMLCanvasElement, state: { angle: num
       shadowMat.alpha = .57; shadow.material = shadowMat;
     }
     let changed = true, shown = state.angle * Math.PI / 180, color = '';
+    let rideKey = JSON.stringify(state.ride);
     const resize = () => {
       const scale = Math.min(1.65, window.devicePixelRatio || 1);
       if (software) {
@@ -70,6 +72,13 @@ export async function startStudio(canvas: HTMLCanvasElement, state: { angle: num
     resizeObserver.observe(canvas); resize();
     engine.runRenderLoop(() => {
       if (document.hidden) return;
+      const nextRideKey = JSON.stringify(state.ride);
+      if (rideKey !== nextRideKey) {
+        rideKey = nextRideKey;
+        car?.dispose(false, true);
+        car = stage ? buildRide(stage, state.ride, state.paint, true) : undefined;
+        changed = true;
+      }
       const diff = mixAngle(shown, state.angle * Math.PI / 180);
       if (!changed && color === state.paint && Math.abs(diff) < .0014) return;
       shown += Math.abs(diff) < .004 || state.reduced ? diff : diff * .16;
@@ -83,7 +92,7 @@ export async function startStudio(canvas: HTMLCanvasElement, state: { angle: num
       const radius = portrait ? 9.6 : 7.2;
       cameraPosition.set(Math.sin(shown)*radius,portrait ? 2.95 : 3.15,-Math.cos(shown)*radius);
       if (camera) { camera.position.copyFrom(cameraPosition); camera.fov = portrait ? .86 : .68; camera.setTarget(look); }
-      if (software) software({ x:0, y:0, z:0, yaw:0, boost:false, color, camera:cameraPosition, look, speed:0, reducedMotion:true });
+      if (software) software({ x:0, y:0, z:0, yaw:0, boost:false, color, ride:state.ride, camera:cameraPosition, look, speed:0, reducedMotion:true });
       else stage?.render();
     });
     return { renderer, dispose };

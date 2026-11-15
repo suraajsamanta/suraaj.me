@@ -1,6 +1,7 @@
 "use client";
 
 import { PartyClient, type PartyAction, type PartySnapshot } from '../shared/party-client';
+import { DEFAULT_RIDE, validRide, type RideSelection } from './ride-selection';
 import type { TrackId } from './course';
 import type { CarState, DriveInput, createDrivingWorld } from './drive';
 
@@ -10,7 +11,7 @@ export const TOTAL_LAPS = 3;
 export const RACE_MAX_SECONDS = 600;
 export const FINISH_GRACE_SECONDS = 60;
 export type Beerio2Phase = 'lobby' | 'countdown' | 'race' | 'paused' | 'results';
-export type Beerio2Player = { id: string; name: string; color: string; connected: boolean; ready: boolean };
+export type Beerio2Player = { id: string; name: string; color: string; connected: boolean; ready: boolean; ride?: RideSelection };
 export type Beerio2Result = { id: string; name: string; time: number | null };
 export type Beerio2Frame = {
   protocol: typeof BEERIO2_PROTOCOL; raceId: number; tick: number; phase: Beerio2Phase;
@@ -66,7 +67,7 @@ export function validateFrame(value: unknown): value is Beerio2Frame {
   const ids = new Set<string>();
   for (const p of value.players) {
     if (!object(p) || !validId(p.id) || ids.has(p.id) || typeof p.name !== 'string' || p.name.length > 128 ||
-      typeof p.color !== 'string' || !/^#[a-fA-F0-9]{6}$/.test(p.color) || typeof p.connected !== 'boolean' || typeof p.ready !== 'boolean') return false;
+      typeof p.color !== 'string' || !/^#[a-fA-F0-9]{6}$/.test(p.color) || typeof p.connected !== 'boolean' || typeof p.ready !== 'boolean' || (p.ride !== undefined && !validRide(p.ride))) return false;
     ids.add(p.id);
   }
   if (!ids.has('host') || Object.keys(value.cars).length > 10 || !Object.entries(value.cars).every(([id, c]) => ids.has(id) && validCar(c))) return false;
@@ -112,6 +113,8 @@ export class Beerio2Session {
   private verified = false;
   private connectedAt = 0;
   private hostName = 'Host';
+  private localRide: RideSelection = DEFAULT_RIDE;
+  private playerRides = new Map<string, RideSelection>();
   private generation = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
   private unsubscribes: Array<() => void>;
@@ -164,8 +167,9 @@ export class Beerio2Session {
     this.lastTick = this.now();
     if (!this.timer && this.autoTick) this.timer = setInterval(this.advance, 1000 / 60);
   }
-  create = (name = 'Host', trackId: TrackId = 'seattle') => {
+  create = (name = 'Host', trackId: TrackId = 'seattle', ride: RideSelection = DEFAULT_RIDE) => {
     this.leave();
+    this.localRide = validRide(ride) ? { ...ride } : DEFAULT_RIDE;
     this.hostName = name.trim().slice(0, 64) || 'Host';
     this.update({ role: 'host', loading: true, trackId: trackId === 'orbit' ? 'orbit' : 'seattle' });
     this.run();
@@ -179,11 +183,12 @@ export class Beerio2Session {
       this.publish(true);
     }).catch(() => { if (generation === this.generation) this.fail('Could not start the driving physics. Please create a new room.'); });
   };
-  join = (code: string, name: string) => {
+  join = (code: string, name: string, ride: RideSelection = DEFAULT_RIDE) => {
     if (!/^[A-HJ-NP-Z2-9]{6}$/.test(code.trim().toUpperCase()) || !name.trim() || Array.from(name.trim()).length > 64 || /[\p{Cc}\p{Cf}]/u.test(name)) {
       this.update({ error: 'Enter a name (up to 64 characters) and the six-character room code.' }); return;
     }
     this.leave();
+    this.localRide = validRide(ride) ? { ...ride } : DEFAULT_RIDE;
     this.update({ role: 'player' });
     this.run();
     this.client.join(code, name.trim(), 'simulator');
@@ -223,7 +228,7 @@ export class Beerio2Session {
       error: room.role === 'judge' && room.error?.includes('Judge link') ? 'This TV link is invalid or another TV is already connected.' : room.error });
     if (host) {
       const known = new Set(room.players.map(p => p.id));
-      for (const id of this.accepted.keys()) if (!known.has(id)) this.accepted.delete(id);
+      for (const id of this.accepted.keys()) if (!known.has(id)) { this.accepted.delete(id); this.playerRides.delete(id); }
       for (const p of room.players) if (!p.connected) this.inputs.delete(p.id);
       this.syncPlayers();
       this.syncDrivers();
@@ -236,10 +241,10 @@ export class Beerio2Session {
       this.update({ players: this.snapshot.players.map(p => ({ ...p, connected: p.id === 'host' ? room.status === 'connected' : room.players.some(member => member.id === p.id && member.connected) })) });
       return;
     }
-    const players: Beerio2Player[] = [{ id: 'host', name: this.hostName, color: colors[0], connected: room.status === 'connected', ready: true }];
+    const players: Beerio2Player[] = [{ id: 'host', name: this.hostName, color: colors[0], connected: room.status === 'connected', ready: true, ride: this.localRide }];
     for (const p of room.players) {
       if (!this.accepted.has(p.id)) continue;
-      players.push({ ...p, color: colors[players.length], ready: true });
+      players.push({ ...p, color: colors[players.length], ready: true, ride: this.playerRides.get(p.id) ?? DEFAULT_RIDE });
     }
     this.update({ players });
   }
@@ -258,6 +263,9 @@ export class Beerio2Session {
       if (!this.accepted.has(sender.id) && (this.snapshot.phase !== 'lobby' || this.accepted.size >= 9)) { this.publish(true); return; }
       if (this.accepted.get(sender.id) !== p.stream) { this.inputs.delete(sender.id); this.sequences.delete(sender.id); this.consumed.delete(sender.id); }
       this.accepted.set(sender.id, p.stream);
+      if (this.snapshot.phase === 'lobby' && validRide(p.ride)) {
+        this.playerRides.set(sender.id, { vehicle: p.ride.vehicle, character: p.ride.character });
+      }
       this.syncPlayers(); this.syncDrivers(); this.publish(true);
       return;
     }
@@ -367,7 +375,7 @@ export class Beerio2Session {
       }
       if (this.snapshot.role === 'player' && this.snapshot.hostConnected && now - this.lastHello >= 1000) {
         this.lastHello = now;
-        this.client.sendAction({ protocol: BEERIO2_PROTOCOL, kind: 'hello', stream: this.stream });
+        this.client.sendAction({ protocol: BEERIO2_PROTOCOL, kind: 'hello', stream: this.stream, ride: this.localRide });
       }
       this.sendInput(now);
       return;
@@ -430,6 +438,7 @@ export class Beerio2Session {
     this.timer = null;
     this.client.leave();
     this.world?.dispose(); this.world = null; this.drivers.clear(); this.inputs.clear(); this.accepted.clear(); this.sequences.clear();
+    this.playerRides.clear(); this.localRide = DEFAULT_RIDE;
     this.frame = null; this.localInput = neutral(); this.sentInput = neutral(); this.verified = false;
     this.sentTimes.clear(); this.consumed.clear(); this.renderFrames = []; this.inputAckMs = null; this.frameIntervalMs = null; this.frameJitterMs = 0;
     this.raceId = 0; this.tick = 0; this.elapsed = 0; this.accumulator = 0;

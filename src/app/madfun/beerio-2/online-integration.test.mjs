@@ -44,8 +44,10 @@ const driveUrl = await moduleUrl('./drive.ts', {
   '@dimforge/rapier3d-compat': import.meta.resolve('@dimforge/rapier3d-compat'),
 });
 const partyUrl = await moduleUrl('../shared/party-client.ts');
+const appearanceUrl = await moduleUrl('../../beerio/appearance.ts');
+const rideUrl = await moduleUrl('./ride-selection.ts', { '../../beerio/appearance': appearanceUrl });
 const { Beerio2Session, validateFrame } = await import(await moduleUrl('./online.ts', {
-  './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl,
+  './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl, './ride-selection': rideUrl,
 }));
 const { PartyClient } = await import(partyUrl);
 
@@ -184,16 +186,25 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
     dispose(){},
   });
   const host = f.make({ createWorld }), guest = f.make(), rematchGuest = f.make();
-  host.create('Timekeeper');
+  const hostRide = { vehicle: 'ferrari', character: 'fox' };
+  const guestRide = { vehicle: 'ducati', character: 'panda' };
+  host.create('Timekeeper', 'seattle', hostRide);
   const code = await until(() => host.getSnapshot().code && !host.getSnapshot().loading && host.getSnapshot().code, 'host prepared');
   host.start();
   await sleep(125);
   assert.equal(phase(host), 'lobby', 'Host needs a second connected racer.');
-  guest.join(code, 'First Guest');
+  guest.join(code, 'First Guest', guestRide);
   await until(() => phase(guest) === 'lobby' && host.getSnapshot().players.length === 2, 'guest admitted');
   host.start();
   await until(() => phase(guest) === 'countdown', 'guest sees countdown');
   await until(() => phase(guest) === 'race', 'guest sees green light');
+  assert.deepEqual(guest.getFrame().players.find(p => p.id === 'host').ride, hostRide);
+  assert.deepEqual(guest.getFrame().players.find(p => p.id === guest.getSnapshot().playerId).ride, guestRide);
+  const legacy = structuredClone(guest.getFrame());
+  for (const p of legacy.players) delete p.ride;
+  assert.ok(validateFrame(legacy), 'A build with no cosmetics still works');
+  legacy.players[0].ride = { vehicle: 'unlisted', character: 'fox' };
+  assert.equal(validateFrame(legacy), false);
   const raceId = guest.getFrame().raceId;
   host.setPaused(true);
   await until(() => phase(guest) === 'paused', 'guest sees pause');
@@ -315,7 +326,7 @@ test('Private lobby admits exactly ten racers including the host', { timeout: 14
 // The baseline restores the former timer-only, phase-aligned 20Hz input sender.
 // Both variants use identical host physics, packets, 15Hz snapshots and injected network delays.
 const { Beerio2Session: BaselineSession } = await import(await moduleUrl('./online.ts', {
-  './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl,
+  './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl, './ride-selection': rideUrl,
 }, source => source.replace('this.sendInput(this.inputAt);', '')
   .replace('(changed ? 25 : 50)', '50')
   .replace('this.lastInput = now;', 'this.lastInput = Number.isFinite(this.lastInput) ? this.lastInput + Math.floor((now - this.lastInput) / 50) * 50 : now;')));

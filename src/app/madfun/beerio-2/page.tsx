@@ -10,6 +10,7 @@ import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
 import { FINISHES, readFinish, type CarFinish } from "./finishes";
+import { CHARACTERS, DEFAULT_RIDE, RIDES, readRide, saveRide, type RideSelection } from "./ride-selection";
 const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <main className={styles.shell}><section className={styles.entryStage}>Opening the car lab…</section></main> });
 
 type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
@@ -59,6 +60,12 @@ export default function Beerio2Page() {
   const savedFinish = useSyncExternalStore(() => () => {}, readFinish, () => FINISHES[0]);
   const [finishOverride, setFinishOverride] = useState<CarFinish | null>(null);
   const finish = finishOverride ?? savedFinish;
+  const savedRide = useSyncExternalStore(() => () => {}, readRide, () => DEFAULT_RIDE);
+  const [rideOverride, setRideOverride] = useState<RideSelection | null>(null);
+  const ride = rideOverride ?? savedRide;
+  const [labReturn, setLabReturn] = useState<"menu" | "host" | "join">("menu");
+  const vehicleName = RIDES.find(entry => entry.id === ride.vehicle)?.name;
+  const characterName = CHARACTERS.find(entry => entry.id === ride.character)?.name;
   const [trackId, setTrackId] = useState<TrackId>("seattle");
   const [soloMode, setSoloMode] = useState<"race" | "time-trial">("race");
   const selectedTrack = getTrack(trackId);
@@ -123,8 +130,8 @@ export default function Beerio2Page() {
     setValidation("");
     setShareStatus("");
     void import("./race").catch(() => {});
-    if (screen === "host") void session.create(driver, trackId);
-    else session.join(code, driver);
+    if (screen === "host") void session.create(driver, trackId, ride);
+    else session.join(code, driver, ride);
   }
 
   async function share(useShareSheet: boolean, tv = false) {
@@ -148,11 +155,14 @@ export default function Beerio2Page() {
     }
   }
 
-  if (screen === "lab") return <CarLab finish={finish} onFinish={next => {
+  if (screen === "lab") return <CarLab ride={ride} onRide={next => { saveRide(next); setRideOverride(next); }} finish={finish} onFinish={next => {
     setFinishOverride(next);
     try { localStorage.setItem("beerio2-car-finish", next.id); } catch {}
-  }} exit={() => choose("menu")} race={() => { setSoloMode("race"); choose("solo"); }} />;
-  if (screen === "solo") return <RaceScreen trackId={trackId} mode={soloMode} paint={finish.hex} exit={() => choose("menu")} />;
+  }} exit={() => choose(labReturn)} roomSetup={labReturn !== "menu"} race={() => {
+    if (labReturn !== "menu") choose(labReturn);
+    else { setSoloMode("race"); choose("solo"); }
+  }} />;
+  if (screen === "solo") return <RaceScreen trackId={trackId} mode={soloMode} ride={ride} paint={finish.hex} exit={() => choose("menu")} />;
 
   if (inRoom && onlineView) {
     const roomTrack = getTrack(room.trackId);
@@ -271,7 +281,7 @@ export default function Beerio2Page() {
           <p>Chase the pack. Beat the clock.<br />Or settle it with your friends.</p>
           <button className={`${styles.primaryAction} ${styles.raceAiAction}`} type="button" onClick={() => { setSoloMode("race"); choose("solo"); }}><span><b>Race AI</b><small>Jump in. Take on the grid.</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
           <button className={styles.secondaryAction} type="button" onClick={() => { setSoloMode("time-trial"); choose("solo"); }}><span><b>Time trial</b><small>Just you and your best lap.</small></span><span className={styles.actionArrow} aria-hidden>→</span></button>
-          <button className={styles.secondaryAction} type="button" onClick={() => choose("lab")}><span><b>Car Lab</b><small>Inspect the hypercar and change its paint</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
+          <button className={styles.secondaryAction} type="button" onClick={() => { setLabReturn("menu"); choose("lab"); }}><span><b>Car Lab</b><small>Pick your car, driver and paint</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
           <div className={styles.modeDivider}><span>BETTER WITH RIVALS</span></div>
           <div className={styles.onlineChoices}>
             <button className={styles.secondaryAction} type="button" onClick={() => choose("host")}><span><b>Host &amp; drive</b><small>Create a private room</small></span><span aria-hidden>＋</span></button>
@@ -284,6 +294,9 @@ export default function Beerio2Page() {
           <h2>{screen === "host" ? "Host & drive." : "Join the grid."}</h2>
           <p>{screen === "host" ? "Create a room, invite friends, and start from this phone. No TV or computer needed." : "Same race. Your own screen. Enter the code from your host."}</p>
           {screen === "host" ? <div className={styles.formCircuit}><TrackMap trackId={trackId} /><div><small>YOUR CIRCUIT</small><strong>{selectedTrack.name}</strong><span>Choose a circuit below before creating.</span></div></div> : <div className={styles.joinNote}>Your host’s circuit loads automatically.</div>}
+          <button className={styles.secondaryAction} type="button" disabled={connecting} onClick={() => { setLabReturn(screen === "join" ? "join" : "host"); choose("lab"); }}>
+            <span><b>Edit car &amp; driver</b><small>{vehicleName} · {characterName}</small></span><span aria-hidden>↗</span>
+          </button>
           <label>DRIVER NAME<input value={name} onChange={(event) => setName(event.target.value)} name="driver-name" autoComplete="nickname" placeholder="What should we call you?" required maxLength={48} disabled={connecting} /></label>
           {screen === "join" && <label>ROOM CODE<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label>}
           {(validation || room.error) && <p className={styles.formError} role="alert">{validation || room.error}</p>}

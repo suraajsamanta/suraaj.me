@@ -1,8 +1,10 @@
 import { getTrack, type Point, type TrackId } from './course';
+import { rideGeometry } from './ride-geometry';
+import { DEFAULT_RIDE, type RideSelection } from './ride-selection';
 
-type CarPose = { x: number; y: number; z: number; yaw: number; boost: boolean; color?: string };
+type CarPose = { x: number; y: number; z: number; yaw: number; boost: boolean; color?: string; ride?: RideSelection };
 type State = CarPose & { camera: Point; look: Point; rivals?: readonly CarPose[]; speed?: number; reducedMotion?: boolean };
-type Face = { points: Point[]; color: string; bx: number; bz: number; radius: number; decal?: boolean };
+type Face = { points: Point[]; color: string; bx: number; bz: number; radius: number; decal?: boolean; mesh?: boolean };
 /** A real perspective/painter renderer for browsers without any GPU context. */
 export function createSoftwareView(ctx: CanvasRenderingContext2D, trackId: TrackId = 'seattle', studio = false): (state: State) => void {
   const { points: course, roadWidth: ROAD_WIDTH } = getTrack(trackId);
@@ -169,6 +171,52 @@ export function createSoftwareView(ctx: CanvasRenderingContext2D, trackId: Track
     return car;
   };
   const heroCar=makeCar(true),farCar=makeCar(false);
+  // Share the original garage mesh and peeking driver with the GPU view. Cache
+  // conversion by selection/paint, not per frame, and rejoin planar quad pairs
+  // so Canvas need not paint both halves of thousands of body panels.
+  const rides = new Map<string, Face[]>();
+  const selectedCar = (ride: RideSelection, paint: string, lod = 0) => {
+    const key = `${ride.vehicle}:${ride.character}:${paint}:${lod}`;
+    const cached = rides.get(key);
+    if (cached) return cached;
+    const { data } = rideGeometry(ride, paint);
+    const model: Face[] = [];
+    const snap = (value: number) => lod ? Math.round(value/lod)*lod : value;
+    const pointAt = (i: number) => p(snap(data[i]), snap(data[i+1]), snap(data[i+2]));
+    const same = (i: number, j: number) => data[i] === data[j] && data[i+1] === data[j+1] && data[i+2] === data[j+2];
+    const colorAt = (i: number) => '#' + [data[i+3],data[i+4],data[i+5]]
+      .map(v => Math.round(Math.max(0,Math.min(1,v))*255).toString(16).padStart(2,'0')).join('');
+    for (let i=0;i<data.length;i+=18) {
+      const points = [pointAt(i),pointAt(i+6),pointAt(i+12)];
+      const color = colorAt(i);
+      if (i+35<data.length && same(i,i+18) && same(i+12,i+24) && color===colorAt(i+18)) {
+        const a=points[0],b=points[1],c=points[2],d=pointAt(i+30);
+        const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+        const nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+        const planeError=Math.abs(nx*(d.x-a.x)+ny*(d.y-a.y)+nz*(d.z-a.z));
+        if (planeError < 1e-8) { points.push(d); i+=18; }
+      }
+      // Distance-only vertex clustering removes subpixel wheel tessellation and
+      // trim, not arbitrary triangles. Adjacent panels share snapped vertices,
+      // preserving the selected model's envelope rather than swapping coupes.
+      if (lod) {
+        for (let j=points.length-1;j>=0;j--) {
+          const a=points[j],b=points[(j+1)%points.length];
+          if(a.x===b.x && a.y===b.y && a.z===b.z)points.splice(j,1);
+        }
+        if(points.length<3)continue;
+        const a=points[0],b=points[1],c=points[2];
+        const ux=b.x-a.x,uy=b.y-a.y,uz=b.z-a.z,vx=c.x-a.x,vy=c.y-a.y,vz=c.z-a.z;
+        if(Math.hypot(uy*vz-uz*vy,uz*vx-ux*vz,ux*vy-uy*vx)<1e-8)continue;
+      }
+      face(points,color,model);
+      model[model.length-1].mesh=true;
+    }
+    // Bounded across repeated showroom choices and a full online grid.
+    if (rides.size >= 32) rides.delete(rides.keys().next().value!);
+    rides.set(key,model);
+    return model;
+  };
   const palettes=new Map<string,Record<string,string>>();
   const paintPalette=(input?:string)=>{
     const hex=input && /^#[0-9a-f]{6}$/i.test(input)?input:'#89d9e7';
@@ -211,36 +259,53 @@ export function createSoftwareView(ctx: CanvasRenderingContext2D, trackId: Track
     const camera=(a:Point)=>{const x=a.x-s.camera.x,y=a.y-s.camera.y,z=a.z-s.camera.z;return p(x*rx+z*rz,x*ux+y*uy+z*uz,x*fx+y*fy+z*fz);};
     const polys:{points:Point[];color:string;depth:number}[]=[];
     const clipSide=w/(2*focal);
-    const enqueue=(f:Face)=>{
+    const enqueue=(f:Face, project=camera, bx=f.bx, bz=f.bz, color=f.color)=>{
       // Conservative bounding circle before vertex projection; the horizontal
       // radius lets tall and near-plane geometry stay visible without popping.
-      const dx=f.bx-s.camera.x,dz=f.bz-s.camera.z,depth=dx*fx+dz*fz;
+      const dx=bx-s.camera.x,dz=bz-s.camera.z,depth=dx*fx+dz*fz;
       if(depth+f.radius+45<.6||depth-f.radius>400)return;
       if(Math.abs(dx*rx+dz*rz)-f.radius>clipSide*Math.max(0,depth+f.radius+55))return;
-      let points=f.points.map(camera);if(points.every(a=>a.z<.6)||points.every(a=>a.z>360))return;
-      const clipped:Point[]=[];for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];if(a.z>=.6)clipped.push(a);if((a.z>=.6)!==(b.z>=.6)){const t=(.6-a.z)/(b.z-a.z);clipped.push(p(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,.6));}}
-      points=clipped;if(points.length<3)return;
-      polys.push({points,color:f.color,depth:points.reduce((n,a)=>n+a.z,0)/points.length-(f.decal?.45:0)});
+      let points=f.points.map(project);if(points.every(a=>a.z<.6)||points.every(a=>a.z>360))return;
+      if(points.some(a=>a.z<.6)) { const clipped:Point[]=[];for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];if(a.z>=.6)clipped.push(a);if((a.z>=.6)!==(b.z>=.6)){const t=(.6-a.z)/(b.z-a.z);clipped.push(p(a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t,.6));}}
+      points=clipped;if(points.length<3)return; }
+      if(f.mesh) {
+        // Tiny trim disappears below a pixel anyway. Reject it before sorting
+        // and path construction; retain complete silhouettes and large panels.
+        let area=0;
+        for(let i=0;i<points.length;i++) {
+          const a=points[i],b=points[(i+1)%points.length];
+          area+=(a.x/a.z)*(b.y/b.z)-(b.x/b.z)*(a.y/a.z);
+        }
+        if(Math.abs(area)*focal*focal < (studio?.05:.65))return;
+      }
+      polys.push({points,color,depth:points.reduce((n,a)=>n+a.z,0)/points.length-(f.decal?.45:0)});
     };
-    world.forEach(enqueue);
+    world.forEach(f=>enqueue(f));
     // The same prebuilt coachwork is used for driving and the rotating studio.
     const addCar = (pose: CarPose, hero = false) => {
       const dx=pose.x-s.camera.x,dz=pose.z-s.camera.z;
       if (!hero && dx*dx+dz*dz > 180*180) return;
-      const model=hero || dx*dx+dz*dz<42*42 ? heroCar : farCar;
+      const ride=pose.ride ?? DEFAULT_RIDE;
+      const detailed=hero || dx*dx+dz*dz<42*42;
+      const palette=paintPalette(pose.color);
+      const selected=selectedCar(ride,palette.paint,hero ? 0 : dx*dx+dz*dz>32*32 ? .20 : .10);
+      const models=ride.vehicle==='nightjar' ? [detailed ? heroCar : farCar,selected] : [selected];
       const sin=Math.sin(pose.yaw),cos=Math.cos(pose.yaw);
       const cp=(a:Point)=>p(pose.x+a.x*cos+a.z*sin,pose.y+a.y,pose.z-a.x*sin+a.z*cos);
-      const palette=paintPalette(pose.color);
+      // Fold the rigid vehicle and view transforms together. Avoid allocating
+      // a second world-space copy of every original mesh vertex each frame.
+      const origin=camera(pose),xx=cos*rx-sin*rz,xz=sin*rx+cos*rz;
+      const yx=cos*ux-sin*uz,yz=sin*ux+cos*uz,zx=cos*fx-sin*fz,zz=sin*fx+cos*fz;
+      const project=(a:Point)=>p(origin.x+a.x*xx+a.z*xz,origin.y+a.x*yx+a.y*uy+a.z*yz,origin.z+a.x*zx+a.y*fy+a.z*zz);
       const rearVisible=(-dx)*sin+(-dz)*cos < 0;
-      for(const f of model) {
+      for(const model of models) for(const f of model) {
         if(f.decal && !rearVisible)continue;
-        enqueue({points:f.points.map(cp),color:palette[f.color]??f.color,
-          bx:pose.x+f.bx*cos+f.bz*sin,bz:pose.z-f.bx*sin+f.bz*cos,radius:f.radius,decal:f.decal});
+        enqueue(f,project,pose.x+f.bx*cos+f.bz*sin,pose.z-f.bx*sin+f.bz*cos,palette[f.color]??f.color);
       }
       if(pose.boost) for(const side of [-1,1]) {
         const plume=(width:number,length:number,color:string)=>{
           const points=[p(side*.47-width,.40,-2.29),p(side*.47+width,.40,-2.29),p(side*.47+width*.25,.29,-length),p(side*.47-width*.25,.29,-length)].map(cp);
-          const flame:Face[]=[];face(points,color,flame);flame.forEach(enqueue);
+          const flame:Face[]=[];face(points,color,flame);flame.forEach(f=>enqueue(f));
         };
         plume(.14,3.8,'#168cb2');plume(.065,3.25,'#bdffff');
       }

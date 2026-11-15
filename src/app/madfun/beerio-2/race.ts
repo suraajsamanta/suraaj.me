@@ -8,7 +8,8 @@ import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { CreateDisc } from '@babylonjs/core/Meshes/Builders/discBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { buildTrack } from './track';
-import { buildCar, buildRival } from './car';
+import { buildRide } from './rides';
+import { DEFAULT_RIDE, type RideSelection } from './ride-selection';
 import { makeEngine } from './graphics';
 import { getTrack, heading, type TrackId } from './course';
 import { createRaceSound } from './race-audio';
@@ -19,7 +20,7 @@ import type { RaceView } from './online';
 export type OnlineRaceView = RaceView;
 
 export type RaceInput = DriveInput;
-export type RaceSettings = { paint?: string; muted?: boolean; reducedMotion?: boolean; trackId?: TrackId; mode?: 'race' | 'time-trial' };
+export type RaceSettings = { ride?: RideSelection; paint?: string; muted?: boolean; reducedMotion?: boolean; trackId?: TrackId; mode?: 'race' | 'time-trial' };
 export type RaceHud = {
   speed: number; lap: number; seconds: number; best: number | null; boost: boolean; renderer: string;
   roadKernel?: string; drifting?: boolean; driftCharge?: number; boostPower?: number; gear?: number; audioReady?: boolean; muted?: boolean; fps?: number;
@@ -47,6 +48,11 @@ function interpolate(old: VisualState | undefined, next: VisualState, amount: nu
   };
 }
 
+const aiRides: Record<string, RideSelection> = {
+  rook: { vehicle: 'nightjar', character: 'robot' },
+  vex: { vehicle: 'nightjar', character: 'tiger' },
+  nova: { vehicle: 'nightjar', character: 'alien' },
+};
 const rivalsPalette = ['#ff799e','#ffd16a','#9af5b4','#b5a4ff','#ff9f73','#91bbff','#fbdfab','#5be9e0','#f3a2ee'];
 function rivalColor(id: string) {
   let hash = 0;
@@ -104,7 +110,9 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     key.diffuse = new Color3(1, 0.76, 0.68);
     key.specular = new Color3(0.8, 0.88, 1);
     if (!software) buildTrack(scene3d, course.map(({ x, y, z }) => new Vector3(x, y, z)), selected.id);
-    const car = software ? null : buildCar(scene3d, true) as GraphicalCar;
+    let ownRide = settings.ride ?? DEFAULT_RIDE;
+    let ownColor = online ? undefined : settings.paint;
+    let car = software ? null : buildRide(scene3d, ownRide, ownColor ?? '#89e9ed', true) as GraphicalCar;
     const shadow = software ? null : CreateDisc('contact-shadow', { radius: 1, tessellation: 28 }, scene3d);
     if (shadow) {
       shadow.rotation.x = UP;
@@ -130,9 +138,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     let own: VisualState | undefined;
     let cameraYaw = anchor.yaw, cameraPitch = 0, accumulator = 0, hudTick = 0;
     let lastRaceId: number | undefined;
-    let ownColor: string | undefined = online ? undefined : settings.paint;
-    if (ownColor) car?.metadata.setPaint?.(ownColor);
-    const rivals = new Map<string, { model: GraphicalCar | null; pose: VisualState; color: string }>();
+    const rivals = new Map<string, { model: GraphicalCar | null; pose: VisualState; color: string; ride: RideSelection }>();
     let driftCharge = 0, wasBoost = false, boostPower = 0, previousSpeed = 0, impactCooldown = 0;
     let previousLap = 1, wasFinished = false, countdownNote = -1, previousPhase = '', chargeCue = false;
     let lean = 0, accelerationPitch = 0, fovBase = .76, fps = 60, quality = 1, qualityTime = 0;
@@ -226,7 +232,14 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       accelerationPitch = mix(accelerationPitch, acceleration * .0012, 1 - Math.exp(-dt * 7));
       previousSpeed = speed;
       lean = mix(lean, steer * (drifting ? -.075 : -.035) * clamp(speed / 14, 0, 1), 1 - Math.exp(-dt * 9));
-      const paint = frame?.players.find(player => player.id === online?.id)?.color;
+      const player = frame?.players.find(player => player.id === online?.id);
+      const paint = player?.color;
+      const ride = player?.ride ?? settings.ride ?? DEFAULT_RIDE;
+      if (ride.vehicle !== ownRide.vehicle || ride.character !== ownRide.character) {
+        ownRide = ride;
+        car?.dispose(false, true);
+        car = software ? null : buildRide(scene3d, ride, paint ?? ownColor ?? '#89e9ed', true) as GraphicalCar;
+      }
       if (paint && paint !== ownColor) {
         ownColor = paint;
         car?.metadata.setPaint?.(paint);
@@ -250,9 +263,12 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       for (const [id, state] of Object.entries(current)) {
         if (id === online?.id) continue;
         let rival = rivals.get(id);
-        if (!rival) {
-          const color = frame?.players.find(player => player.id === id)?.color ?? soloRace?.rivals.find(rival => rival.id === id)?.color ?? rivalColor(id);
-          rival = { model: software ? null : buildRival(scene3d, color) as GraphicalCar, pose: state, color };
+        const entry = frame?.players.find(player => player.id === id);
+        const color = entry?.color ?? soloRace?.rivals.find(rival => rival.id === id)?.color ?? rivalColor(id);
+        const ride = entry?.ride ?? (soloRace ? aiRides[id] : undefined) ?? DEFAULT_RIDE;
+        if (!rival || rival.color !== color || rival.ride.vehicle !== ride.vehicle || rival.ride.character !== ride.character) {
+          rival?.model?.dispose(false, true);
+          rival = { model: software ? null : buildRide(scene3d, ride, color, false) as GraphicalCar, pose: rival?.pose ?? state, color, ride };
           rivals.set(id, rival);
         }
         rival.pose = interpolate(rival.pose, state, jump || online?.getRenderFrame ? 1 : t);
@@ -279,7 +295,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       camera.rotation.z = -lean * .23 * motion;
       camera.fov = mix(camera.fov, fovBase + (clamp(speed / 37, 0, 1) * .09 + boostPower * .095) * motion, 1 - Math.exp(-dt * 4));
       effects?.update({ x, y, z, yaw, pitch, speed, steer, boost, drift: driftCharge, reducedMotion: !motion }, dt);
-      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, speed, reducedMotion: !motion, color: ownColor, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color})) });
+      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, speed, reducedMotion: !motion, color: ownColor, ride: ownRide, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color, ride:rival.ride})) });
       else scene3d.render();
       hudTick += dt;
       if (hudTick >= 0.096) { hudTick = 0; hud(source); }
