@@ -82,12 +82,13 @@ export function RankForm({ players, rankerId, initial, settleOnMount, prompt, di
     if (!step) return;
     const position = Math.max(0, Math.min(current.base.length - 1, (y - current.offset - rect.top) / step - .5));
     const next = insertAt(current.base, current.id, Math.round(position));
+    const changed = current.ids.some((id, index) => id !== next[index]);
     current.ids = next;
     setOrder(previous => previous.every((id, index) => id === next[index]) ? previous : next);
     setDrag({ id: current.id, position });
-    if (now - current.sent >= 85) {
+    if (changed || (!privateDraft && now - current.sent >= 85)) {
       current.sent = now;
-      send.current({ orderedIds: next, drag: { id: current.id, position: Math.round(position * 100) / 100 } });
+      send.current({ orderedIds: next, drag: privateDraft ? null : { id: current.id, position: Math.round(position * 100) / 100 } });
     }
   }
 
@@ -102,7 +103,7 @@ export function RankForm({ players, rankerId, initial, settleOnMount, prompt, di
     hand.current = current;
     setDragBase(order);
     setDrag({id, position: slot});
-    onPreview({orderedIds: order, drag: {id, position: slot}});
+    if (!privateDraft) onPreview({orderedIds: order, drag: {id, position: slot}});
     const scroll = (now: number) => {
       if (hand.current !== current) return;
       const height = window.visualViewport?.height ?? window.innerHeight;
@@ -143,7 +144,7 @@ export function RankForm({ players, rankerId, initial, settleOnMount, prompt, di
     <div className={styles.private}><span className={styles.kicker}>Private • Only you can see this</span><h2>{prompt}</h2></div>
     <p>Drag the dotted grips to rank everyone, including yourself. Put the best match at #1. {privateDraft
       ? 'Your order stays private until the group reviews it.'
-      : 'Your moves are live; only you see the question.'}</p>
+      : 'Your moves are live; only you see the question.'} Your current order locks in when time runs out. If you don’t move anyone, the starting order is used.</p>
     <ol ref={list} className={`${styles.dragList} ${styles.editable}`} aria-label="Rank your friends" style={listStyle(order.length)}>
       {(dragBase ?? order).map(id => {
         const slot = order.indexOf(id);

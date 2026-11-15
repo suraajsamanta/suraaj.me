@@ -338,6 +338,14 @@ test('60-second simultaneous phase keeps unique assignments and all draft orders
   const [first, second] = view.batch.rankerIds;
   const ids = players.map(player => player.id);
   assert.equal(e.updateRankingPreview(match, first, ids, null), null);
+  assert.equal(e.updateRankingPreview(match, first, ids.filter(id => id !== first), null), null);
+  assert.equal(e.updateRankingPreview(match, players[3].id, ids.toReversed(), null), null);
+  const privateDraft = ids.slice(1).concat(ids[0]);
+  match = e.updateRankingPreview(match, first, privateDraft, { id: first, position: 0 });
+  assert.deepEqual(e.privateView(match, first).orderedIds, privateDraft, 'refresh can restore own draft');
+  assert.equal(e.privateView(match, second).orderedIds, undefined, 'other ranker has not saved a draft');
+  assert.deepEqual(e.publicView(match), view, 'public projection is identical before and after a draft');
+  assert.equal(e.updateRankingPreview(match, first, privateDraft, null), null, 'ignore duplicate snapshots');
   assert.equal(e.submitRanking(match, first, ids.filter(id => id !== first)), null);
   assert.equal(e.submitRanking(match, players[3].id, ids), null);
   match = e.submitRanking(match, first, ids.toReversed());
@@ -346,6 +354,7 @@ test('60-second simultaneous phase keeps unique assignments and all draft orders
   assert.deepEqual(e.publicView(match).batch.submittedIds, [first]);
   assert.deepEqual(e.publicView(match).ranking, []);
   assert.equal(e.submitRanking(match, first, ids), null);
+  assert.equal(e.updateRankingPreview(match, first, ids, null), null);
   assert.equal(e.reveal(match), null);
 });
 
@@ -386,27 +395,51 @@ test('all simultaneous locks show slides immediately and score guesses one revie
   assert.deepEqual(match.consumedCustomPromptIds, customPrompts.map(prompt => prompt.id));
 });
 
-test('simultaneous timeout reviews only submitted ranks, even if submitter has disconnected', () => {
+test('simultaneous timeout locks explicit orders and latest drafts, with default for untouched seats', () => {
   let match = makeBatch();
   const rankers = e.publicView(match).batch.rankerIds;
-  const finished = e.skipRound(match, players, bank);
-  assert.equal(finished.phase, 'finished');
-  assert.equal(e.publicView(finished).correct, null);
-  assert.deepEqual(e.publicView(finished).ranking, []);
-  assert.deepEqual(finished.consumedCustomPromptIds, []);
-  assert.deepEqual(finished.remainingCustomPrompts, customPrompts);
-  match = e.submitRanking(match, rankers[2], players.map(p => p.id));
-  const later = players.map(p => p.id === rankers[2] ? { ...p, connected: false } : p);
-  const firstSlide = e.skipRound(match, later, bank);
-  assert.equal(firstSlide.phase, 'hint');
-  assert.equal(firstSlide.ranker.id, rankers[2]);
-  assert.equal(firstSlide.ranker.connected, false);
-  assert.equal(firstSlide.totalRounds, 1);
-  assert.deepEqual(firstSlide.consumedCustomPromptIds, []);
-  assert.deepEqual(firstSlide.remainingCustomPrompts, customPrompts);
-  assert(firstSlide.ranking.some(p => p.id === rankers[2]));
-  assert(e.publicView(firstSlide).hint);
-  assert.equal(e.nextRound(e.reveal(firstSlide), later, bank).phase, 'finished');
+  const roster = players.map(player => player.id);
+  const draft = roster.slice(1).concat(roster[0]);
+  const lastDraft = roster.slice(2).concat(roster.slice(0, 2));
+  const explicitlyLocked = roster.toReversed();
+  assert.equal(e.skipRound(match, players, bank), null, 'simultaneous ranking cannot be manually skipped');
+  match = e.updateRankingPreview(match, rankers[0], draft, null);
+  match = e.updateRankingPreview(match, rankers[0], lastDraft, null);
+  match = e.updateRankingPreview(match, rankers[1], draft, null);
+  match = e.submitRanking(match, rankers[1], explicitlyLocked);
+  assert.equal(match.phase, 'batch_ranking');
+  const later = players.map(p => p.id === rankers[0] ? { ...p, connected: false } : p);
+  match = e.expireRanking(match, later);
+  for (const [index, expected] of [lastDraft, explicitlyLocked, roster, roster].entries()) {
+    const view = e.publicView(match);
+    assert.equal(view.phase, 'hint');
+    assert.equal(view.ranker.id, rankers[index]);
+    assert.equal(view.ranker.connected, index > 0);
+    assert.equal(view.totalRounds, rankers.length);
+    assert.equal(view.round, index + 1);
+    assert.deepEqual(view.ranking.map(p => p.id), expected);
+    assert.equal(view.correct, null);
+    assert.equal(e.expireRanking(match, later), null);
+    match = e.nextRound(e.reveal(match), later, bank);
+  }
+  assert.equal(match.phase, 'finished');
+  assert.deepEqual(match.consumedCustomPromptIds, customPrompts.map(prompt => prompt.id));
+});
+
+test('turn-by-turn timeout reviews the last live order or the displayed default instead of skipping', () => {
+  const base = round();
+  const originalOrder = base.rankTargets.map(player => player.id);
+  const reversed = originalOrder.toReversed();
+  const draft = e.updateRankingPreview(base, base.ranker.id, reversed, { id: reversed[0], position: 0.3 });
+  const reviewed = e.expireRanking(draft, players);
+  assert.equal(reviewed.phase, 'hint');
+  assert.equal(reviewed.ranker.id, base.ranker.id);
+  assert.equal(reviewed.round, base.round);
+  assert.deepEqual(reviewed.ranking.map(player => player.id), reversed);
+  assert.equal(reviewed.preview, null);
+  assert.deepEqual(e.expireRanking(base, players).ranking.map(player => player.id), originalOrder);
+  const offline = players.map(player => player.id === base.ranker.id ? { ...player, connected: false } : player);
+  assert.notEqual(e.skipRound(base, offline, bank).ranker.id, base.ranker.id);
 });
 
 test('a player question matching a built-in still goes first, without duplicating its choice', () => {

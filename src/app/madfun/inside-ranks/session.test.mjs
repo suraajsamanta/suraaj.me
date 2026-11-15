@@ -62,14 +62,23 @@ test('simultaneous mode has one host-controlled 60s deadline and locks each phon
   assert.equal(locked.deadline, started.deadline);
   assert.equal(locked.match.phase, 'batch_ranking');
   assert.equal(act(locked, players[0], { type: 'rank', orderedIds: order }), null);
-  assert.equal(act(locked, players[1], { type: 'rank_preview', orderedIds: order, drag: null }), null);
+  const draftAction = { type: 'rank_preview', orderedIds: order, drag: null };
+  const drafted = act(locked, players[1], draftAction);
+  assert(drafted);
+  assert.equal(config.shouldPublish(locked, drafted, { action: draftAction }), false);
+  assert.deepEqual(config.view(drafted, players, host.id), config.view(locked, players, host.id));
+  assert.deepEqual(config.secret(drafted, players[1].id).orderedIds, order);
+  assert.equal(config.secret(drafted, players[2].id).orderedIds, undefined);
   now = 61000;
   assert.equal(act(locked, players[1], { type: 'rank', orderedIds: order }), null);
-  const review = act(locked, host, { type: 'expire_ranking' });
+  const review = act(drafted, host, { type: 'expire_ranking' });
   assert.equal(review.match.phase, 'hint');
-  assert.equal(review.match.totalRounds, 1);
-  assert.equal(review.match.ranker.id, players[0].id);
+  assert.equal(review.match.totalRounds, players.length);
   assert.equal(review.deadline, null);
+  const defaultOrder = players.map(player => player.id);
+  for (const assignment of review.match.batchAssignments) {
+    assert.deepEqual(assignment.orderedIds, [players[0].id, players[1].id].includes(assignment.ranker.id) ? order : defaultOrder);
+  }
 });
 
 
@@ -163,4 +172,58 @@ test('real relay delivers independent private assignments and a single public sl
   }
   assert.equal(state.match.phase, 'finished');
   assert.deepEqual(state.questions, [], 'reviewed player question leaves the queue');
+});
+
+
+test('host restarts in place with a fresh match ID, deadline, and score, without changing settings or questions', t => {
+  let now = 1000;
+  t.mock.method(Date, 'now', () => now);
+  let state = config.initial();
+  state = act(state, players[0], { type: 'submit_question', text: 'Who would start a space program?' });
+  state = act(state, host, { type: 'set_deck', deck: 'dark' });
+  state = act(state, host, { type: 'set_simultaneous', enabled: true });
+  state = act(state, host, { type: 'set_auto', enabled: true });
+  state = act(state, host, { type: 'start' });
+  const ids = players.map(player => player.id).reverse();
+  state = act(state, players[0], { type: 'rank', orderedIds: ids });
+  assert.equal(act(state, players[0], { type: 'restart' }), null);
+  now = 20_000;
+  const restarted = act(state, host, { type: 'restart' });
+  assert.equal(restarted.matchId, state.matchId + 1);
+  assert.equal(restarted.match.phase, 'batch_ranking');
+  assert.equal(restarted.deadline, 80_000);
+  assert.equal(restarted.deck, 'dark');
+  assert.equal(restarted.simultaneous, true);
+  assert.equal(restarted.autoRun, true);
+  assert.deepEqual(restarted.questions, state.questions);
+  assert.deepEqual(restarted.match.rankTargets, state.match.rankTargets);
+  assert.deepEqual(config.view(restarted, players, host.id).match.batch.submittedIds, []);
+  assert.equal(config.reduce(restarted, players[1], { action: { type: 'rank', orderedIds: ids }, matchId: state.matchId, round: 1 }, players, host.id), null);
+  const fewer = players.map(player => ({ ...player, connected: player.id === players[0].id }));
+  const lobby = act(restarted, host, { type: 'restart' }, fewer);
+  assert.equal(lobby.match, null);
+  assert.equal(lobby.deadline, null);
+  assert.deepEqual(config.view(lobby, fewer, host.id).players, fewer);
+});
+
+
+test('Dark Mode uses only the Paranoid bank in normal and simultaneous play; Classic submissions are retained', () => {
+  const { INSIDE_RANKS_DARK_PROMPTS } = load('./dark-prompts');
+  const bank = new Set(INSIDE_RANKS_DARK_PROMPTS.map(prompt => prompt.id));
+  for (const simultaneous of [false, true]) {
+    const submitted = act(config.initial(), players[0], { type: 'submit_question', text: 'Who would annex the moon?' });
+    let dark = act(submitted, host, { type: 'set_deck', deck: 'dark' });
+    assert.equal(config.view(dark, players, host.id).questionCount, 0);
+    assert.equal(config.secret(dark, players[0].id), null);
+    assert.equal(act(dark, players[1], { type: 'submit_question', text: 'Who would annex the sun?' }), null);
+    const classic = act(dark, host, { type: 'set_deck', deck: 'classic' });
+    assert.deepEqual(config.secret(classic, players[0].id).questions, [{ id: 'custom-1', text: 'Who would annex the moon?' }]);
+    if (simultaneous) dark = act(dark, host, { type: 'set_simultaneous', enabled: true });
+    const started = act(dark, host, { type: 'start' });
+    const rounds = simultaneous ? started.match.batchAssignments : [started.match];
+    for (const assignment of rounds) {
+      assert(bank.has(assignment.correct.id));
+      assert(assignment.options.every(option => bank.has(option.id)));
+    }
+  }
 });

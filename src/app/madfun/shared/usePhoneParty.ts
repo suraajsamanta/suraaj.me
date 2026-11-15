@@ -16,6 +16,9 @@ export type PhonePartyConfig<Model, Public> = {
   reconcilePresence?: (model: Model, participants: Participant[]) => Model;
   view: (model: Model, participants: Participant[], hostId: string) => Public;
   secret: (model: Model, playerId: string) => unknown;
+  // Allow a game to retain private, high-frequency draft data on the host without
+  // rebroadcasting a full snapshot. Normal actions and presence still publish.
+  shouldPublish?: (before: Model, after: Model, action: unknown) => boolean;
   reduce: (model: Model, actor: PartyPlayer, action: unknown, participants: Participant[], hostId: string) => Model | null;
 };
 
@@ -120,8 +123,12 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
       ? { id, name: 'Host screen', connected: true }
       : players.find(p => p.transportId === id && p.connected);
     if (!actor) return;
-    const next = config.reduce(model.current, actor, value, players, room.playerId);
-    if (next !== null) { model.current = next; publish(); }
+    const previous = model.current;
+    const next = config.reduce(previous, actor, value, players, room.playerId);
+    if (next !== null) {
+      model.current = next;
+      if (config.shouldPublish?.(previous, next, value) !== false) publish();
+    }
   };
 
   useEffect(() => {

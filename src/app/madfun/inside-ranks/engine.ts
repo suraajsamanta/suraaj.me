@@ -4,7 +4,14 @@ export type Phase = 'batch_ranking' | 'ranking' | 'hint' | 'guessing' | 'reveal'
 export type Result = { playerId: string; optionId: string; points: number };
 export type RankingDrag = { id: string; position: number };
 export type RankingPreview = { orderedIds: string[]; drag: RankingDrag | null };
-type Assignment = { ranker: Player; correct: Prompt; options: Prompt[]; customPrompt: boolean; orderedIds: string[] | null };
+type Assignment = {
+  ranker: Player;
+  correct: Prompt;
+  options: Prompt[];
+  customPrompt: boolean;
+  draftOrder: string[] | null;
+  orderedIds: string[] | null;
+};
 type MatchSettings = { customPrompts?: readonly Prompt[]; simultaneous?: boolean };
 
 export type Match = {
@@ -194,7 +201,7 @@ function prepareBatch(rankers: Player[], bank: Prompt[], custom: Prompt[], rng: 
   const batchAssignments = assigned.map((correct, index): Assignment => {
     const options = optionsFor(correct, decoys, used, rng);
     used = [...new Set([...used, ...options.map(prompt => prompt.id)])];
-    return { ranker: rankers[index], correct, options, customPrompt: index < customCount, orderedIds: null };
+    return { ranker: rankers[index], correct, options, customPrompt: index < customCount, draftOrder: null, orderedIds: null };
   });
   return { batchAssignments, remainingCustomPrompts: custom.slice(customCount) };
 }
@@ -281,10 +288,13 @@ export function publicView(match: Match, rankerConnected = true): PublicView {
   };
 }
 
-export function privateView(match: Match, playerId: string): { prompt: Prompt } | null {
+export function privateView(match: Match, playerId: string): { prompt: Prompt; orderedIds?: string[] } | null {
   if (match.phase === 'batch_ranking') {
     const assignment = match.batchAssignments.find(candidate => candidate.ranker.id === playerId && !candidate.orderedIds);
-    return assignment ? { prompt: assignment.correct } : null;
+    return assignment ? {
+      prompt: assignment.correct,
+      ...(assignment.draftOrder ? { orderedIds: [...assignment.draftOrder] } : {}),
+    } : null;
   }
   return match.phase === 'ranking' && match.ranker.id === playerId ? { prompt: match.correct } : null;
 }
@@ -300,7 +310,19 @@ function validOrder(match: Match, playerId: string, orderedIds: unknown): ordere
 }
 
 export function updateRankingPreview(match: Match, playerId: string, orderedIds: unknown, drag: unknown): Match | null {
-  if (match.phase !== 'ranking' || !validOrder(match, playerId, orderedIds)) return null;
+  if (!validOrder(match, playerId, orderedIds)) return null;
+  if (match.phase === 'batch_ranking') {
+    // This order is private to the ranker until review. Do not retain drag
+    // coordinates or count a draft as an early lock.
+    const assignment = match.batchAssignments.find(current => current.ranker.id === playerId);
+    const previous = assignment?.draftOrder ?? match.rankTargets.map(player => player.id);
+    if (orderedIds.every((id, index) => previous[index] === id)) return null;
+    return {
+      ...match,
+      batchAssignments: match.batchAssignments.map(current => current === assignment
+        ? { ...current, draftOrder: [...orderedIds] } : current),
+    };
+  }
   let cleanDrag: RankingDrag | null = null;
   if (drag !== null) {
     if (!drag || typeof drag !== 'object' || Array.isArray(drag)) return null;
@@ -321,10 +343,10 @@ export function submitRanking(match: Match, playerId: string, orderedIds: readon
   if (!validOrder(match, playerId, orderedIds)) return null;
   if (match.phase === 'batch_ranking') {
     const batchAssignments = match.batchAssignments.map(assignment => assignment.ranker.id === playerId
-      ? { ...assignment, orderedIds: [...orderedIds] }
+      ? { ...assignment, draftOrder: null, orderedIds: [...orderedIds] }
       : assignment);
     const updated = { ...match, batchAssignments };
-    return batchAssignments.every(assignment => assignment.orderedIds) ? startSlides(updated, present) : updated;
+    return batchAssignments.every(assignment => assignment.orderedIds) ? showSlide(updated, 0, present) : updated;
   }
   const byId = new Map(match.rankTargets.map(player => [player.id, player]));
   return { ...match, phase: 'hint', ranking: orderedIds.map(id => byId.get(id)!), preview: null,
@@ -361,23 +383,24 @@ export function nextRound(match: Match, players: readonly Player[], prompts: rea
 }
 
 export function skipRound(match: Match, players: readonly Player[], prompts: readonly Prompt[], rng = Math.random): Match | null {
-  if (match.phase === 'batch_ranking') return startSlides(match, players);
   if (match.phase !== 'ranking') return null;
   // Keep an unused question near the front if the assigned ranker misses their turn.
   const remainingCustomPrompts = match.customPrompt ? [match.correct, ...match.remainingCustomPrompts] : match.remainingCustomPrompts;
   return advance({ ...match, remainingCustomPrompts }, players, prompts, rng);
 }
 
-function startSlides(match: Match, present: readonly Player[]): Match {
-  const batchAssignments = match.batchAssignments.filter(assignment => assignment.orderedIds !== null);
-  const remainingCustomPrompts = [
-    ...match.batchAssignments.filter(assignment => assignment.customPrompt && !assignment.orderedIds).map(assignment => assignment.correct),
-    ...match.remainingCustomPrompts,
-  ];
-  if (!batchAssignments.length) {
-    return { ...match, phase: 'finished', batchAssignments: [], remainingCustomPrompts, options: [], ranking: [] };
+export function expireRanking(match: Match, players: readonly Player[]): Match | null {
+  if (match.phase !== 'ranking' && match.phase !== 'batch_ranking') return null;
+  const defaultOrder = match.rankTargets.map(player => player.id);
+  if (match.phase === 'ranking') {
+    return submitRanking(match, match.ranker.id, match.preview?.orderedIds ?? defaultOrder, players);
   }
-  return showSlide({ ...match, batchAssignments, totalRounds: batchAssignments.length, remainingCustomPrompts }, 0, present);
+  const batchAssignments = match.batchAssignments.map(assignment => ({
+    ...assignment,
+    orderedIds: assignment.orderedIds ?? assignment.draftOrder ?? defaultOrder,
+    draftOrder: null,
+  }));
+  return showSlide({ ...match, batchAssignments }, 0, players);
 }
 
 function showSlide(match: Match, index: number, present: readonly Player[]): Match {
