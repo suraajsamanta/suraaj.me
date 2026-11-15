@@ -9,7 +9,7 @@ export type Match = {
   round: number;
   totalRounds: number;
   queue: Player[];
-  players: Player[];
+  startingRoster: Player[];
   ranker: Player;
   rankTargets: Player[];
   ranking: Player[];
@@ -50,6 +50,13 @@ const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
   cabin: 'Picture the group on a cabin weekend.',
   everyday: 'Think about the little things people do in everyday life.',
   spotlight: 'Picture this group in a moment that gets everyone’s attention.',
+  'dark-funeral': 'Picture a funeral that does not go as planned.',
+  'dark-haunting': 'Think about how this group would deal with ghosts.',
+  'dark-villain': 'Imagine the group in a low-budget villain origin story.',
+  'dark-bargain': 'Think about a cursed deal and its fine print.',
+  'dark-alibi': 'Picture this group trying to explain a very suspicious evening.',
+  'dark-disaster': 'Think about who this crew becomes when everything goes wrong.',
+  'dark-apocalypse': 'Picture the group after civilization has called it a day.',
 });
 
 export const MANUAL_RANKING_SECONDS = 90;
@@ -79,8 +86,13 @@ function shuffled<T>(entries: readonly T[], rng: () => number): T[] {
   return list;
 }
 
-function connected(players: readonly Player[]): Player[] {
-  return [...new Map(players.filter(player => player.connected).map(player => [player.id, player])).values()];
+function rosterById(players: readonly Player[]): Map<string, Player> {
+  return new Map(players.map(player => [player.id, player]));
+}
+
+function eligibleGuessers(startingRoster: readonly Player[], present: readonly Player[], rankerId: string): string[] {
+  return [...new Set([...startingRoster, ...present.filter(player => player.connected)].map(player => player.id))]
+    .filter(id => id !== rankerId);
 }
 
 function readyPrompts(prompts: readonly Prompt[]): Prompt[] {
@@ -99,27 +111,28 @@ function chooseOptions(prompts: Prompt[], used: string[], rng: () => number) {
 }
 
 export function createMatch(players: readonly Player[], prompts: readonly Prompt[], rng = Math.random): Match | null {
-  const current = connected(players);
+  const startingRoster = [...rosterById(players).values()].map(player => ({ ...player }));
   const bank = readyPrompts(prompts);
-  if (current.length < 3 || bank.length < 4) return null;
-  const queue = shuffled(current, rng);
-  const ranker = queue[0];
-  const rankTargets = current.filter(player => player.id !== ranker.id);
+  if (startingRoster.filter(player => player.connected).length < 3 || bank.length < 4) return null;
+  const queue = shuffled(startingRoster, rng);
+  // A player who already stepped away is still in the game, but doesn't delay the first turn.
+  const [ranker] = queue.splice(queue.findIndex(player => player.connected), 1);
+  queue.unshift(ranker);
   return {
     phase: 'ranking',
     round: 1,
     totalRounds: queue.length,
     queue,
-    players: current,
+    startingRoster,
     ranker,
-    rankTargets,
+    rankTargets: startingRoster,
     ranking: [],
     preview: null,
     optionsShown: false,
     ...chooseOptions(bank, [], rng),
-    eligibleGuesserIds: rankTargets.map(player => player.id),
+    eligibleGuesserIds: eligibleGuessers(startingRoster, [], ranker.id),
     guesses: {},
-    scores: Object.fromEntries(current.map(player => [player.id, 0])),
+    scores: Object.fromEntries(startingRoster.map(player => [player.id, 0])),
     results: [],
   };
 }
@@ -217,31 +230,32 @@ export function skipRound(match: Match, players: readonly Player[], prompts: rea
 }
 
 function advance(match: Match, players: readonly Player[], prompts: readonly Prompt[], rng: () => number): Match | null {
-  const active = connected(players);
-  const activeById = new Map(active.map(player => [player.id, player]));
-  const nextIndex = match.queue.findIndex((player, i) => i >= match.round && activeById.has(player.id));
-  if (active.length < 2 || nextIndex === -1) {
+  const presentById = rosterById(players);
+  const nextIndex = match.queue.findIndex((player, i) => i >= match.round && presentById.get(player.id)?.connected);
+  if (nextIndex === -1) {
     // A skipped turn never unmasks its unused prompt as an answer.
     return { ...match, phase: 'finished', preview: null };
   }
   const bank = readyPrompts(prompts);
   if (bank.length < 4) return null;
-  const ranker = activeById.get(match.queue[nextIndex].id)!;
-  const rankTargets = active.filter(player => player.id !== ranker.id);
+  const ranker = { ...match.queue[nextIndex], connected: true };
+  const rankTargets = match.startingRoster.map(player => ({
+    ...player, connected: presentById.get(player.id)?.connected ?? false,
+  }));
+  const eligibleGuesserIds = eligibleGuessers(match.startingRoster, [...presentById.values()], ranker.id);
   return {
     ...match,
     phase: 'ranking',
     round: nextIndex + 1,
-    players: active,
     ranker,
     rankTargets,
     ranking: [],
     preview: null,
     optionsShown: false,
     ...chooseOptions(bank, match.usedPromptIds, rng),
-    eligibleGuesserIds: rankTargets.map(player => player.id),
+    eligibleGuesserIds,
     guesses: {},
-    scores: Object.fromEntries([...Object.entries(match.scores), ...active.filter(player => !Object.hasOwn(match.scores, player.id)).map(player => [player.id, 0])]),
+    scores: Object.fromEntries([...Object.entries(match.scores), ...eligibleGuesserIds.filter(id => !Object.hasOwn(match.scores, id)).map(id => [id, 0])]),
     results: [],
   };
 }

@@ -165,3 +165,19 @@
   .editable .move { gap: .2rem; }
 }
 @media(prefers-reduced-motion: reduce) { .dragRow,.heldCard { transition: none; } }
+
+.rankName { display: flex; align-items: center; flex-wrap: wrap; gap: .1rem .45rem; min-width: 0; }
+.rankName > strong { min-width: 0; overflow-wrap: anywhere; }
+.rankRole,.rankAway { font-size: .65rem; font-weight: 850; line-height: 1.25; white-space: nowrap; }
+.rankRole { color: #ffaedf; }
+.rankAway { color: #dac8de; font-weight: 650; }
+@media (min-width: 720px) {
+  .liveBoard .dragList {
+    --step: clamp(36px, calc((100svh - 260px) / max(1, var(--count))), 64px);
+  }
+}
+
+.shell .deckToggle { border-color: #e7a8756b; background: #45252e; }
+.shell .deckToggle input { accent-color: #ffc496; }
+.darkBadge { background: #683637; color: #ffe0c3; box-shadow: inset 0 0 0 1px #f4a77766; }
+.shell[data-deck='dark'] { background: radial-gradient(ellipse at 55% 0,#532831 0,transparent 57%),#1b1020; }

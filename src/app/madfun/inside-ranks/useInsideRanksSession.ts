@@ -3,10 +3,14 @@
 import { usePhoneParty, type PhonePartyConfig } from '../shared/usePhoneParty';
 import { createMatch, nextRound, roundDeadline, privateView, publicView, reveal, showOptions, skipRound, submitGuess, submitRanking, updateRankingPreview, type RankingDrag, type Match, type Player, type Prompt, type PublicView } from './engine';
 import { INSIDE_RANKS_PROMPTS } from './prompts';
+import { INSIDE_RANKS_DARK_PROMPTS } from './dark-prompts';
 
-type Model = { matchId: number; match: Match | null; autoRun: boolean; deadline: number | null; rankingStartedAt: number | null };
-type InsideRanksPublic = { matchId: number; hostId: string; players: Player[]; match: PublicView | null; autoRun: boolean; deadline: number | null };
-export type InsideRanksAction = { type: 'set_auto'; enabled: boolean } | { type: 'start' | 'show_options' | 'expire_ranking' | 'reveal' | 'next' | 'skip' | 'rematch' } |
+type Deck = 'classic' | 'dark';
+const promptsFor = (deck: Deck) => deck === 'dark' ? INSIDE_RANKS_DARK_PROMPTS : INSIDE_RANKS_PROMPTS;
+
+type Model = { deck: Deck; matchId: number; match: Match | null; autoRun: boolean; deadline: number | null; rankingStartedAt: number | null };
+type InsideRanksPublic = { deck: Deck; matchId: number; hostId: string; players: Player[]; match: PublicView | null; autoRun: boolean; deadline: number | null };
+export type InsideRanksAction = { type: 'set_deck'; deck: Deck } | { type: 'set_auto'; enabled: boolean } | { type: 'start' | 'show_options' | 'expire_ranking' | 'reveal' | 'next' | 'skip' | 'rematch' } |
   { type: 'rank'; orderedIds: string[] } | { type: 'guess'; optionId: string } |
   { type: 'rank_preview'; orderedIds: string[]; drag: RankingDrag | null };
 const roster = (players: Player[]) => players.map(({ id, name, connected }) => ({ id, name, connected }));
@@ -14,14 +18,14 @@ const roster = (players: Player[]) => players.map(({ id, name, connected }) => (
 const config: PhonePartyConfig<Model, InsideRanksPublic> = {
   protocol: 'madfun.insideranks.v1',
   recoverPlayersKey: 'madfun.insideranks.player.v1',
-  initial: () => ({ matchId: 0, match: null, autoRun: false, deadline: null, rankingStartedAt: null }),
+  initial: () => ({ deck: 'classic', matchId: 0, match: null, autoRun: false, deadline: null, rankingStartedAt: null }),
   reconcilePresence(model, people) {
     const match = model.match;
     if (!match?.preview?.drag || people.some(person => person.id === match.ranker.id && person.connected)) return model;
     return { ...model, match: { ...match, preview: { ...match.preview, drag: null } } };
   },
-  view({ matchId, match, autoRun, deadline }, people, hostId) {
-    return { matchId, hostId, players: roster(people), autoRun, deadline,
+  view({ deck, matchId, match, autoRun, deadline }, people, hostId) {
+    return { deck, matchId, hostId, players: roster(people), autoRun, deadline,
       match: match && publicView(match, people.some(person => person.id === match.ranker.id && person.connected)) };
   },
   secret(model, id) {
@@ -35,13 +39,18 @@ const config: PhonePartyConfig<Model, InsideRanksPublic> = {
     if (!action || matchId !== model.matchId || round !== model.match?.round) return null;
     const people = roster(participants);
     const host = actor.id === hostId;
+    if (action.type === 'set_deck') {
+      if (!host || (model.match && model.match.phase !== 'finished') ||
+          (action.deck !== 'classic' && action.deck !== 'dark') || action.deck === model.deck) return null;
+      return { ...model, deck: action.deck };
+    }
     if (action.type === 'set_auto') {
       if (!host || typeof action.enabled !== 'boolean' || action.enabled === model.autoRun) return null;
       return { ...model, autoRun: action.enabled, deadline: roundDeadline(action.enabled, model.match?.phase, model.rankingStartedAt, Date.now()) };
     }
     if (action.type === 'start' || action.type === 'rematch') {
       if (!host || (model.match && model.match.phase !== 'finished')) return null;
-      const match = createMatch(people, INSIDE_RANKS_PROMPTS);
+      const match = createMatch(people, promptsFor(model.deck));
       const now = Date.now();
       return match ? { ...model, matchId: model.matchId + 1, match, rankingStartedAt: now,
         deadline: roundDeadline(model.autoRun, match.phase, now, now) } : null;
@@ -56,10 +65,10 @@ const config: PhonePartyConfig<Model, InsideRanksPublic> = {
       action.type === 'guess' ? submitGuess(model.match, actor.id, action.optionId) :
       !host ? null : action.type === 'show_options' ? showOptions(model.match) :
       action.type === 'reveal' ? reveal(model.match) :
-      action.type === 'next' ? nextRound(model.match, people, INSIDE_RANKS_PROMPTS) :
+      action.type === 'next' ? nextRound(model.match, people, promptsFor(model.deck)) :
       (action.type === 'skip' && !people.some(p => p.id === model.match!.ranker.id && p.connected) ||
         action.type === 'expire_ranking' && expired)
-        ? skipRound(model.match, people, INSIDE_RANKS_PROMPTS) : null;
+        ? skipRound(model.match, people, promptsFor(model.deck)) : null;
     if (!match) return null;
     if (match.phase === model.match.phase && match.round === model.match.round) return { ...model, match };
     const rankingStartedAt = match.phase === 'ranking' ? now : null;

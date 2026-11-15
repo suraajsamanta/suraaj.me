@@ -27,30 +27,35 @@ test('ranking and guessing redact the correct prompt and identities until allowe
   const s=round();
   assert(e.publicView(s).options.length===0);
   assert.equal(e.publicView(s).correct,null);
-  assert.equal(e.privateView(s,s.rankTargets[0].id),null);
+  const guesser = s.eligibleGuesserIds[0];
+  assert.equal(e.privateView(s,guesser),null);
   assert.deepEqual(e.privateView(s,s.ranker.id),{prompt:s.correct});
-  const guessed=e.submitGuess(e.showOptions(rank(s)),s.rankTargets[0].id,s.correct.id);
+  const guessed=e.submitGuess(e.showOptions(rank(s)),guesser,s.correct.id);
   const view=e.publicView(guessed);
   assert.equal(view.options.length,4);
   assert(new Set(view.options.map(p=>p.id)).size===4);
   assert.equal(view.correct,null);
   assert.equal(e.privateView(guessed,s.ranker.id),null);
-  assert.deepEqual(view.guessedIds,[s.rankTargets[0].id]);
+  assert.deepEqual(view.guessedIds,[guesser]);
   assert.deepEqual(view.results,[]);
   assert(!Object.hasOwn(view,'guesses'));
 });
 
-test('only ranker can rank each friend exactly once; eligible friends each lock one answer',()=>{
-  const s=round(), [a,b,c]=s.rankTargets;
-  assert.equal(e.submitRanking(s,a.id,[a.id,b.id,c.id]),null);
-  assert.equal(e.submitRanking(s,s.ranker.id,[a.id,b.id,b.id]),null);
-  assert.equal(e.submitRanking(s,s.ranker.id,[a.id,b.id,'unknown']),null);
-  assert.equal(e.submitGuess(s,a.id,s.correct.id),null);
+test('only ranker can rank everyone exactly once, including themself; only eligible friends can guess',()=>{
+  const s=round(), ids=s.rankTargets.map(p=>p.id), [a,b]=s.eligibleGuesserIds;
+  assert(ids.includes(s.ranker.id));
+  assert(!s.eligibleGuesserIds.includes(s.ranker.id));
+  assert.equal(e.submitRanking(s,a,ids),null);
+  assert.equal(e.submitRanking(s,s.ranker.id,ids.filter(id=>id!==s.ranker.id)),null);
+  assert.equal(e.submitRanking(s,s.ranker.id,[...ids.slice(1),ids[1]]),null);
+  assert.equal(e.submitRanking(s,s.ranker.id,[...ids.slice(1),'unknown']),null);
+  assert.equal(e.submitGuess(s,a,s.correct.id),null);
   const g=e.showOptions(rank(s));
-  assert.deepEqual(g.ranking.map(p=>p.id),[c.id,b.id,a.id]);
+  assert.deepEqual(g.ranking.map(p=>p.id),ids.toReversed());
   assert.equal(e.submitGuess(g,s.ranker.id,s.correct.id),null);
-  assert.equal(e.submitGuess(g,a.id,'made-up'),null);
-  assert.equal(e.submitGuess(e.submitGuess(g,a.id,s.correct.id),a.id,s.correct.id),null);
+  assert.equal(e.submitGuess(g,a,'made-up'),null);
+  assert.equal(e.submitGuess(e.submitGuess(g,a,s.correct.id),a,s.correct.id),null);
+  assert(e.submitGuess(g,b,s.correct.id));
 });
 
 test('one point for a correct guess; only reveal unlocks the answer; rotate all rankers without repeats',()=>{
@@ -65,13 +70,13 @@ test('one point for a correct guess; only reveal unlocks the answer; rotate all 
       assert(!seen.has(option.id));
       seen.add(option.id);
     }
-    const g=e.showOptions(rank(s)), [a,b]=s.rankTargets;
-    const correct=e.submitGuess(g,a.id,s.correct.id);
-    const wrong=e.submitGuess(correct,b.id,s.options.find(p=>p.id!==s.correct.id).id);
+    const g=e.showOptions(rank(s)), [a,b]=s.eligibleGuesserIds;
+    const correct=e.submitGuess(g,a,s.correct.id);
+    const wrong=e.submitGuess(correct,b,s.options.find(p=>p.id!==s.correct.id).id);
     const revealed=e.reveal(wrong);
     assert.equal(e.reveal(revealed),null);
-    assert.equal(revealed.scores[a.id],s.scores[a.id]+1);
-    assert.equal(revealed.scores[b.id],s.scores[b.id]);
+    assert.equal(revealed.scores[a],s.scores[a]+1);
+    assert.equal(revealed.scores[b],s.scores[b]);
     assert.equal(e.publicView(revealed).correct.id,s.correct.id);
     s=e.nextRound(revealed,players,bank,()=>0.8);
   }
@@ -86,6 +91,8 @@ test('host can skip during ranking; late joiners guess next round, and skipped p
   assert.equal(next.round,2);
   assert.notEqual(next.ranker.id,s.ranker.id);
   assert(next.eligibleGuesserIds.includes(late.id));
+  assert(!next.rankTargets.some(p=>p.id===late.id));
+  assert(!next.queue.some(p=>p.id===late.id));
   assert.equal(next.scores[late.id],0);
   assert(!next.options.some(p=>s.options.some(q=>q.id===p.id)));
   assert.equal(e.skipRound(rank(s),players,bank),null);
@@ -101,7 +108,7 @@ test('hint stage exposes context and ranking, but no candidate wording, IDs, or 
   const hint = rank(s);
   const view = e.publicView(hint);
   assert.equal(view.phase, 'hint');
-  assert.equal(view.ranking.length, 3);
+  assert.equal(view.ranking.length, players.length);
   assert.match(view.hint, /^Think|^Picture/);
   assert.deepEqual(view.options, []);
   assert.equal(view.correct, null);
@@ -110,7 +117,7 @@ test('hint stage exposes context and ranking, but no candidate wording, IDs, or 
     assert(!JSON.stringify(view).includes(option.text));
     assert(!JSON.stringify(view).includes(option.id));
   }
-  assert.equal(e.submitGuess(hint, s.rankTargets[0].id, s.correct.id), null);
+  assert.equal(e.submitGuess(hint, s.eligibleGuesserIds[0], s.correct.id), null);
   const choosing = e.showOptions(hint);
   assert.equal(e.showOptions(choosing), null);
   assert.equal(e.publicView(choosing).options.length, 4);
@@ -137,7 +144,8 @@ test('auto-run sets deadlines without choosing rankings or guesses', () => {
 });
 
 test('live ranking preview broadcasts only the draft order and bounded drag position', () => {
-  const s = round(), [a,b,c] = s.rankTargets, ids = [b.id,c.id,a.id];
+  const s = round(), [a,b,c,d] = s.rankTargets, ids = [b.id,c.id,a.id,d.id];
+  assert.equal(a.id,s.ranker.id);
   const updated = e.updateRankingPreview(s,s.ranker.id,ids,{id:a.id,position:1.235,prompt:s.correct});
   const view = e.publicView(updated);
   assert.deepEqual(view.preview,{orderedIds:ids,drag:{id:a.id,position:1.24}});
@@ -159,14 +167,14 @@ test('live ranking preview broadcasts only the draft order and bounded drag posi
 
 test('only current ranker can preview a complete valid order and preview cannot persist to a new round', () => {
   const s = round(), ids = s.rankTargets.map(p=>p.id), who = s.ranker.id;
-  for (const order of [null,[],[ids[0],ids[0],ids[1]],[who,ids[1],ids[2]]]) {
+  for (const order of [null,[],[ids[0],ids[0],...ids.slice(2)],[...ids.slice(0,-1),'unknown']]) {
     assert.equal(e.updateRankingPreview(s,who,order,null),null);
   }
-  for (const drag of [undefined,[],{}, {id:who,position:0},{id:ids[0],position:NaN},{id:ids[0],position:Infinity},
-    {id:ids[0],position:-0.05},{id:ids[0],position:2.01},{id:ids[0],position:'1'}]) {
+  for (const drag of [undefined,[],{}, {id:'unknown',position:0},{id:ids[0],position:NaN},{id:ids[0],position:Infinity},
+    {id:ids[0],position:-0.05},{id:ids[0],position:ids.length-0.99},{id:ids[0],position:'1'}]) {
     assert.equal(e.updateRankingPreview(s,who,ids,drag),null);
   }
-  assert.equal(e.updateRankingPreview(s,ids[0],ids,{id:ids[0],position:1}),null);
+  assert.equal(e.updateRankingPreview(s,s.eligibleGuesserIds[0],ids,{id:ids[0],position:1}),null);
   assert.equal(e.updateRankingPreview(s,who,ids,null),null);
   assert.equal(e.updateRankingPreview(rank(s),who,ids,{id:ids[0],position:1}),null);
   const draft = e.updateRankingPreview(s,who,ids,{id:ids[0],position:1});
@@ -187,16 +195,62 @@ test('a temporarily offline player retains points and takes their next turn when
   const s = round(), gone = s.queue[2], next = s.queue[1];
   const correct = e.submitGuess(e.showOptions(rank(s)),gone.id,s.correct.id);
   const after = e.reveal(correct);
-  const onlyTwo = players.map(p => ({ ...p, connected: p.id === s.ranker.id || p.id === next.id }));
-  const progress = e.nextRound(after,onlyTwo,bank,()=>0.8);
+  const onlyOne = players.map(p => ({ ...p, connected: p.id === next.id }));
+  const progress = e.nextRound(after,onlyOne,bank,()=>0.8);
   assert.equal(progress.phase,'ranking');
   assert.equal(progress.round,2);
   assert.equal(progress.ranker.id,next.id);
-  assert.equal(progress.rankTargets.length,1);
+  assert.deepEqual(progress.rankTargets.map(p=>p.id),players.map(p=>p.id));
+  assert(progress.rankTargets.some(p=>p.id===gone.id && !p.connected));
+  assert(progress.eligibleGuesserIds.includes(gone.id));
+  const canAnswerOnReturn = e.submitGuess(e.showOptions(rank(progress)),gone.id,progress.correct.id);
+  assert(canAnswerOnReturn);
+  assert.equal(e.reveal(canAnswerOnReturn).scores[gone.id],2);
   assert.equal(progress.scores[gone.id],1);
   const further = e.nextRound(e.reveal(rank(progress)),players,bank,()=>0.8);
   assert.equal(further.phase,'ranking');
   assert.equal(further.round,3);
   assert.equal(further.ranker.id,gone.id);
   assert.equal(further.scores[gone.id],1);
+});
+
+test('a player who stepped away in the lobby is included in all ranks, eligible to return, and never starts alone', () => {
+  const [away,...online] = players;
+  const beforeStart = [{...away,connected:false},...online];
+  assert.equal(e.createMatch(beforeStart.slice(0,3),bank,()=>0.8),null);
+  const s = e.createMatch(beforeStart,bank,()=>0.8);
+  assert.equal(s.round,1);
+  assert.equal(s.totalRounds,players.length);
+  assert.notEqual(s.ranker.id,away.id);
+  assert.deepEqual(s.rankTargets,beforeStart);
+  assert(s.eligibleGuesserIds.includes(away.id));
+  const next = e.nextRound(e.reveal(rank(s)),online,bank,()=>0.8);
+  assert.notEqual(next.ranker.id,away.id);
+  assert(next.rankTargets.some(p=>p.id===away.id && p.name===away.name && !p.connected));
+  assert(next.eligibleGuesserIds.includes(away.id));
+  assert.equal(next.scores[away.id],0);
+  assert(e.updateRankingPreview(next,next.ranker.id,next.rankTargets.map(p=>p.id),{id:away.id,position:0}));
+});
+
+test('Dark Mode has its own deck, private prompts and category hints across rounds', async () => {
+  const { INSIDE_RANKS_DARK_PROMPTS: dark } = await load('./dark-prompts.ts');
+  assert.equal(dark.length, 56);
+  assert.equal(new Set(dark.map(p => p.text)).size, 56);
+  assert.equal(new Set([...bank, ...dark].map(p => p.id)).size, bank.length + dark.length);
+  const darkIds = new Set(dark.map(p => p.id));
+  const useDeck = e.createMatch(players, dark, () => 0.8);
+  const privatePrompt = e.privateView(useDeck, useDeck.ranker.id).prompt;
+  assert(darkIds.has(privatePrompt.id));
+  assert.equal(e.publicView(useDeck).options.length, 0);
+  assert.equal(e.publicView(useDeck).correct, null);
+  const locked = rank(useDeck);
+  const hint = e.publicView(locked).hint;
+  assert.notEqual(hint, 'Think about the situation this group’s ranking might fit.');
+  assert(!hint.includes(privatePrompt.text));
+  const guessing = e.showOptions(locked);
+  assert.equal(e.publicView(guessing).options.length, 4);
+  assert(e.publicView(guessing).options.every(option => darkIds.has(option.id)));
+  const next = e.nextRound(e.reveal(guessing), players, dark, () => 0.2);
+  assert(next.options.every(option => darkIds.has(option.id)));
+  assert(!darkIds.has(round().correct.id));
 });

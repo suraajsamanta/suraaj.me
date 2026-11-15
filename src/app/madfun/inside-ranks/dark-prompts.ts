@@ -1,0 +1,78 @@
+import type { Prompt } from './engine';
+
+const categories = {
+  'dark-funeral': [
+    'Who would put “open bar” in their obituary to make sure people show up?',
+    'Who would review their own funeral from beyond the grave and dock a star for parking?',
+    'Who would use the reading of the will to finally ask for their hoodie back?',
+    'Who would haunt the family until somebody removed the bad photo from the memorial slideshow?',
+    'Who would leave everyone one dollar and make them fight over the good air fryer?',
+    'Who would include a mandatory costume change in their funeral plans?',
+    'Who would accidentally thank the deceased for hosting?',
+    'Who would insist on a closed casket because they didn’t approve the outfit?',
+  ],
+  'dark-haunting': [
+    'Who would tell the ghost to stop slamming doors because the deposit is nonrefundable?',
+    'Who would give their sleep paralysis demon a chore on the roommate rota?',
+    'Who would leave a one-star cabin review because the haunting was mostly admin?',
+    'Who would put the haunting on mute and sleep through the third act?',
+    'Who would interrogate a Ouija board about who left them on read?',
+    'Who would claim the screaming in the walls is just old pipes until the pipes say their name?',
+    'Who would charge the ghost rent after finding out it gets the bigger room?',
+    'Who would ask a cursed mirror for outfit feedback and get offended when it answers?',
+  ],
+  'dark-villain': [
+    'Who would give their henchmen performance reviews halfway through the final battle?',
+    'Who would have the villain monologue ready but forget to unmute?',
+    'Who would build an evil lair and then spend the whole movie fighting the HOA?',
+    'Who would abandon world domination once they found out it involved payroll?',
+    'Who would invite their nemesis to brunch to ask if the beef is actually mutual?',
+    'Who would buy an evil throne and immediately throw their back out assembling it?',
+    'Who would be the first villain to demand an apology from the hero for “coming in hot”?',
+    'Who would get kicked out of the evil council for putting the plan in the main group chat?',
+  ],
+  'dark-bargain': [
+    'Who would sell their soul and then dispute the charge?',
+    'Who would trade eternal damnation for eight uninterrupted hours of sleep?',
+    'Who would ask the devil to price-match a better offer from another demon?',
+    'Who would free the genie and spend the rest of the night asking why it ghosted them?',
+    'Who would take a cursed inheritance if it came with free laundry?',
+    'Who would wish for eternal youth and immediately complain about getting carded forever?',
+    'Who would sign a blood contract to avoid making one awkward phone call?',
+    'Who would give a demon the Wi-Fi password in exchange for one more episode of a canceled show?',
+  ],
+  'dark-alibi': [
+    'Who would ask a detective to send the questions in advance so they can prepare emotionally?',
+    'Who would spend more time choosing an interrogation outfit than figuring out why they’re there?',
+    'Who would correct the detective’s grammar while being accused?',
+    'Who would get subpoenaed and send back a calendar invite titled “Quick Sync”?',
+    'Who would get cleared immediately because nobody believes they could keep a secret?',
+    'Who would ruin a perfectly good alibi by insisting they were at a better restaurant?',
+    'Who would treat being a suspect like the start of their true-crime influencing career?',
+    'Who would give a courtroom sketch artist notes on their jawline?',
+  ],
+  'dark-disaster': [
+    'Who would spend their last five minutes on a sinking ship trying to cancel brunch?',
+    'Who would ignore the volcano warning because they had already paid for late checkout?',
+    'Who would still ask to split the bill evenly after the restaurant fell into a sinkhole?',
+    'Who would hear “everyone evacuate” and say “including people with checked bags?”',
+    'Who would use the final broadcast to publicly call out whoever stole their good speaker?',
+    'Who would be halfway through an emergency announcement before noticing they’re reading the dessert menu?',
+    'Who would get stuck in a time loop and keep ordering delivery to see what happens to the driver?',
+    'Who would step into the escape pod and immediately ask the group to Venmo for gas?',
+  ],
+  'dark-apocalypse': [
+    'Who would make the bunker Wi-Fi password a group inside joke nobody remembers?',
+    'Who would get banned from the last settlement for saying “let’s circle back”?',
+    'Who would see the end of civilization as the perfect time to open a niche coffee shop?',
+    'Who would turn ration distribution into a pushy rewards program?',
+    'Who would bring a giant houseplant as their one essential item in the evacuation?',
+    'Who would start a neighborhood feud over whose generator is louder at the end of the world?',
+    'Who would show up to the last human settlement and complain that it’s gotten too popular?',
+    'Who would ask the last working vending machine if it takes Apple Pay?',
+  ],
+} as const;
+
+export const INSIDE_RANKS_DARK_PROMPTS: Prompt[] = Object.entries(categories).flatMap(([category, questions]) =>
+  questions.map((text, index) => ({ id: `${category}-${index + 1}`, category, text })),
+);

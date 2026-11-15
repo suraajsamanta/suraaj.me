@@ -13,6 +13,15 @@ const insertAt = (ids: string[], id: string, slot: number) => {
 };
 const initials = (name: string) => name.trim().split(/\s+/u).slice(0, 2).map(word => Array.from(word)[0]).join('').toUpperCase();
 
+/** Labels are informational; neither role nor connection changes a card's slot. */
+export function RankName({ player, role }: { player: Player; role?: 'Ranker' | 'You' }) {
+  return <span className={styles.rankName}>
+    <strong>{player.name}</strong>
+    {role && <span className={styles.rankRole}>{role}</span>}
+    {!player.connected && <span className={styles.rankAway}>Away</span>}
+  </span>;
+}
+
 function HeldCard({ player, position }: { player: Player; position: number }) {
   return <div className={styles.heldCard} style={slotStyle(position)} aria-hidden="true">
     <span className={styles.rankAvatar}>{initials(player.name)}</span><strong>{player.name}</strong>
@@ -20,7 +29,7 @@ function HeldCard({ player, position }: { player: Player; position: number }) {
   </div>;
 }
 
-export function LiveRanking({ players, preview }: { players: readonly Player[]; preview?: Preview | null }) {
+export function LiveRanking({ players, preview, rankerId }: { players: readonly Player[]; preview?: Preview | null; rankerId: string }) {
   const ids = preview?.orderedIds ?? players.map(player => player.id);
   const held = players.find(player => player.id === preview?.drag?.id);
   return <div className={styles.liveBoard}>
@@ -30,7 +39,7 @@ export function LiveRanking({ players, preview }: { players: readonly Player[]; 
         const player = players.find(person => person.id === id);
         return player && <li key={id} className={styles.dragRow} style={slotStyle(slot)} data-lifted={held?.id === id}>
           <span className={styles.number}>{slot + 1}</span><span className={styles.rankAvatar} aria-hidden="true">{initials(player.name)}</span>
-          <strong>{player.name}</strong>
+          <RankName player={player} role={player.id === rankerId ? 'Ranker' : undefined}/>
         </li>;
       })}
       {held && preview?.drag && <li className={styles.dragOverlay} aria-hidden="true"><HeldCard player={held} position={preview.drag.position}/></li>}
@@ -38,8 +47,8 @@ export function LiveRanking({ players, preview }: { players: readonly Player[]; 
   </div>;
 }
 
-export function RankForm({ players, initial, settleOnMount, prompt, disabled, onRank, onPreview }: {
-  players: readonly Player[]; initial?: string[]; settleOnMount?: boolean; prompt: string; disabled: boolean;
+export function RankForm({ players, rankerId, initial, settleOnMount, prompt, disabled, onRank, onPreview }: {
+  players: readonly Player[]; rankerId: string; initial?: string[]; settleOnMount?: boolean; prompt: string; disabled: boolean;
   onRank: (ids: string[]) => void; onPreview: (preview: Preview) => void;
 }) {
   const [order, setOrder] = useState(() => initial ?? players.map(player => player.id));
@@ -132,7 +141,7 @@ export function RankForm({ players, initial, settleOnMount, prompt, disabled, on
   const held = players.find(player => player.id === drag?.id);
   return <form className={styles.stack} onSubmit={event => { event.preventDefault(); if (!disabled && !hand.current) onRank(order); }}>
     <div className={styles.private}><span className={styles.kicker}>Private • Only you can see this</span><h2>{prompt}</h2></div>
-    <p>Drag the grip to reorder. Put your best match at #1. Everyone can see the moves, but only you see the question.</p>
+    <p>Drag the dotted grips to rank everyone, including yourself. Put the best match at #1. Your moves are live; only you see the question.</p>
     <ol ref={list} className={`${styles.dragList} ${styles.editable}`} aria-label="Rank your friends" style={listStyle(order.length)}>
       {(dragBase ?? order).map(id => {
         const slot = order.indexOf(id);
@@ -141,7 +150,7 @@ export function RankForm({ players, initial, settleOnMount, prompt, disabled, on
           <span className={styles.grip} aria-hidden="true" onPointerDown={event => grab(event, id, slot)}
             onPointerMove={event => { if (hand.current?.pointer === event.pointerId) { hand.current.y = event.clientY; update(event.clientY, event.timeStamp); } }}
             onPointerUp={event => drop(event, false)} onPointerCancel={event => drop(event, true)} onLostPointerCapture={event => drop(event, true)}>⠿</span>
-          <span className={styles.number}>{slot + 1}</span><strong>{player.name}</strong>
+          <span className={styles.number}>{slot + 1}</span><RankName player={player} role={player.id === rankerId ? 'You' : undefined}/>
           <div className={styles.move}>
             <button type="button" disabled={disabled || slot === 0} onClick={() => step(id, slot - 1)} aria-label={`Move ${player.name} up`}>↑</button>
             <button type="button" disabled={disabled || slot === order.length - 1} onClick={() => step(id, slot + 1)} aria-label={`Move ${player.name} down`}>↓</button>
