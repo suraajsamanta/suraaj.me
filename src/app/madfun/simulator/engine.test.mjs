@@ -113,3 +113,53 @@ test('timer expires on the deadline; answered and empty rounds advance safely',(
  assert.equal(s.round,3);
  assert.equal(s.deadline,143000);
 });
+
+test('held preview mirrors fractional motion anonymously without committing or scoring',()=>{
+ const s=e.newGame('Alex'),players=[{id:'a',name:'One'},{id:'b',name:'Two'},{id:'c',name:'Three'}];
+ assert(e.start(s,players,bank));
+ for(const p of players)assert(e.submit(s,p.id,'Answer '+p.id,'raw-'+p.id));
+ assert.equal(e.judgeState(s).rankingDrag,null);
+ assert(e.beginJudging(s,()=>0.999));
+ const [a,b,c]=getOrder(s),version=s.rankingVersion;
+ assert(e.previewRanking(s,[a,b,c],version,{id:a,position:.112,authorId:'a'}));
+ assert.deepEqual(e.judgeState(s).rankingDrag,{id:a,position:.11});
+ assert(!e.previewRanking(s,[a,b,c],version,{id:a,position:.109}));
+ assert(e.previewRanking(s,[b,a,c],version,{id:a,position:1.38}));
+ assert.deepEqual(getOrder(s),[b,a,c]);
+ assert.deepEqual(e.publicState(s).judgingAnswers,e.judgeState(s).answers);
+ assert.deepEqual(e.publicState(s).rankingDrag,{id:a,position:1.38});
+ assert.equal(s.rankingVersion,version);
+ assert.deepEqual(s.judgingOrder,[a,b,c]);
+ assert.deepEqual(s.scores,{a:0,b:0,c:0});
+ assert.deepEqual(e.publicState(s).reveal,[]);
+ for(const answer of e.judgeState(s).answers)assert.deepEqual(Object.keys(answer),['id','text']);
+ assert(e.clearRankingPreview(s));assert(!e.clearRankingPreview(s));
+ assert.deepEqual(getOrder(s),[a,b,c]);
+ assert(e.previewRanking(s,[c,a,b],version,{id:c,position:0}));
+ assert(e.proposeRanking(s,[c,a,b],version));
+ assert.deepEqual(getOrder(s),[c,a,b]);
+ assert.equal(e.publicState(s).rankingDrag,null);
+ assert(!e.previewRanking(s,[a,b,c],version,{id:c,position:2}));
+ assert(e.previewRanking(s,[a,b,c],s.rankingVersion,{id:c,position:2}));
+ assert(e.rank(s,[a,b,c],s.rankingVersion));
+ assert.equal(e.publicState(s).rankingDrag,null);
+ assert.deepEqual(e.publicState(s).reveal.map(({points})=>points),[3,2,1]);
+ assert(e.next(s));
+ assert.equal(e.judgeState(s).rankingDrag,null);
+ assert.deepEqual(getOrder(s),[]);
+});
+
+test('preview rejects stale versions, invalid coordinates and partial permutations',()=>{
+ const s=e.newGame('Alex');
+ assert(e.start(s,[{id:'a',name:'One'},{id:'b',name:'Two'}],bank));
+ assert(!e.previewRanking(s,[],s.rankingVersion,{id:'foreign',position:0}));
+ assert(e.submit(s,'a','A','raw-a')&&e.submit(s,'b','B','raw-b')&&e.beginJudging(s));
+ const [a,b]=getOrder(s),version=s.rankingVersion;
+ for(const drag of [null,[],{}, {id:'a',position:0},{id:a,position:-.001},{id:a,position:1.001},{id:a,position:Infinity},{id:a,position:NaN},{id:a,position:'0'}]){
+  assert(!e.previewRanking(s,[a,b],version,drag));
+ }
+ for(const ids of [{},[a],[a,a],[a,'raw-b'],[a,b,'raw-b']])assert(!e.previewRanking(s,ids,version,{id:a,position:0}));
+ assert(!e.previewRanking(s,[a,b],version+1,{id:a,position:0}));
+ assert.equal(e.judgeState(s).rankingDrag,null);
+ assert.deepEqual(getOrder(s),[a,b]);
+});

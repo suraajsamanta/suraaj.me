@@ -13,3 +13,23 @@
 .phoneResults{max-width:620px;margin:0 auto}.phoneResults .reveal{grid-template-columns:minmax(0,1fr)}.phoneResults .reveal article{overflow-wrap:anywhere}
 @media(max-width:500px){.top{flex-wrap:wrap;gap:8px}.roomControls{margin-left:auto}.roomControls button{padding:10px;min-height:42px}.joinPanel{flex-wrap:wrap;text-align:center}.phoneResults .reveal article{padding:16px}}
 .shell .autoRun{display:flex;align-items:center;gap:.55rem;width:fit-content}.shell .autoRun input{display:inline-block;inline-size:1.15rem;block-size:1.15rem;margin:0;padding:0;accent-color:#d5fc75}.top{flex-wrap:wrap}
+
+/* Equal-height rows use the longest wrapped answer to size the board. This
+   keeps the animation positional without clipping any player's submission. */
+.draftList.dragBoard{position:relative;grid-auto-rows:1fr;isolation:isolate;--answer-gap:.65rem;row-gap:var(--answer-gap)}
+.dragBoard>li[data-drag-id]{transform:translateY(calc((100% + var(--answer-gap))*var(--shift)));transition:transform 125ms cubic-bezier(.2,.7,.25,1),background-color 120ms,border-color 120ms}
+.dragBoard>li[data-lifted=true]{background:#b995df13;border-style:dashed}
+.dragBoard>li[data-lifted=true]>*{opacity:.25}
+.dragBoard>li.draggableAnswer{cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.dragBoard>li.draggableAnswer[data-lifted=true]{cursor:grabbing}
+.dragBoard .draftText{white-space:pre-wrap}
+.answerGrip{font-size:1.35rem;line-height:1;color:#e7cdfb;flex:none}
+.dragBoard>li.answerGhost{position:absolute;top:0;inset-inline:.25rem -.125rem;height:var(--ghost-height);z-index:1;pointer-events:none;transform:translateY(var(--drag-top));transition:transform 105ms linear;background:#56356d;border-color:#f4cf73be;box-shadow:0 .5rem 1.2rem #120d20b0}
+.dragBoard>li.localGhost{transition:none}
+.liveAnswerBoard{margin-top:1rem}
+.liveAnswerStatus{display:flex;align-items:center;gap:.4rem;text-transform:uppercase;letter-spacing:.09em;font-size:.75rem;font-weight:850;color:#edd6fd}
+.liveAnswerStatus>i{width:.5rem;height:.5rem;border-radius:50%;background:#e2acff;box-shadow:0 0 .65rem #e2acff}
+@media(max-width:430px){.dragBoard .draggableAnswer{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:.35rem}.dragBoard .draggableAnswer .rankButtons{grid-column:2/-1;justify-content:flex-end}.dragBoard .rankButtons button{min-width:44px;min-height:44px}}
+@media(prefers-reduced-motion:reduce){.dragBoard>li[data-drag-id],.dragBoard>li.answerGhost{transition:none}}
+.liveAnswerViewport{max-height:clamp(240px,58svh,620px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding-inline:.15rem .35rem;border-radius:.55rem}
+.liveAnswerViewport:focus-visible{outline:2px solid #e2acff;outline-offset:3px}

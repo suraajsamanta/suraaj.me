@@ -1,0 +1,49 @@
+.card {
+  box-sizing: border-box;
+  display: grid;
+  gap: .4rem;
+  width: 100%;
+  max-width: 620px;
+  margin: .8rem auto;
+  padding: .8rem 1rem;
+  border: 1px solid #dab6f468;
+  border-left: 4px solid #dab6f4;
+  border-radius: 12px;
+  background: #352842;
+}
+
+.label {
+  color: #edd4ff;
+  font-size: .75rem;
+  font-weight: 850;
+  letter-spacing: .12em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.card .copy {
+  margin: 0;
+  color: #fff6ff;
+  font-size: clamp(1.05rem, 3.8vw, 1.26rem);
+  font-weight: 650;
+  line-height: 1.38;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.card[data-display] {
+  max-width: none;
+  margin: .8rem 0 1rem;
+  padding: clamp(.9rem, 1.45vw, 1.4rem) clamp(1rem, 1.8vw, 1.75rem);
+  background: linear-gradient(105deg, #443552, #30243e);
+}
+
+.card[data-display] .label {
+  font-size: clamp(.75rem, 1.15vw, 1rem);
+}
+
+.card[data-display] .copy {
+  max-width: 60ch;
+  font-size: clamp(1.25rem, 2.55vw, 2.2rem);
+  line-height: 1.32;
+}
