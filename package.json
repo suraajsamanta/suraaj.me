@@ -13,9 +13,12 @@
     "test:view": "node --test src/app/beerio/game/GameView.test.mjs src/app/beerio/game/PowerUpNotice.test.mjs src/app/beerio/game/guest-models.test.mjs",
     "test:audio": "node --test src/app/beerio/game/audio.test.mjs src/app/beerio/game/useRaceAudio.test.mjs",
     "generate:race-audio": "node scripts/generate-race-score.mjs",
-    "test:madfun": "node --test src/app/madfun/*/*.test.mjs src/app/madfun/party-games.test.mjs"
+    "test:madfun": "node --test src/app/madfun/*/*.test.mjs src/app/madfun/party-games.test.mjs",
+    "test:beerio2": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/app/madfun/beerio-2/*.test.mjs"
   },
   "dependencies": {
+    "@babylonjs/core": "^9.36.0",
+    "@dimforge/rapier3d-compat": "^0.21.0",
     "next": "16.4.5",
     "qrcode": "^1.5.4",
     "react": "19.3.0",

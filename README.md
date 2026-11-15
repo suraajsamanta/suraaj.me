@@ -68,3 +68,9 @@ Ricochet reuses the existing relay's private legacy rooms and validated input en
 Keep the host tab open. Brief socket outages reconnect using the room's private token; a host reload, closed tab, or relay process restart requires a new Ricochet room. Unlike Beerio's newer protocol, this first Ricochet release does not have server-restart checkpoint recovery. Never deploy or restart the relay to publish site-only Madfun changes. Use `[skip render]` commits for the existing Git deployment integration.
 
 Checks: `npm run test:madfun`, `npm run lint`, `npm run build`, plus existing Beerio tests. Tests create local loopback rooms only, never production rooms.
+
+### Beerio 2
+
+Open `/madfun/beerio-2` for Seattle Night. Pick Solo time trial or Host & drive and share the invite for a private three-lap online race with 2–10 drivers. Each phone sees its own chase camera. Hold W / Up to accelerate and S / Down to brake; use A/D or Left/Right to steer. Hold Space while turning to drift and release it to get a boost once charged. R returns the car to the starting line. Touch controls are also on screen. Append `?webgl=1` to skip WebGPU. Browsers without GPU-backed rendering can still play using a simplified compatibility view.
+
+Babylon.js selects WebGPU, WebGL 2, or a simpler software view. Rapier WebAssembly raycasts follow the sloped road. The host browser owns the online race and must stay open; reconnects can reclaim a seat while the page lives. The game uses marked private sessions on the existing Madfun party endpoint, separate from the original Beerio room protocol, with no server changes. Run `npm run test:beerio2` for course, physics, and isolated online integration coverage.

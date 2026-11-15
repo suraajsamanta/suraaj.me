@@ -1,0 +1,11 @@
+# Beerio 2: physical phone acceptance test
+
+Seattle Night is separate from the original game. Its web route is `/madfun/beerio-2`; do not alter the live Beerio route or relay for this test. Use a separate **HTTPS preview** of the exact commit on both phones. A plain HTTP laptop LAN address is not a valid WebGPU compatibility test: WebGPU is exposed only in a [secure context](https://www.w3.org/TR/webgpu/#gpu).
+
+1. Open the preview on a physical iPhone in Safari and on a physical Android phone in Chrome. Record model, OS, browser, network, commit, and the renderer shown in the footer: **WebGPU**, **WebGL 2**, or **Compatibility**. Do not infer the renderer from browser age.
+2. In each orientation, hold Gas and drag the steering pad with a second finger, then brake and release both inputs. Complete a lap: verify that the timer starts on throttle, records Best only after crossing the ordered gates and finish line, and starts a new lap. Hold Drift while turning and look for **BOOST** when released after a charged drift. Check that Reset clears the current run and keeps Best.
+3. Repeat several laps. Switch apps or lock the phone with Gas held, wait, then return. Gas must not remain held. The view should resume or offer a usable recovery path; record any black canvas, context loss, or notable stutter. [WebKit device-loss report](https://bugs.webkit.org/show_bug.cgi?id=331130) motivates this check but does not establish a Beerio 2 issue.
+4. Run again with `?webgl=1` in the URL to deliberately skip WebGPU. Verify **WebGL 2** on capable devices or **Compatibility** if neither accelerated renderer is available. Test a real accelerator run separately from this fallback.
+5. Record what passed, the renderer, and what was never exercised. Browser emulation does not certify physical touch controls or GPU stability.
+
+The solo prototype was exercised in Chromium’s software view on desktop and at phone width. The current online suite uses isolated relay rooms and checks concurrent races, the ten-driver cap, reconnecting, the wrong-game-code path, three complete laps with real WASM physics, results, and rematches. Neither accelerated rendering nor a physical phone session is verified by these tests.
