@@ -108,3 +108,60 @@
 .shell .autoRun input { width: 1.1rem; height: 1.1rem; min-height: 0; margin: .2rem 0 0; padding: 0; accent-color: #ffa5d6; }
 .autoRun span { display: grid; gap: .08rem; }
 .autoRun small { color: #e1d3e7; font-weight: 500; }
+
+.liveBoard {
+  max-width: 760px; width: 100%; margin-inline: auto; padding: clamp(.65rem,2vw,1rem);
+  border: 1px solid #e599de61; border-radius: 18px;
+  background: radial-gradient(ellipse at top right,#59345a88,transparent 60%),#201429;
+}
+.liveHeader {
+  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: .3rem 1rem;
+  margin: 0 .16rem .65rem;
+}
+.liveHeader > span {
+  display: inline-flex; align-items: center; gap: .45rem; color: #ffc1e5;
+  font-size: .8rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase;
+}
+.liveHeader i { width: .56rem; height: .56rem; background: #ff90ce; border-radius: 50%; box-shadow: 0 0 10px #ff90ceaa; }
+.liveHeader small { color: #ead7ee; overflow-wrap: anywhere; }
+.dragList {
+  --step: clamp(47px,6.4vh,64px); --gap: 5px; position: relative;
+  height: calc(var(--step) * var(--count)); margin: 0; padding: 0; list-style: none;
+}
+.dragList.editable { --step: 64px; }
+.dragRow,.heldCard {
+  position: absolute; inset-inline: 0; top: 0; height: calc(var(--step) - var(--gap));
+  transform: translateY(calc(var(--step) * var(--slot)));
+  display: grid; grid-template-columns: auto auto minmax(0,1fr); align-items: center; gap: clamp(.35rem,1.4vw,.75rem);
+  padding: 0 clamp(.36rem,1.6vw,.9rem); border-radius: 12px; border: 1px solid #e9beff3d; background: #3a2746;
+  transition: transform 125ms cubic-bezier(.2,.7,.25,1), background-color 120ms, border-color 120ms;
+}
+.editable .dragRow { grid-template-columns: auto auto minmax(0,1fr) auto; }
+.dragRow strong,.heldCard strong { overflow-wrap: anywhere; line-height: 1.12; }
+.dragRow[data-lifted="true"] { background: #f3a8d818; border: 1px dashed #f7a6dcca; }
+.dragRow[data-lifted="true"] > :not(.grip) { opacity: .26; }
+.dragRow[data-lifted="true"] > .grip { color: #ffb4e5; cursor: grabbing; }
+.rankAvatar {
+  display: grid; place-items: center; width: 1.95rem; height: 1.95rem; color: #fff0fb;
+  background: #754378; border-radius: .55rem; font-size: .72rem; font-weight: 900;
+}
+.grip {
+  display: grid; place-items: center; width: 44px; height: 48px; font-size: 1.75rem; line-height: 1;
+  color: #f4bedf; background: #fbe3ff10; border-radius: 9px;
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
+}
+.dragOverlay { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.heldCard {
+  inset-inline: .36rem -.14rem; grid-template-columns: auto minmax(0,1fr) auto;
+  color: #fff5fd; border-color: #fda4dfea;
+  background: linear-gradient(112deg,#713c69,#60376e);
+  box-shadow: 0 9px 19px #160a21a6, 0 0 14px #f58bce44;
+  transition: transform 105ms linear;
+}
+.editable .heldCard { transition: none; }
+.heldLabel { color: #ffdbf3; font-size: .65rem; text-transform: uppercase; font-weight: 900; letter-spacing: .1em; }
+@media(max-width: 390px) {
+  .editable .dragRow { padding-inline: .26rem; gap: .24rem; }
+  .editable .move { gap: .2rem; }
+}
+@media(prefers-reduced-motion: reduce) { .dragRow,.heldCard { transition: none; } }

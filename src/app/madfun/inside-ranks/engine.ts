@@ -2,6 +2,8 @@ export type Player = { id: string; name: string; connected: boolean };
 export type Prompt = { id: string; text: string; category?: string };
 export type Phase = 'ranking' | 'hint' | 'guessing' | 'reveal' | 'finished';
 export type Result = { playerId: string; optionId: string; points: number };
+export type RankingDrag = { id: string; position: number };
+export type RankingPreview = { orderedIds: string[]; drag: RankingDrag | null };
 export type Match = {
   phase: Phase;
   round: number;
@@ -11,6 +13,7 @@ export type Match = {
   ranker: Player;
   rankTargets: Player[];
   ranking: Player[];
+  preview: RankingPreview | null;
   options: Prompt[];
   optionsShown: boolean;
   correct: Prompt;
@@ -28,6 +31,7 @@ export type PublicView = {
   ranker: Player;
   rankTargets: Player[];
   ranking: Player[];
+  preview: RankingPreview | null;
   options: Prompt[];
   hint: string | null;
   correct: Prompt | null;
@@ -48,6 +52,8 @@ const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
   spotlight: 'Picture this group in a moment that gets everyone’s attention.',
 });
 
+export const MANUAL_RANKING_SECONDS = 90;
+
 export function phaseTimer(phase: Phase | undefined) {
   switch (phase) {
     case 'ranking': return { seconds: 75, action: 'expire_ranking' } as const;
@@ -56,6 +62,12 @@ export function phaseTimer(phase: Phase | undefined) {
     case 'reveal': return { seconds: 8, action: 'next' } as const;
     default: return null;
   }
+}
+
+export function roundDeadline(autoRun: boolean, phase: Phase | undefined, rankingStartedAt: number | null, now: number) {
+  if (phase === 'ranking') return (rankingStartedAt ?? now) + (autoRun ? (phaseTimer('ranking')?.seconds ?? 75) : MANUAL_RANKING_SECONDS) * 1000;
+  const timer = autoRun ? phaseTimer(phase) : null;
+  return timer ? now + timer.seconds * 1000 : null;
 }
 
 function shuffled<T>(entries: readonly T[], rng: () => number): T[] {
@@ -102,6 +114,7 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
     ranker,
     rankTargets,
     ranking: [],
+    preview: null,
     optionsShown: false,
     ...chooseOptions(bank, [], rng),
     eligibleGuesserIds: rankTargets.map(player => player.id),
@@ -111,7 +124,7 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
   };
 }
 
-export function publicView(match: Match): PublicView {
+export function publicView(match: Match, rankerConnected = true): PublicView {
   const revealed = match.phase === 'reveal' || (match.phase === 'finished' && match.ranking.length > 0);
   return {
     phase: match.phase,
@@ -120,6 +133,9 @@ export function publicView(match: Match): PublicView {
     ranker: match.ranker,
     rankTargets: match.rankTargets,
     ranking: match.ranking,
+    preview: match.phase === 'ranking' && match.preview
+      ? { ...match.preview, drag: rankerConnected ? match.preview.drag : null }
+      : null,
     options: match.optionsShown ? match.options : [],
     hint: match.phase === 'hint'
       ? (match.correct.category && Object.hasOwn(hintByCategory, match.correct.category) ? hintByCategory[match.correct.category] : 'Think about the situation this group’s ranking might fit.')
@@ -136,12 +152,36 @@ export function privateView(match: Match, playerId: string): { prompt: Prompt } 
   return match.phase === 'ranking' && match.ranker.id === playerId ? { prompt: match.correct } : null;
 }
 
+function validOrder(match: Match, playerId: string, orderedIds: unknown): orderedIds is string[] {
+  if (match.phase !== 'ranking' || match.ranker.id !== playerId || !Array.isArray(orderedIds)) return false;
+  if (orderedIds.length !== match.rankTargets.length || new Set(orderedIds).size !== orderedIds.length) return false;
+  const targetIds = new Set(match.rankTargets.map(player => player.id));
+  for (const id of orderedIds) if (!targetIds.has(id)) return false;
+  return true;
+}
+
+export function updateRankingPreview(match: Match, playerId: string, orderedIds: unknown, drag: unknown): Match | null {
+  if (!validOrder(match, playerId, orderedIds)) return null;
+  let cleanDrag: RankingDrag | null = null;
+  if (drag !== null) {
+    if (!drag || typeof drag !== 'object' || Array.isArray(drag)) return null;
+    const { id, position } = drag as Partial<RankingDrag>;
+    if (typeof id !== 'string' || !orderedIds.includes(id) || typeof position !== 'number' ||
+      !Number.isFinite(position) || position < 0 || position > orderedIds.length - 1) return null;
+    // Copy only rendering coordinates, never unknown data provided by a phone.
+    cleanDrag = { id, position: Math.round(position * 100) / 100 };
+  }
+  const previous = match.preview;
+  const previousOrder = previous?.orderedIds ?? match.rankTargets.map(player => player.id);
+  if (previous?.drag?.id === cleanDrag?.id && previous?.drag?.position === cleanDrag?.position &&
+    orderedIds.every((id, index) => previousOrder[index] === id)) return null;
+  return { ...match, preview: { orderedIds: [...orderedIds], drag: cleanDrag } };
+}
+
 export function submitRanking(match: Match, playerId: string, orderedIds: readonly string[]): Match | null {
-  if (match.phase !== 'ranking' || match.ranker.id !== playerId || !Array.isArray(orderedIds)) return null;
-  if (orderedIds.length !== match.rankTargets.length || new Set(orderedIds).size !== orderedIds.length) return null;
+  if (!validOrder(match, playerId, orderedIds)) return null;
   const byId = new Map(match.rankTargets.map(player => [player.id, player]));
-  if (!orderedIds.every(id => byId.has(id))) return null;
-  return { ...match, phase: 'hint', ranking: orderedIds.map(id => byId.get(id)!) };
+  return { ...match, phase: 'hint', ranking: orderedIds.map(id => byId.get(id)!), preview: null };
 }
 
 export function showOptions(match: Match): Match | null {
@@ -180,9 +220,9 @@ function advance(match: Match, players: readonly Player[], prompts: readonly Pro
   const active = connected(players);
   const activeById = new Map(active.map(player => [player.id, player]));
   const nextIndex = match.queue.findIndex((player, i) => i >= match.round && activeById.has(player.id));
-  if (active.length < 3 || nextIndex === -1) {
+  if (active.length < 2 || nextIndex === -1) {
     // A skipped turn never unmasks its unused prompt as an answer.
-    return { ...match, phase: 'finished' };
+    return { ...match, phase: 'finished', preview: null };
   }
   const bank = readyPrompts(prompts);
   if (bank.length < 4) return null;
@@ -196,6 +236,7 @@ function advance(match: Match, players: readonly Player[], prompts: readonly Pro
     ranker,
     rankTargets,
     ranking: [],
+    preview: null,
     optionsShown: false,
     ...chooseOptions(bank, match.usedPromptIds, rng),
     eligibleGuesserIds: rankTargets.map(player => player.id),

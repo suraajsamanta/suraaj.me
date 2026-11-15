@@ -6,6 +6,8 @@ import {PartyService} from '../../../../beerio-server/party.mjs';
 
 const compiled=ts.transpileModule(readFileSync(new URL('./party-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const {PartyClient}=await import('data:text/javascript;base64,'+Buffer.from(compiled).toString('base64'));
+const recoveryCode=ts.transpileModule(readFileSync(new URL('./party-seat-recovery.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {PartySeatRegistry, browserSeatCredential, rememberActivePlayer, readActivePlayer, forgetActivePlayer}=await import('data:text/javascript;base64,'+Buffer.from(recoveryCode).toString('base64'));
 const key='madfun.simulator.seat.v1';
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 function fixture(t){
@@ -40,7 +42,7 @@ function fixture(t){
  }
  globalThis.WebSocket=Socket;
  function client(remember=false){
-  const c=new PartyClient('ws://local.example/party',{rememberSimulatorSeat:remember});
+  const c=new PartyClient('ws://local.example/party',typeof remember==='string'?{rememberPlayerSeatKey:remember}:{rememberSimulatorSeat:remember});
   clients.push(c);
   return c;
  }
@@ -104,4 +106,55 @@ test('only opted-in Simulator players persist; matching name can reclaim, while 
  const saved=f.saved.get(key);
  const trivia=f.client(true);trivia.join(triviaHost.getSnapshot().code,'Blair','jeopardy');await settle();
  assert.equal(f.saved.get(key),saved,'trivia must not overwrite Simulator recovery data');
+});
+
+test('opted-in game recognizes a returning player after relay expiry without matching strangers by name',async t=>{
+ const f=fixture(t), namespace='madfun.insideranks.test', seatKey=namespace+'.transport', host=f.client();
+ const local=Object.getOwnPropertyDescriptor(globalThis,'localStorage'), vault=new Map();
+ Object.defineProperty(globalThis,'localStorage',{configurable:true,value:{getItem:key=>vault.get(key)??null,setItem:(key,value)=>vault.set(key,value)}});
+ t.after(()=>{if(local)Object.defineProperty(globalThis,'localStorage',local);else delete globalThis.localStorage;});
+ host.create('simulator');await settle();const code=host.getSnapshot().code;
+ const credential=browserSeatCredential(namespace,code,'Kim');
+ assert.equal(browserSeatCredential(namespace,code,' KIM '),credential);
+ assert.notEqual(browserSeatCredential(namespace,code,'Sam'),credential);
+ rememberActivePlayer(namespace,{code,name:'Kim'});
+ assert.deepEqual(readActivePlayer(namespace,code.toLowerCase()),{code,name:'Kim'});
+ assert.equal(readActivePlayer(namespace,'ZZZZZZ'),null);
+ const original=f.client(seatKey);
+ const registry=new PartySeatRegistry(), scores={};
+ host.onAction(({playerId,payload})=>{
+  const name=host.getSnapshot().players.find(p=>p.id===playerId)?.name;
+  const player=registry.bind(playerId,name,payload.credential);
+  if(payload.scored) scores[player.id] = 3;
+  host.publish({round:2,players:registry.entries().map(({id,name})=>({id,name})),score:scores});
+ });
+ original.join(code,'Kim','simulator');await settle();
+ const stableId=original.getSnapshot().playerId;
+ original.sendAction({credential,scored:true});await settle();
+ original.dispose();await settle();f.advance(91_000);await settle();
+ assert(!host.getSnapshot().players.some(p=>p.id===stableId));
+ assert.equal(registry.entries()[0].name,'Kim');
+ const restored=f.client(seatKey), states=[];restored.onState(state=>states.push(state));
+ restored.join(code,'Kim','simulator');await settle();
+ assert.deepEqual(f.handshakes.slice(-2),['resume','join']);
+ const nextId=restored.getSnapshot().playerId;assert.notEqual(nextId,stableId);
+ restored.sendAction({credential});await settle();
+ assert.deepEqual(registry.owner(nextId),{id:stableId,transportId:nextId,name:'Kim'});
+ assert.equal(registry.owner(stableId),null);
+ assert.deepEqual(states.at(-1),{round:2,players:[{id:stableId,name:'Kim'}],score:{[stableId]:3}});
+ assert(!JSON.stringify(states).includes(credential));
+ assert.notEqual(registry.bind('stranger','Kim','another-credential').id,stableId);
+ assert(!f.saved.has(key),'recovery must not replace the Simulator seat key');
+ forgetActivePlayer(namespace);assert.equal(readActivePlayer(namespace),null);
+});
+
+test('watching with a remembered player name does not resume or overwrite their seat',async t=>{
+ const f=fixture(t), seatKey='madfun.insideranks.test.transport', host=f.client();
+ host.create('simulator');await settle();const code=host.getSnapshot().code;
+ const player=f.client(seatKey);player.join(code,'TV board','simulator');await settle();
+ const original=f.saved.get(seatKey);
+ const watcher=f.client(seatKey);watcher.join(code,'TV board','simulator',false);await settle();
+ assert.equal(f.handshakes.at(-1),'join');
+ assert.notEqual(watcher.getSnapshot().playerId,player.getSnapshot().playerId);
+ assert.equal(f.saved.get(seatKey),original);
 });

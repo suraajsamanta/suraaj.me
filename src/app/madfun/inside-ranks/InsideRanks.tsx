@@ -4,8 +4,10 @@ import Image from 'next/image';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { useEffect, useEffectEvent, useState } from 'react';
-import { phaseTimer, type Player } from './engine';
+import { MANUAL_RANKING_SECONDS, phaseTimer, type Player } from './engine';
 import { useInsideRanksSession } from './useInsideRanksSession';
+import { LiveRanking, RankForm } from './LiveRanking';
+import { useKeepScreenAwake } from './useKeepScreenAwake';
 import styles from './inside-ranks.module.css';
 import QuickStart from '../shared/QuickStart';
 import HostRemote, { type RemoteAction } from '../shared/HostRemote';
@@ -14,7 +16,7 @@ const path = '/madfun/inside-ranks';
 const quickSteps = [
   { title: 'Create a room on the shared screen', body: 'Choose Create room on the screen everyone can see. This screen starts rounds and shows results, but it never joins as a player or sees the secret question.' },
   { title: 'Scan the player QR on your phone', body: 'At least three players scan the same QR, or enter the room code under Join a room. If the person setting up wants to play too, they scan on a separate phone.' },
-  { title: 'Rank in private', body: 'The game picks a different ranker each round. When your phone says YOU’RE THE RANKER, read the secret question, move people up or down to put the best match at #1, then lock it in. No second QR is needed.' },
+  { title: 'Drag to rank', body: 'The game picks a different ranker each round. When your phone says YOU’RE THE RANKER, read the secret question, drag friends to put the best match at #1, then lock it in. The group sees the moves live, never the question.' },
   { title: 'Run the room from a second phone', body: 'Optional: pair a phone with the private Host controller QR. On the display or controller, you can turn on Auto-run to time each stage.' },
   { title: 'Guess and score', body: 'First, see the ranking and a hint. Guess out loud, or choose Show options for four phone choices. Correct phone guesses get 1 point. The most points wins.' },
 ] as const;
@@ -28,39 +30,12 @@ function RoundTimer({ deadline, duration }: { deadline: number; duration: number
     const interval = window.setInterval(update, 250);
     return () => { window.clearTimeout(first); window.clearInterval(interval); };
   }, [deadline, duration]);
-  return <span className={styles.roleBadge} role="timer" aria-label="Auto-run time remaining">{seconds}s left</span>;
+  return <span className={styles.roleBadge} role="timer" aria-label="Time remaining">{seconds}s left</span>;
 }
 
 function Ranking({ players }: { players: readonly Player[] }) {
   return <ol className={styles.ranking} aria-label="Group ranking">{players.map((player, index) =>
     <li key={player.id}><span className={styles.number}>{index + 1}</span><strong>{player.name}</strong></li>)}</ol>;
-}
-
-function RankForm({ players, prompt, disabled, onRank }: {
-  players: readonly Player[]; prompt: string; disabled: boolean; onRank: (ids: string[]) => void;
-}) {
-  const [order, setOrder] = useState(() => [...players]);
-  const move = (index: number, step: number) => {
-    const to = index + step;
-    if (to < 0 || to >= order.length) return;
-    setOrder(current => {
-      const next = [...current];
-      [next[index], next[to]] = [next[to], next[index]];
-      return next;
-    });
-  };
-  return <form className={styles.stack} onSubmit={event => { event.preventDefault(); onRank(order.map(player => player.id)); }}>
-    <div className={styles.private}><span className={styles.kicker}>Private • Only you can see this</span><h2>{prompt}</h2></div>
-    <p>Put your best match at #1. Keep the question a secret!</p>
-    <ol className={styles.ranking} aria-label="Rank your friends">{order.map((player,index) =>
-      <li key={player.id}><span className={styles.number}>{index + 1}</span><strong>{player.name}</strong>
-        <div className={styles.move}>
-          <button type="button" disabled={disabled || index === 0} onClick={() => move(index,-1)} aria-label={`Move ${player.name} up`}>↑</button>
-          <button type="button" disabled={disabled || index === order.length - 1} onClick={() => move(index,1)} aria-label={`Move ${player.name} down`}>↓</button>
-        </div>
-      </li>)}</ol>
-    <button className={styles.primary} disabled={disabled}>Lock in ranking</button>
-  </form>;
 }
 
 export default function InsideRanks() {
@@ -77,10 +52,12 @@ export default function InsideRanks() {
   const active = session.status !== 'idle';
   const connected = session.status === 'connected';
   const match = state?.match;
-  const timer = state?.autoRun ? phaseTimer(match?.phase) : null;
+  const timer = match?.phase === 'ranking' && !state?.autoRun ? { seconds: MANUAL_RANKING_SECONDS, action: 'expire_ranking' as const } :
+    state?.autoRun ? phaseTimer(match?.phase) : null;
+  useKeepScreenAwake(active && !!roomCode && match?.phase !== 'finished');
   const deadline = timer ? state?.deadline : null;
   const advanceAutomatically = useEffectEvent((type: NonNullable<ReturnType<typeof phaseTimer>>['action'], expected: number) => {
-    if (host && connected && state?.autoRun && state.deadline === expected && phaseTimer(match?.phase)?.action === type) {
+    if (host && connected && state?.deadline === expected && timer?.action === type) {
       session.dispatch({ type });
     }
   });
@@ -102,12 +79,16 @@ export default function InsideRanks() {
   const joinLink = `${path}?room=${roomCode ?? ''}`;
   const tvLink = `${joinLink}&watch=1`;
 
+  const restoreOnOpen = useEffectEvent((room: string) => session.restorePlayer(room || undefined));
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
     const timer = window.setTimeout(() => {
-      setCode(cleanCode(query.get('room') ?? ''));
-      setWatchMode(query.get('watch') === '1');
-      setInvited(!!query.get('room'));
+      const room = cleanCode(query.get('room') ?? '');
+      const watch = query.get('watch') === '1';
+      setCode(room);
+      setWatchMode(watch);
+      setInvited(!!room);
+      if (!watch) restoreOnOpen(room);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -234,8 +215,13 @@ export default function InsideRanks() {
           {match.phase === 'ranking' && <>
             {isRanker && <span className={styles.roleBadge}>You’re the ranker · Private turn</span>}
             <h1>{isRanker ? 'Rank your friends' : `${match.ranker.name} is ranking the group`}</h1>
-            {isRanker && prompt ? <RankForm key={roundKey} players={match.rankTargets} prompt={prompt.text} disabled={!connected} onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/> :
-              <p role="status">{isRanker ? 'Loading your private question…' : 'Only the ranker’s phone shows the secret question. A hint appears after they lock the order.'}</p>}
+            {isRanker && prompt ? <RankForm key={roundKey} players={match.rankTargets} initial={match.preview?.orderedIds} settleOnMount={!!match.preview?.drag} prompt={prompt.text} disabled={!connected}
+              onPreview={preview => session.dispatch({type:'rank_preview',...preview})}
+              onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/> : isRanker ?
+              <p role="status">Loading your private question…</p> : <>
+                <p>Watch the order change live. A hint appears after the ranker locks it in.</p>
+                <LiveRanking players={match.rankTargets} preview={match.preview}/>
+              </>}
             {host && !rankerOnline &&
               <button disabled={!connected} onClick={() => session.dispatch({type:'skip'})}>Skip offline ranker</button>}
           </>}
@@ -281,6 +267,9 @@ export default function InsideRanks() {
               <button className={styles.primary} disabled={!connected} onClick={revealAnswer}>Reveal answer</button> :
               <button className={styles.primary} disabled={!connected} onClick={() => session.dispatch({type:'next'})}>{nextLabel}</button>)}
           </>}
+          {match.phase !== 'finished' && players.some(player => !player.connected) && <p className={styles.muted}>
+            Away · {players.filter(player => !player.connected).map(player => player.name).join(', ')}. Their scores are saved until they return.
+          </p>}
           {host && match.phase !== 'finished' && autoRunControl}
           {match.phase === 'finished' && <>
             <h1>Final scores</h1>

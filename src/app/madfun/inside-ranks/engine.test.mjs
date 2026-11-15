@@ -135,3 +135,68 @@ test('auto-run sets deadlines without choosing rankings or guesses', () => {
   assert.deepEqual(e.phaseTimer('guessing'), { seconds: 25, action: 'reveal' });
   assert.deepEqual(e.phaseTimer('reveal'), { seconds: 8, action: 'next' });
 });
+
+test('live ranking preview broadcasts only the draft order and bounded drag position', () => {
+  const s = round(), [a,b,c] = s.rankTargets, ids = [b.id,c.id,a.id];
+  const updated = e.updateRankingPreview(s,s.ranker.id,ids,{id:a.id,position:1.235,prompt:s.correct});
+  const view = e.publicView(updated);
+  assert.deepEqual(view.preview,{orderedIds:ids,drag:{id:a.id,position:1.24}});
+  assert.equal(view.phase,'ranking');
+  assert.deepEqual(view.ranking,[]);
+  assert.deepEqual(view.options,[]);
+  assert.equal(view.correct,null);
+  assert.equal(view.hint,null);
+  assert(!JSON.stringify(view).includes(s.correct.text));
+  assert.deepEqual(e.privateView(updated,s.ranker.id),{prompt:s.correct});
+  assert.deepEqual(e.publicView(updated,false).preview,{orderedIds:ids,drag:null});
+  assert.equal(e.updateRankingPreview(updated,s.ranker.id,ids,{id:a.id,position:1.239}),null);
+  const dropped = e.updateRankingPreview(updated,s.ranker.id,ids,null);
+  assert.deepEqual(e.publicView(dropped).preview,{orderedIds:ids,drag:null});
+  const committed = e.submitRanking(dropped,s.ranker.id,ids);
+  assert.equal(e.publicView(committed).preview,null);
+  assert.deepEqual(e.publicView(committed).ranking.map(p=>p.id),ids);
+});
+
+test('only current ranker can preview a complete valid order and preview cannot persist to a new round', () => {
+  const s = round(), ids = s.rankTargets.map(p=>p.id), who = s.ranker.id;
+  for (const order of [null,[],[ids[0],ids[0],ids[1]],[who,ids[1],ids[2]]]) {
+    assert.equal(e.updateRankingPreview(s,who,order,null),null);
+  }
+  for (const drag of [undefined,[],{}, {id:who,position:0},{id:ids[0],position:NaN},{id:ids[0],position:Infinity},
+    {id:ids[0],position:-0.05},{id:ids[0],position:2.01},{id:ids[0],position:'1'}]) {
+    assert.equal(e.updateRankingPreview(s,who,ids,drag),null);
+  }
+  assert.equal(e.updateRankingPreview(s,ids[0],ids,{id:ids[0],position:1}),null);
+  assert.equal(e.updateRankingPreview(s,who,ids,null),null);
+  assert.equal(e.updateRankingPreview(rank(s),who,ids,{id:ids[0],position:1}),null);
+  const draft = e.updateRankingPreview(s,who,ids,{id:ids[0],position:1});
+  assert.equal(e.publicView(e.skipRound(draft,players,bank,()=>0.8)).preview,null);
+  assert.equal(e.publicView(e.skipRound(draft,[],bank)).preview,null);
+});
+
+test('manual mode gives a fixed 90-second ranking window; toggling auto-run cannot restart it', () => {
+  const start = 100_000;
+  assert.equal(e.roundDeadline(false,'ranking',start,start),190_000);
+  assert.equal(e.roundDeadline(false,'ranking',start,start+20_000),190_000);
+  assert.equal(e.roundDeadline(true,'ranking',start,start+25_000),175_000);
+  assert.equal(e.roundDeadline(false,'hint',null,start),null);
+  assert.equal(e.roundDeadline(true,'hint',null,start),120_000);
+});
+
+test('a temporarily offline player retains points and takes their next turn when back', () => {
+  const s = round(), gone = s.queue[2], next = s.queue[1];
+  const correct = e.submitGuess(e.showOptions(rank(s)),gone.id,s.correct.id);
+  const after = e.reveal(correct);
+  const onlyTwo = players.map(p => ({ ...p, connected: p.id === s.ranker.id || p.id === next.id }));
+  const progress = e.nextRound(after,onlyTwo,bank,()=>0.8);
+  assert.equal(progress.phase,'ranking');
+  assert.equal(progress.round,2);
+  assert.equal(progress.ranker.id,next.id);
+  assert.equal(progress.rankTargets.length,1);
+  assert.equal(progress.scores[gone.id],1);
+  const further = e.nextRound(e.reveal(rank(progress)),players,bank,()=>0.8);
+  assert.equal(further.phase,'ranking');
+  assert.equal(further.round,3);
+  assert.equal(further.ranker.id,gone.id);
+  assert.equal(further.scores[gone.id],1);
+});
