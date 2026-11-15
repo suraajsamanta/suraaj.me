@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import type { OnlineRaceView, RaceHud, RaceInput, RaceSettings } from "./race";
-import HostRemote, { type RemoteAction } from "../shared/HostRemote";
 import { getTrack, type TrackId } from "./course";
 import raceUi from "./race-ui.module.css";
 import styles from "./beerio2.module.css";
@@ -21,8 +20,8 @@ function clock(seconds: number) {
 }
 
 export type RaceBanner = { label: string; title: string; detail?: string; countdown?: boolean };
-type RaceScreenProps = { ride?: import("./ride-selection").RideSelection; paint?: string; spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; hostRemote?: { phase: string; actions: readonly RemoteAction[] }; };
-export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, hostRemote, paint, ride, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
+type RaceScreenProps = { ride?: import("./ride-selection").RideSelection; paint?: string; spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
+export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, paint, ride, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
   const live = !!onlineView;
   const soloGrid = !live && mode === "race";
   const track = getTrack(trackId);
@@ -264,15 +263,12 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
   }
   return (
     <main ref={shell} className={`${styles.shell}${spectator ? ` ${styles.tvShell}` : ""}`}>
-      <header className={`${styles.top}${hostRemote ? ` ${styles.withRemote}` : ""}`}>
+      <header className={styles.top}>
         {live
           ? <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label={host ? "End room" : spectator ? "Exit TV view" : "Leave online race"}><span aria-hidden>‹</span> Exit</button>
           : <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label="Back to Beerio 2 garage"><span aria-hidden>‹</span> Garage</button>}
         <h1>BEERIO<span>02</span></h1>
-        {hostRemote ? <div className={styles.hostTools}>{edition}<HostRemote game="Beerio 2" phase={hostRemote.phase} actions={[
-          ...hostRemote.actions,
-          { id: muted ? "unmute" : "mute", label: muted ? "Turn sound on" : "Turn sound off", run: toggleSound },
-        ]} /></div> : edition}
+        {edition}
       </header>
       <section className={styles.stage} data-course={trackId} aria-label={`${track.name} ${spectator ? "TV race view" : live ? "online race" : soloGrid ? "AI race" : "time trial"}`}>
         <canvas key={retry} ref={canvas} className={styles.canvas} aria-label="Live 3D race view" />

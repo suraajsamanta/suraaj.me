@@ -10,7 +10,6 @@ import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
 import QuickStart from "../shared/QuickStart";
-import type { RemoteAction } from "../shared/HostRemote";
 import { FINISHES, readFinish, type CarFinish } from "./finishes";
 import { CHARACTERS, DEFAULT_RIDE, RIDES, readRide, saveRide, type RideSelection } from "./ride-selection";
 const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <main className={styles.shell}><section className={styles.entryStage}>Opening the car lab…</section></main> });
@@ -18,7 +17,7 @@ const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <
 type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
 const quickStartSteps = [
   { title: "Pick a circuit and car", body: "Choose Seattle Night or Neon Orbit. Open Car Lab to pick your car and character. Race AI puts you on the grid against three rivals; Time Trial is for chasing your best lap." },
-  { title: "Create a race or join friends", body: "Choose Create on shared screen on the TV or laptop. Everyone who wants to drive scans the player QR on a separate device. Start when two drivers are ready. Use Host controller to pair a phone privately, or turn on Auto-run for a 10-second lobby timer." },
+  { title: "Create a race or join friends", body: "Choose Create on shared screen on the TV or laptop. Everyone who wants to drive scans the player QR on a separate device. Start when two drivers are ready. Start the race on the shared screen, or turn on Auto-run for a 10-second lobby timer." },
   { title: "Drive on your own screen", body: "Every driver gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE to slow down. Keep holding BRAKE after stopping to reverse. Hold DRIFT while steering, then release it to get a boost." },
   { title: "Race three laps", body: "First across the finish line wins the race. The screen that created the room shows the race and results without entering as a driver." },
 ] as const;
@@ -147,8 +146,8 @@ export default function Beerio2Page() {
     if (next !== "menu" && next !== "lab") void import("./race").catch(() => {});
   }
 
-  function leave(confirmOnDisplay = true) {
-    if (confirmOnDisplay && host && inRoom && !window.confirm(END_ROOM_CONFIRMATION)) return;
+  function leave() {
+    if (host && inRoom && !window.confirm(END_ROOM_CONFIRMATION)) return;
     setAutoRun(false);
     session.leave();
     if (additionalScreen || screen === "watch") window.history.replaceState(window.history.state, "", "/madfun/beerio-2");
@@ -221,20 +220,6 @@ export default function Beerio2Page() {
     const placeItems = raceFrame?.results ?? [];
     const closed = room.status === "closed" || room.status === "error";
     const canPause = host && hostAvailable && (room.phase === "race" || countdown);
-    const remoteActions: RemoteAction[] = [];
-    if (host && !closed) {
-      if (lobby) {
-        remoteActions.push({ id: "start", label: "Start race", disabled: !readyToStart, run: session.start });
-        remoteActions.push({ id: autoRun ? "auto-off" : "auto-on", label: autoRun ? "Turn Auto-run off" : "Turn Auto-run on", disabled: !hostAvailable, run: () => setAutoRun(!autoRun) });
-      }
-      if (room.phase === "race" || countdown) remoteActions.push({ id: "pause", label: "Pause race", disabled: !canPause, run: () => session.setPaused(true) });
-      if (room.phase === "paused") remoteActions.push({ id: "resume", label: "Resume race", disabled: !hostAvailable, run: () => session.setPaused(false) });
-      if (results) remoteActions.push({ id: "rematch", label: "Back to starting grid", disabled: !hostAvailable, run: session.rematch });
-      remoteActions.push({ id: "end", label: "End room", confirm: END_ROOM_CONFIRMATION, run: () => leave(false) });
-    }
-    const remotePhase = !hostAvailable ? "Shared screen disconnected" : lobby
-      ? `Starting grid · ${racers.length}/${MAX_DRIVERS} drivers${autoRun ? " · Auto-run on" : ""}`
-      : countdown ? "Race countdown" : room.phase === "race" ? "Race in progress" : room.phase === "paused" ? "Race paused" : "Race results";
     let banner: RaceBanner | undefined;
     if (closed) {
       banner = { label: "ROOM UNAVAILABLE", title: "Connection ended", detail: room.error ?? "Leave the room and rejoin with a fresh code." };
@@ -309,7 +294,6 @@ export default function Beerio2Page() {
       host={host}
       racing={!spectator && hostAvailable && !lobby && !results && room.phase !== "paused"}
       pause={canPause ? () => session.setPaused(true) : undefined}
-      hostRemote={host && !closed ? { phase: remotePhase, actions: remoteActions } : undefined}
       laps={3}
       panel={lobbyPanel || resultsPanel || resumePanel}
     />;
