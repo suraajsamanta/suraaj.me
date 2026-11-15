@@ -1,0 +1,58 @@
+.shell {
+  --neon: #8ce7ec; --ink: #071019; --line: #a8d2e02c; --mono: ui-monospace, Menlo, Monaco, monospace;
+  min-height: 100dvh; color-scheme: dark; display: grid; grid-template-rows: 62px minmax(400px,1fr) auto;
+  color: #eaf7ff; font: 600 14px/1.35 system-ui, sans-serif;
+  background: radial-gradient(ellipse at 22% 15%, #182c3d, #080e17 65%);
+  padding: env(safe-area-inset-top,0px) max(16px,env(safe-area-inset-right,0px)) env(safe-area-inset-bottom,0px) max(16px,env(safe-area-inset-left,0px));
+}
+.header { margin-inline: auto; width: min(1150px,100%); display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; }
+.header h1 { margin: 0; font: 950 italic clamp(20px,4vw,33px)/1 system-ui,sans-serif; white-space: nowrap; letter-spacing: -.075em; }
+.header h1 span { color: var(--neon); }
+.header h1 small { display: inline-block; margin-left: 8px; border-left: 1px solid var(--line); padding-left: 10px; color: #b4c7d9; font: 750 10px/1 var(--mono); letter-spacing: .08em; vertical-align: middle; }
+.header button { justify-self: start; border: 0; padding: 8px 0; min-height: 44px; background: transparent; color: #c6dfec; cursor: pointer; }
+.status { justify-self: end; color: #bed2df; text-transform: uppercase; white-space: nowrap; font: 700 10px/1 var(--mono); }
+.status i { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 99px; background: var(--neon); box-shadow: 0 0 12px #77e5e6; }
+.studio { margin-inline: auto; isolation: isolate; box-sizing: border-box; position: relative; width: min(1150px,100%); overflow: hidden; border: 1px solid var(--line); border-radius: 16px; background: #111824; }
+.studio canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; cursor: grab; }
+.studio canvas:active { cursor: grabbing; }
+.studio::after { position: absolute; z-index: 1; inset: 0; box-shadow: inset 0 0 50px #050a1566; content: ""; pointer-events: none; }
+.carName { position: absolute; z-index: 2; top: clamp(12px,3vw,35px); left: clamp(12px,3vw,35px); pointer-events: none; }
+.carName span, .carName small { color: #a7c8d6; letter-spacing: .13em; font: 750 10px/1.3 var(--mono); }
+.carName h2 { margin: 3px 0; color: #eff9ff; font: 950 italic clamp(33px,7.5vw,84px)/.95 system-ui,sans-serif; letter-spacing: -.09em; text-shadow: 0 3px 22px #06101bd4; }
+.carName h2 em { color: var(--neon); }
+.angleControls { position: absolute; z-index: 3; display: flex; gap: 5px; padding: 5px; inset: auto auto 12px 12px; background: #080d18e0; border: 1px solid var(--line); border-radius: 10px; }
+.angleControls button { min-height: 42px; min-width: 56px; border: 0; border-radius: 6px; color: #b1cad8; background: transparent; font: 750 11px/1 var(--mono); cursor: pointer; }
+.angleControls button[aria-pressed="true"] { color: #081418; background: var(--neon); }
+.hint { position: absolute; right: 16px; bottom: 19px; z-index: 2; margin: 0; color: #a3bbcc; padding: 5px 8px; background: #080d18bd; border-radius: 6px; pointer-events: none; font: 650 10px/1.35 var(--mono); }
+.notice { position: absolute; left: 50%; top: 50%; z-index: 4; transform: translate(-50%,-50%); width: min(230px,90%); padding: 14px; text-align: center; color: #d7edfb; background: #07111eea; border: 1px solid var(--line); border-radius: 12px; }
+.notice button { margin-top: 8px; padding: 8px; border: 1px solid var(--line); background: #1e3648; color: inherit; border-radius: 6px; }
+.config { margin-inline: auto; width: min(1150px,100%); display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px 22px; padding-block: 14px 11px; box-sizing: border-box; }
+.config p { margin: 0; grid-column: 1/-1; color: #94adbe; font-size: 11px; }
+.finishes { display: flex; align-items: center; gap: 12px; }
+.finishes small, .finishes strong { display: block; }
+.finishes small { color: #95afc1; font: 700 9px/1.4 var(--mono); letter-spacing: .08em; }
+.swatches { display: flex; gap: 4px; }
+.swatches button { border: 1px solid var(--line); border-radius: 9px; width: 42px; height: 42px; display: grid; place-items: center; background: #0b1420; cursor: pointer; }
+.swatches button[aria-pressed="true"] { border-color: var(--neon); box-shadow: inset 0 0 0 1px var(--neon); }
+.swatches button span { width: 22px; height: 22px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff40; }
+.orbit { display: flex; gap: 8px; align-items: center; min-width: 0; color: #bfd6e4; font-size: 12px; }
+.orbit input { min-width: 0; width: 100%; accent-color: var(--neon); }
+.race { padding: 0 14px; min-height: 45px; border: 0; border-radius: 8px; background: var(--neon); color: #051416; font-weight: 850; cursor: pointer; white-space: nowrap; }
+.race span { margin-left: 9px; }
+.shell :is(button,input):focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media(max-width: 650px) {
+  .shell { padding-inline: 9px; grid-template-rows: 50px minmax(270px, 1fr) auto; }
+  .header h1 small { margin-left: 3px; padding-left: 6px; font-size: 8px; }
+  .status { font-size: 7px; }
+  .status i { width: 4px; height: 4px; margin-right: 2px; }
+  .hint { display: none; }
+  .config { grid-template-columns: 1fr auto; gap: 7px 8px; padding-block: 9px; }
+  .finishes { grid-column: 1/-1; justify-content: space-between; }
+  .swatches button { width: 44px; height: 44px; }
+}
+@media(max-height: 560px) and (orientation: landscape) {
+  .shell { grid-template-rows: 42px minmax(240px,1fr) auto; }
+  .carName h2 { font-size: 38px; }
+}
+/* Keep this footer in the studio grid, not the homepage's absolute footer. */
+.config { position: static; inset: auto; min-width: 0; font-family: system-ui, sans-serif; letter-spacing: normal; }

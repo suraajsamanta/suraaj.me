@@ -2,14 +2,17 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
 import { Beerio2Session } from "./online";
 import RaceScreen, { type RaceBanner } from "./race-screen";
 import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
 import styles from "./beerio2.module.css";
+import { FINISHES, readFinish, type CarFinish } from "./finishes";
+const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <main className={styles.shell}><section className={styles.entryStage}>Opening the car lab…</section></main> });
 
-type Screen = "menu" | "solo" | "host" | "join" | "watch";
+type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
 const cleanCode = (value: string) => value.toUpperCase().replace(/[^A-HJ-NP-Z2-9]/g, "").slice(0, 6);
@@ -19,6 +22,8 @@ const readWatchInvite = () => {
   return /^[A-Za-z0-9_-]{32}$/.test(invite) ? invite : "";
 };
 const serverInvite = () => "";
+const readLabLink = () => new URLSearchParams(window.location.search).get("car") === "1";
+const serverLabLink = () => false;
 const listenInvite = (fn: () => void) => {
   window.addEventListener("popstate", fn);
   window.addEventListener("hashchange", fn);
@@ -48,8 +53,12 @@ function LobbyHeader() {
 export default function Beerio2Page() {
   const inviteCode = useSyncExternalStore(listenInvite, readInvite, serverInvite);
   const watchToken = useSyncExternalStore(listenInvite, readWatchInvite, serverInvite);
+  const labLink = useSyncExternalStore(listenInvite, readLabLink, serverLabLink);
   const [choice, setChoice] = useState<Screen | null>(null);
   const [name, setName] = useState("");
+  const savedFinish = useSyncExternalStore(() => () => {}, readFinish, () => FINISHES[0]);
+  const [finishOverride, setFinishOverride] = useState<CarFinish | null>(null);
+  const finish = finishOverride ?? savedFinish;
   const [trackId, setTrackId] = useState<TrackId>("seattle");
   const [soloMode, setSoloMode] = useState<"race" | "time-trial">("race");
   const selectedTrack = getTrack(trackId);
@@ -58,7 +67,7 @@ export default function Beerio2Page() {
   const [shareStatus, setShareStatus] = useState("");
   const [session] = useState(() => new Beerio2Session());
   const room = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  const screen = choice ?? (ROOM_CODE.test(inviteCode) ? watchToken ? "watch" : "join" : "menu");
+  const screen = choice ?? (ROOM_CODE.test(inviteCode) ? watchToken ? "watch" : "join" : labLink ? "lab" : "menu");
   const code = typedCode ?? inviteCode;
   const inRoom = !!room.playerId && !!room.code;
   const seatId = inRoom ? room.playerId : null;
@@ -83,7 +92,13 @@ export default function Beerio2Page() {
     setValidation("");
     setShareStatus("");
     setChoice(next);
-    if (next !== "menu") void import("./race").catch(() => {});
+    if (next === "lab" || labLink) {
+      const url = new URL(window.location.href);
+      if (next === "lab") url.searchParams.set("car", "1");
+      else url.searchParams.delete("car");
+      window.history.replaceState(window.history.state, "", url);
+    }
+    if (next !== "menu" && next !== "lab") void import("./race").catch(() => {});
   }
 
   function leave() {
@@ -133,7 +148,11 @@ export default function Beerio2Page() {
     }
   }
 
-  if (screen === "solo") return <RaceScreen trackId={trackId} mode={soloMode} exit={() => choose("menu")} />;
+  if (screen === "lab") return <CarLab finish={finish} onFinish={next => {
+    setFinishOverride(next);
+    try { localStorage.setItem("beerio2-car-finish", next.id); } catch {}
+  }} exit={() => choose("menu")} race={() => { setSoloMode("race"); choose("solo"); }} />;
+  if (screen === "solo") return <RaceScreen trackId={trackId} mode={soloMode} paint={finish.hex} exit={() => choose("menu")} />;
 
   if (inRoom && onlineView) {
     const roomTrack = getTrack(room.trackId);
@@ -252,6 +271,7 @@ export default function Beerio2Page() {
           <p>Chase the pack. Beat the clock.<br />Or settle it with your friends.</p>
           <button className={`${styles.primaryAction} ${styles.raceAiAction}`} type="button" onClick={() => { setSoloMode("race"); choose("solo"); }}><span><b>Race AI</b><small>Jump in. Take on the grid.</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
           <button className={styles.secondaryAction} type="button" onClick={() => { setSoloMode("time-trial"); choose("solo"); }}><span><b>Time trial</b><small>Just you and your best lap.</small></span><span className={styles.actionArrow} aria-hidden>→</span></button>
+          <button className={styles.secondaryAction} type="button" onClick={() => choose("lab")}><span><b>Car Lab</b><small>Inspect the hypercar and change its paint</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
           <div className={styles.modeDivider}><span>BETTER WITH RIVALS</span></div>
           <div className={styles.onlineChoices}>
             <button className={styles.secondaryAction} type="button" onClick={() => choose("host")}><span><b>Host &amp; drive</b><small>Create a private room</small></span><span aria-hidden>＋</span></button>

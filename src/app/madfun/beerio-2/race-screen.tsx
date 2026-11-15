@@ -20,8 +20,8 @@ function clock(seconds: number) {
 }
 
 export type RaceBanner = { label: string; title: string; detail?: string; countdown?: boolean };
-type RaceScreenProps = { spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
-export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
+type RaceScreenProps = { paint?: string; spectator?: boolean; host?: boolean; pause?: () => void; trackId?: TrackId; mode?: "race" | "time-trial"; onlineView?: OnlineRaceView; banner?: RaceBanner; exit: () => void; racing?: boolean; laps?: number; panel?: ReactNode; };
+export default function RaceScreen({ onlineView, banner, exit, racing = true, laps, panel, paint, spectator = false, host = false, pause, trackId = "seattle", mode = "time-trial" }: RaceScreenProps) {
   const live = !!onlineView;
   const soloGrid = !live && mode === "race";
   const track = getTrack(trackId);
@@ -103,6 +103,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
       });
     } catch {}
     soundSettings.current.trackId = trackId;
+    soundSettings.current.paint = paint;
     soundSettings.current.mode = mode;
     soundSettings.current.reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let cancelled = false;
@@ -122,7 +123,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
       }
     });
     return () => { cancelled = true; cancelAnimationFrame(restore); dispose?.(); };
-  }, [retry, onlineView, trackId, mode, spectator]);
+  }, [retry, onlineView, trackId, mode, spectator, paint]);
 
   useEffect(() => {
     if (!(host || spectator) || !keepAwake || !navigator.wakeLock) return;
@@ -349,7 +350,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
         {panel && <div className={styles.racePanel}>{panel}</div>}
       </section>
       <footer className={`${styles.bottom} ${spectator ? styles.tvControls : ""}`}>
-        <span className={styles.mode}>{spectator ? (cameraDriver ? `FOLLOWING ${cameraDriver}` : "READ-ONLY DISPLAY") : live ? "ONLINE RACE" : "SOLO RUN"} <span>·</span> {hud.renderer || "3D"}</span>
+        <span className={styles.mode}>{spectator ? (cameraDriver ? `FOLLOWING ${cameraDriver}` : "READ-ONLY DISPLAY") : live ? "ONLINE RACE" : "SOLO RUN"} <span>·</span> {hud.renderer || "3D"}{hud.roadKernel === "WASM SIMD" && <span> · WASM SIMD</span>}</span>
         <span className={raceUi.connection} title="FPS and applied-input round-trip time">
           {!!hud.fps && `${hud.fps} FPS`}{stats?.inputAckMs != null && `  ·  ${Math.round(stats.inputAckMs)} ms input`}
         </span>

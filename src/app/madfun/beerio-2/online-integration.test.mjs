@@ -36,7 +36,10 @@ async function moduleUrl(path, imports = {}, transform = source => source) {
 }
 
 const courseUrl = await moduleUrl('./course.ts');
+const roadBytesUrl = await moduleUrl('./road-simd-bytes.ts');
+const roadSimdUrl = await moduleUrl('./road-simd.ts', { './road-simd-bytes': roadBytesUrl });
 const driveUrl = await moduleUrl('./drive.ts', {
+  './road-simd': roadSimdUrl,
   './course': courseUrl,
   '@dimforge/rapier3d-compat': import.meta.resolve('@dimforge/rapier3d-compat'),
 });

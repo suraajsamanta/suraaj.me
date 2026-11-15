@@ -10,10 +10,10 @@ import ts from 'typescript';
 const root = fileURLToPath(new URL('../../../../', import.meta.url));
 const output = mkdtempSync(join(root, '.beerio2-drive-tests-'));
 after(() => rmSync(output, { recursive: true, force: true }));
-for (const name of ['course', 'drive']) {
+for (const name of ['course', 'road-simd-bytes', 'road-simd', 'drive']) {
   const source = readFileSync(new URL(`./${name}.ts`, import.meta.url), 'utf8');
   const result = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2020 } });
-  writeFileSync(join(output, `${name}.mjs`), result.outputText.replaceAll("'./course'", "'./course.mjs'"));
+  writeFileSync(join(output, `${name}.mjs`), result.outputText.replaceAll(/'\.\/(course|road-simd(?:-bytes)?)'/g, "'./$1.mjs'"));
 }
 const { createDrivingWorld, createSoloRace, indexRoad } = await import(pathToFileURL(join(output, 'drive.mjs')).href);
 const { course, locate, heading, ROAD_WIDTH, TRACKS } = await import(pathToFileURL(join(output, 'course.mjs')).href);
@@ -189,6 +189,7 @@ test('rejects foreign drivers, invalid timesteps do not corrupt state, dispose i
 test('production Rapier sampler works headlessly, follows elevated road, and frees cleanly', async () => {
   const world = await createDrivingWorld();
   try {
+    assert.equal(world.roadKernel, "WASM SIMD");
     const driver = world.spawn();
     const p = course[60];
     Object.assign(driver.state, p, { y: 0, speed: 0 });

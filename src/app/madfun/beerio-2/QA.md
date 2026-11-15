@@ -23,3 +23,9 @@ The solo prototype was exercised in Chromium’s software view on desktop and at
 - Host & Drive creates a race on the same phone the host uses to drive. Start, Pause/Resume, and Back to Starting Grid stay on the host phone. An optional platform screen wake lock is held while hosting/watching and released on exit; keep the host tab visible.
 - Optional TV view uses a separate private link. Open it on one TV browser or TV-connected computer, select Open TV View once, then no controls are needed. In the lobby the display surfaces the normal driver QR; in-race it follows the host's view; results/rematch follow automatically.
 - The TV uses the existing invitation-zoned non-player relay seat, not a driver's slot. Race packets never contain the TV invite; credentials stay in the URL fragment until the spectator connects. The spectator cannot send racing commands. In-tab reconnect resumes, but reload can require waiting up to 90 seconds for the prior leased slot; explicit Exit TV View releases it immediately.
+
+## NIGHTJAR R and SIMD128
+
+- Open Car Lab or visit `/madfun/beerio-2?car=1`. Check all three camera presets, drag to orbit, select another paint, then use Race This Car. Confirm the selected paint carries into the race and persists after reload. Online still uses assigned colors.
+- The GPU hero has physically based clear-coat body paint and active rear brake lights, with a budget of 28 draw-ready submeshes and 2700 triangles; rivals retain 6/1 near/far LOD. GPU inspection on a physical device is separate from the CPU compatibility screenshot.
+- Solo/host driving pipeline loads the small SIMD128 road kernel ahead of the race; Rapier still handles road-height physics. Solo footer only shows WASM SIMD if the kernel actually initialized. Unsupported or rejected SIMD falls back to the same scalar query; no shared site isolation headers, external assets or relay changes.

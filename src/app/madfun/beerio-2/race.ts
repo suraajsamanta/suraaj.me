@@ -1,5 +1,3 @@
-import { Engine } from '@babylonjs/core/Engines/engine';
-import type { AbstractEngine } from '@babylonjs/core/Engines/abstractEngine';
 import { Scene } from '@babylonjs/core/scene';
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
@@ -11,7 +9,7 @@ import { CreateDisc } from '@babylonjs/core/Meshes/Builders/discBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { buildTrack } from './track';
 import { buildCar, buildRival } from './car';
-import { createSoftwareView } from './software';
+import { makeEngine } from './graphics';
 import { getTrack, heading, type TrackId } from './course';
 import { createRaceSound } from './race-audio';
 import { createRaceEffects } from './race-effects';
@@ -21,10 +19,10 @@ import type { RaceView } from './online';
 export type OnlineRaceView = RaceView;
 
 export type RaceInput = DriveInput;
-export type RaceSettings = { muted?: boolean; reducedMotion?: boolean; trackId?: TrackId; mode?: 'race' | 'time-trial' };
+export type RaceSettings = { paint?: string; muted?: boolean; reducedMotion?: boolean; trackId?: TrackId; mode?: 'race' | 'time-trial' };
 export type RaceHud = {
   speed: number; lap: number; seconds: number; best: number | null; boost: boolean; renderer: string;
-  drifting?: boolean; driftCharge?: number; boostPower?: number; gear?: number; audioReady?: boolean; muted?: boolean; fps?: number;
+  roadKernel?: string; drifting?: boolean; driftCharge?: number; boostPower?: number; gear?: number; audioReady?: boolean; muted?: boolean; fps?: number;
   soloRace?: ReturnType<ReturnType<typeof createSoloRace>['status']>;
   map?: { id: string; x: number; z: number; color?: string; own?: boolean }[];
 };
@@ -35,35 +33,8 @@ const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 const clamp = (t: number, a: number, b: number) => Math.min(b, Math.max(a, t));
 const turn = (a: number, b: number) => Math.atan2(Math.sin(b - a), Math.cos(b - a));
 
-async function makeEngine(canvas: HTMLCanvasElement, trackId: TrackId) {
-  if ('gpu' in navigator && !new URLSearchParams(window.location.search).has('webgl')) {
-    let gpu: AbstractEngine | undefined;
-    try {
-      const { WebGPUEngine } = await import('@babylonjs/core/Engines/webgpuEngine');
-      if (await WebGPUEngine.IsSupportedAsync) {
-        const engine = new WebGPUEngine(canvas, { antialias: false, adaptToDeviceRatio: false });
-        gpu = engine;
-        await engine.initAsync();
-        return { engine: gpu, renderer: 'WebGPU', software: undefined };
-      }
-    } catch {
-      gpu?.dispose();
-      // If a failed GPU startup locks the canvas, the explicit compatibility
-      // reload below is the safe way to obtain a fresh canvas.
-    }
-  }
-  const gl = canvas.getContext('webgl2', { antialias: false, stencil: false, powerPreference: 'high-performance' });
-  if (gl) {
-    const engine = new Engine(gl, false);
-    return { engine, renderer: 'WebGL 2', software: undefined };
-  }
-  const ctx = canvas.getContext('2d', { alpha: false });
-  if (!ctx) throw new Error('Open WebGL compatibility mode to retry with a fresh canvas.');
-  const { NullEngine } = await import('@babylonjs/core/Engines/nullEngine');
-  return { engine: new NullEngine(), renderer: 'Compatibility', software: createSoftwareView(ctx, trackId) };
-}
 
-type GraphicalCar = TransformNode & { metadata: { wheels?: TransformNode[]; frontWheels?: TransformNode[]; wheelRadius?: number; setPaint?: (hex: string) => void; updateDetail?: (distance: number, dt: number, speed: number, steer?: number) => void } };
+type GraphicalCar = TransformNode & { metadata: { wheels?: TransformNode[]; frontWheels?: TransformNode[]; wheelRadius?: number; setPaint?: (hex: string) => void; setBraking?: (active: boolean) => void; updateDetail?: (distance: number, dt: number, speed: number, steer?: number) => void } };
 type VisualState = Pick<CarState, 'x' | 'y' | 'z' | 'yaw' | 'facing' | 'pitch' | 'steer' | 'speed' | 'boost'>;
 function interpolate(old: VisualState | undefined, next: VisualState, amount: number): VisualState {
   if (!old || Math.hypot(old.x - next.x, old.z - next.z) > 15) return { ...next };
@@ -133,7 +104,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     key.diffuse = new Color3(1, 0.76, 0.68);
     key.specular = new Color3(0.8, 0.88, 1);
     if (!software) buildTrack(scene3d, course.map(({ x, y, z }) => new Vector3(x, y, z)), selected.id);
-    const car = software ? null : buildCar(scene3d) as GraphicalCar;
+    const car = software ? null : buildCar(scene3d, true) as GraphicalCar;
     const shadow = software ? null : CreateDisc('contact-shadow', { radius: 1, tessellation: 28 }, scene3d);
     if (shadow) {
       shadow.rotation.x = UP;
@@ -159,7 +130,8 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     let own: VisualState | undefined;
     let cameraYaw = anchor.yaw, cameraPitch = 0, accumulator = 0, hudTick = 0;
     let lastRaceId: number | undefined;
-    let ownColor: string | undefined;
+    let ownColor: string | undefined = online ? undefined : settings.paint;
+    if (ownColor) car?.metadata.setPaint?.(ownColor);
     const rivals = new Map<string, { model: GraphicalCar | null; pose: VisualState; color: string }>();
     let driftCharge = 0, wasBoost = false, boostPower = 0, previousSpeed = 0, impactCooldown = 0;
     let previousLap = 1, wasFinished = false, countdownNote = -1, previousPhase = '', chargeCue = false;
@@ -170,7 +142,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     const hud = (state: CarState) => onHud({
       speed: Math.round(state.speed * 2.236936), lap: state.lap, seconds: state.seconds, best: state.best, boost: state.boost, renderer,
       drifting: driftCharge > 0, driftCharge: clamp(driftCharge / .5, 0, 1), boostPower, gear: Math.min(6, 1 + Math.floor(state.speed / 7)),
-      audioReady: sound.ready, muted: !!settings.muted, fps: Math.round(fps), soloRace: soloRace?.status(),
+      roadKernel: world?.roadKernel, audioReady: sound.ready, muted: !!settings.muted, fps: Math.round(fps), soloRace: soloRace?.status(),
       map: [{ id: online?.id ?? 'you', x: state.x, z: state.z, color: ownColor ?? '#38bdf8', own: true },
         ...[...rivals].map(([id, rival]) => ({ id, x: rival.pose.x, z: rival.pose.z, color: rival.color }))],
     });
@@ -262,6 +234,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       if (car) {
         car.position.set(x, y + 0.045, z);
         car.rotation.set(pitch + accelerationPitch, yaw, lean);
+        car.metadata.setBraking?.(phase === "race" && (input.brake || acceleration < -11));
         const { wheels, frontWheels, wheelRadius } = car.metadata;
         for (const wheel of wheels ?? []) wheel.rotation.x += speed * dt / (wheelRadius ?? .4);
         for (const front of frontWheels ?? []) front.rotation.y = 0.35 * steer;
@@ -306,7 +279,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       camera.rotation.z = -lean * .23 * motion;
       camera.fov = mix(camera.fov, fovBase + (clamp(speed / 37, 0, 1) * .09 + boostPower * .095) * motion, 1 - Math.exp(-dt * 4));
       effects?.update({ x, y, z, yaw, pitch, speed, steer, boost, drift: driftCharge, reducedMotion: !motion }, dt);
-      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, color: ownColor, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color})) });
+      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, speed, reducedMotion: !motion, color: ownColor, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color})) });
       else scene3d.render();
       hudTick += dt;
       if (hudTick >= 0.096) { hudTick = 0; hud(source); }

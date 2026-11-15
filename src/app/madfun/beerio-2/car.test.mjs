@@ -75,3 +75,47 @@ test('rival disposal does not retain temporary materials or damage another car',
   b.dispose(false, true);
   assert.ok(scene.materials.length <= before + 1);
 }));
+
+test('NIGHTJAR has a low, wide hypercar envelope, finite geometry and polished opaque glass', () => fixture(scene => {
+  const car = buildCar(scene);
+  assert.equal(car.metadata.design, 'NIGHTJAR / 01');
+  const bounds = car.getHierarchyBoundingVectors(true);
+  assert.ok(bounds.max.x - bounds.min.x > 2.24, 'wide wing and race stance remain visible');
+  assert.ok(bounds.max.y < 1.55, 'fighter canopy stays lower than a conventional coupe');
+  assert.ok(bounds.max.z - bounds.min.z < 4.8, 'aero fits racing collision envelope');
+  for (const mesh of car.getChildMeshes()) {
+    assert.ok(mesh.getVerticesData('position').every(Number.isFinite));
+    assert.ok(mesh.getVerticesData('normal').every(Number.isFinite));
+  }
+  const glass = scene.getMaterialByName('car-smoked-glass');
+  assert.equal(glass.alpha, 1, 'no transparency sorting across ten cars');
+  assert.ok(glass.emissiveFresnelParameters);
+}));
+
+test('garage finishes recolor only the intended coachwork and reject malformed colors', () => fixture(scene => {
+  const car = buildCar(scene);
+  const paint = scene.getMaterialByName('car-glacier-paint');
+  const trim = scene.getMaterialByName('car-carbon');
+  const trimBefore = trim.diffuseColor.toHexString();
+  car.metadata.setPaint('#ff4433');
+  assert.equal(paint.diffuseColor.toHexString(), '#FF4433');
+  assert.equal(trim.diffuseColor.toHexString(), trimBefore);
+  car.metadata.setPaint('not-a-color');
+  assert.equal(paint.diffuseColor.toHexString(), '#FF4433');
+}));
+
+test('the player-only paint has true clear-coat response, tint and brake illumination', () => fixture(scene => {
+  const car = buildCar(scene, true);
+  assert.ok(draws(car) <= 28);
+  const coat = scene.getMaterialByName('car-clear-coated-body');
+  assert.ok(coat.clearCoat.isEnabled);
+  assert.ok(car.getChildMeshes().some(mesh => mesh.material === coat));
+  car.metadata.setPaint('#ff4433');
+  assert.ok(coat.albedoColor.r > coat.albedoColor.g * 3);
+  const lights = scene.getMaterialByName('car-tail-light');
+  const nominal = lights.emissiveColor.r;
+  car.metadata.setBraking(true);
+  assert.ok(lights.emissiveColor.r > nominal);
+  car.metadata.setBraking(false);
+  assert.equal(lights.emissiveColor.r, nominal);
+}));

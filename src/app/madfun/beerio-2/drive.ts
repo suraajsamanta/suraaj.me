@@ -1,4 +1,5 @@
 import { crossedForward, getTrack, heading, roadTriangles, type Point, type TrackId } from './course';
+import { createSimdRoadQuery } from './road-simd';
 
 export type DriveInput = { steer: number; throttle: boolean; brake: boolean; drift: boolean; reset: boolean };
 export type CarState = {
@@ -17,6 +18,8 @@ export type DrivingWorldOptions = {
   trackId?: TrackId;
 };
 export type DrivingWorld = {
+  /** Runtime-selected road geometry kernel on the simulator. */
+  roadKernel: "WASM SIMD" | "Scalar";
   spawn: (grid?: number) => Driver;
   step: (driver: Driver, input: DriveInput, dt: number, totalLaps?: number) => void;
   dispose: () => void;
@@ -37,7 +40,8 @@ let rapierReady: Promise<typeof import('@dimforge/rapier3d-compat')> | undefined
 export async function createDrivingWorld(options: DrivingWorldOptions = {}): Promise<DrivingWorld> {
   const track = getTrack(options.trackId ?? 'seattle');
   const course = track.points;
-  const nearest = indexRoad(course);
+  const simd = await createSimdRoadQuery(course);
+  const nearest = simd ?? indexRoad(course);
   const angleAt = (i: number) => heading(i, course);
   let sampleHeight = options.sampleHeight;
   let free = () => {};
@@ -181,7 +185,7 @@ export async function createDrivingWorld(options: DrivingWorldOptions = {}): Pro
     }
   }
 
-  return { spawn, step, dispose() { if (!disposed) { disposed = true; free(); } } };
+  return { roadKernel: simd ? "WASM SIMD" : "Scalar", spawn, step, dispose() { if (!disposed) { disposed = true; free(); } } };
 }
 
 
