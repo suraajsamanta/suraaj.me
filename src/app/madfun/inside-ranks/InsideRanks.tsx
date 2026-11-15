@@ -4,8 +4,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { useEffect, useEffectEvent, useState } from 'react';
-import { MANUAL_RANKING_SECONDS, phaseTimer, type Player } from './engine';
-import { useInsideRanksSession } from './useInsideRanksSession';
+import { MANUAL_RANKING_SECONDS, MAX_CUSTOM_QUESTION_LENGTH, normalizeCustomQuestion, phaseTimer, type Player, type Prompt } from './engine';
+import { MAX_PLAYER_QUESTIONS, useInsideRanksSession } from './useInsideRanksSession';
 import { LiveRanking, RankForm, RankName } from './LiveRanking';
 import { useKeepScreenAwake } from './useKeepScreenAwake';
 import styles from './inside-ranks.module.css';
@@ -16,12 +16,53 @@ const path = '/madfun/inside-ranks';
 const quickSteps = [
   { title: 'Create a room on the shared screen', body: 'Choose Create room on the screen everyone can see. This screen starts rounds and shows results, but it never joins as a player or sees the secret question.' },
   { title: 'Scan the player QR on your phone', body: 'At least three players scan the same QR, or enter the room code under Join a room. If the person setting up wants to play too, they scan on a separate phone.' },
-  { title: 'Drag to rank', body: 'The game picks a different ranker each round. When your phone says YOU’RE THE RANKER, read the secret question, rank everyone, including yourself and anyone who stepped away, with the best match at #1, then lock it in. The group sees the moves live, never the question.' },
+  { title: 'Add your own questions', body: 'In the lobby, write a question on your phone if you want. Player questions come first. The group gets no hint for those questions.' },
+  { title: 'Drag to rank', body: 'Read your secret question, then drag the grips to put the best match at #1. Rank everyone, including yourself and anyone who stepped away. Normally the group sees your moves live. Turn on Simultaneous Ranking to give each player their own question and 60 seconds to rank privately, then review the locked rankings one at a time.' },
   { title: 'Run the room from a second phone', body: 'Optional: pair a phone with the private Host controller QR. On the display or controller, you can turn on Auto-run to time each stage.' },
   { title: 'Try Dark Mode', body: 'Optional: in the lobby, the host can switch to a separate deck of group beef, dark satire, and bad decisions. The regular deck is the default.' },
-  { title: 'Guess and score', body: 'First, see the ranking and a hint. Guess out loud, or choose Show options for four phone choices. Correct phone guesses get 1 point. The most points wins.' },
+  { title: 'Guess and score', body: 'See the ranking, then try to guess the question. Only built-in questions have a hint. Guess out loud, or choose Show options for four phone choices. Correct phone guesses get 1 point. The most points wins.' },
 ] as const;
 const cleanCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+const noPreview = () => {};
+
+function QuestionBox({ questions, disabled, add, remove }: {
+  questions: readonly Prompt[]; disabled: boolean; add: (text: string) => void; remove: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [sent, setSent] = useState<string | null>(null);
+  const normalized = normalizeCustomQuestion(draft);
+  const alreadyAdded = !!normalized && questions.some(question => question.text.toLowerCase() === normalized.toLowerCase());
+  const full = questions.length >= MAX_PLAYER_QUESTIONS;
+  return <div className={styles.questionBox}>
+    <div className={styles.questionHeading}>
+      <h2>Write a question</h2>
+      <span className={styles.roleBadge} role="status">{questions.length > 0 ? 'Question added' : 'Optional'}</span>
+    </div>
+    <p>Player questions go first, and nobody gets a hint.</p>
+    {!full && <form className={styles.stack} onSubmit={event => {
+      event.preventDefault();
+      if (disabled || !normalized || alreadyAdded) return;
+      add(normalized);
+      setSent(normalized);
+    }}>
+      <label>Your question<textarea rows={2} disabled={disabled} value={draft} maxLength={MAX_CUSTOM_QUESTION_LENGTH}
+        onChange={event => { setDraft(event.target.value); setSent(null); }} placeholder="Who would start drama just to make the group chat interesting?" /></label>
+      {!!draft.trim() && !normalized && <small>Enter 8–{MAX_CUSTOM_QUESTION_LENGTH} characters using normal text.</small>}
+      {alreadyAdded && <small role="status">You already added that question.</small>}
+      {sent && !alreadyAdded && <small role="status">Waiting for the room to confirm. If it doesn’t go through, try different wording.</small>}
+      <button className={styles.primary} disabled={disabled || !normalized || alreadyAdded}>Add question</button>
+    </form>}
+    {questions.length > 0 && <ul className={styles.questionList} aria-label="Your submitted questions">
+      {questions.map((question, index) => <li key={question.id}>
+        <span>{question.text}</span>
+        <button type="button" disabled={disabled} aria-label={`Remove submitted question ${index + 1}`} onClick={() => {
+          remove(question.id); setSent(null);
+          if (question.text === normalized) setDraft('');
+        }}>Remove</button>
+      </li>)}
+    </ul>}
+  </div>;
+}
 
 function RoundTimer({ deadline, duration }: { deadline: number; duration: number }) {
   const [seconds, setSeconds] = useState(duration);
@@ -41,7 +82,7 @@ function Ranking({ players, rankerId }: { players: readonly Player[]; rankerId: 
 
 export default function InsideRanks() {
   const session = useInsideRanksSession();
-  const { state, host, watching, roomCode, participantId, prompt } = session;
+  const { state, host, watching, roomCode, participantId, prompt, questions } = session;
   const [name,setName] = useState('');
   const [code,setCode] = useState('');
   const [watchMode,setWatchMode] = useState(false);
@@ -55,8 +96,11 @@ export default function InsideRanks() {
   const match = state?.match;
   const darkDeck = state?.deck === 'dark';
   const canChangeDeck = !match || match.phase === 'finished';
-  const timer = match?.phase === 'ranking' && !state?.autoRun ? { seconds: MANUAL_RANKING_SECONDS, action: 'expire_ranking' as const } :
-    state?.autoRun ? phaseTimer(match?.phase) : null;
+  const simultaneous = state?.simultaneous === true;
+  const batch = match?.batch;
+  const timer = match?.phase === 'ranking' && !state?.autoRun
+    ? { seconds: MANUAL_RANKING_SECONDS, action: 'expire_ranking' as const }
+    : (match?.phase === 'batch_ranking' || state?.autoRun) ? phaseTimer(match?.phase) : null;
   useKeepScreenAwake(active && !!roomCode && match?.phase !== 'finished');
   const deadline = timer ? state?.deadline : null;
   const advanceAutomatically = useEffectEvent((type: NonNullable<ReturnType<typeof phaseTimer>>['action'], expected: number) => {
@@ -73,6 +117,8 @@ export default function InsideRanks() {
   const roundKey = `${state?.matchId}:${match?.round}`;
   const selected = pick?.round === roundKey ? pick.id : null;
   const display = host || watching;
+  const assignedInBatch = !display && !!participantId && !!batch?.rankerIds.includes(participantId);
+  const lockedInBatch = !!participantId && !!batch?.submittedIds.includes(participantId);
   const isRanker = !display && !!match && match.ranker.id === participantId;
   const canGuess = !display && !!participantId && !!match?.eligibleGuesserIds.includes(participantId);
   const hasGuessed = !!participantId && !!match?.guessedIds.includes(participantId);
@@ -139,16 +185,23 @@ export default function InsideRanks() {
     <span><strong>Dark Mode</strong><small>Messy exes, leaked group chats, petty behavior, and dark satire. Turn it on if everyone’s up for a roast.</small></span>
   </label>;
 
+  const simultaneousControl = <label className={`${styles.autoRun} ${styles.batchToggle}`}>
+    <input type="checkbox" checked={simultaneous} disabled={!connected}
+      onChange={event => session.dispatch({ type: 'set_simultaneous', enabled: event.target.checked })}/>
+    <span><strong>Simultaneous Ranking</strong><small>Everyone gets one secret question and 60 seconds to rank privately. Then review the rankings one at a time.</small></span>
+  </label>;
+
   const identify = (id: string) => players.find(player => player.id === id)?.name ?? 'Player';
   const rankerOnline = !!match && players.some(player => player.id === match.ranker.id && player.connected);
-  const nextLabel = match?.round === match?.totalRounds ? 'Show final scores' : 'Next round';
+  const nextLabel = match?.round === match?.totalRounds ? 'Show final scores' : match?.simultaneous ? 'Next ranking' : 'Next round';
   const endRoom = () => {
     session.leave(); setInvite(false); setCopy(''); setQr(''); setPick(null);
   };
-  const phases = { ranking: 'Waiting for the ranker', hint: 'Guess from the hint', guessing: 'Option guesses', reveal: 'Answer reveal', finished: 'Final scores' } as const;
+  const phases = { ranking: 'Waiting for the ranker', batch_ranking: 'Private rankings', hint: match?.customPrompt ? 'Guess without a hint' : 'Guess from the hint', guessing: 'Option guesses', reveal: 'Answer reveal', finished: 'Final scores' } as const;
   const remoteActions: RemoteAction[] = [
     !match ? { id: 'start', label: 'Start game', disabled: !connected || online < 3, run: () => session.dispatch({type:'start'}) } :
     match.phase === 'ranking' ? { id: 'skip', label: 'Skip offline ranker', disabled: !connected || rankerOnline, run: () => session.dispatch({type:'skip'}) } :
+    match.phase === 'batch_ranking' ? { id: 'batch', label: 'Waiting for private rankings', disabled: true, run: noPreview } :
     match.phase === 'hint' ? { id: 'options', label: 'Show options', disabled: !connected, run: () => session.dispatch({type:'show_options'}) } :
     match.phase === 'guessing' ? { id: 'reveal', label: 'Reveal answer', disabled: !connected, confirm: pendingCount ? 'Some players are still guessing. Reveal now?' : undefined, run: () => session.dispatch({type:'reveal'}) } :
     match.phase === 'reveal' ? { id: 'next', label: nextLabel, disabled: !connected, run: () => session.dispatch({type:'next'}) } :
@@ -156,6 +209,7 @@ export default function InsideRanks() {
     ...(match?.phase === 'hint' ? [{ id: 'verbal-reveal', label: 'Solved aloud · Reveal answer', disabled: !connected, run: () => session.dispatch({type:'reveal'}) }] : []),
     ...(match ? [{ id: 'invite', label: invite ? 'Hide player QR' : 'Show player QR', run: () => setInvite(current => !current) }] : []),
     ...(canChangeDeck ? [{ id: 'deck', label: darkDeck ? 'Use regular deck' : 'Use Dark Mode deck', disabled: !connected, run: () => session.dispatch({type:'set_deck',deck:darkDeck?'classic':'dark'}) }] : []),
+    ...(canChangeDeck ? [{ id: 'simultaneous', label: simultaneous ? 'Use turn-by-turn ranking' : 'Use simultaneous ranking', disabled: !connected, run: () => session.dispatch({type:'set_simultaneous',enabled:!simultaneous}) }] : []),
     { id: 'auto', label: state?.autoRun ? 'Turn off auto-run' : 'Turn on auto-run', disabled: !connected, run: () => session.dispatch({type:'set_auto',enabled:!state?.autoRun}) },
     { id: 'end', label: 'End room', disabled: !connected, confirm: 'End this room for everyone?', run: endRoom },
   ];
@@ -165,9 +219,10 @@ export default function InsideRanks() {
       <Link href="/madfun" className={styles.brand}>madfun<span>✳</span></Link>
       {active && <div className={styles.actions}>
         {roomCode && <span className={styles.code}>{roomCode}</span>}{darkDeck && <span className={`${styles.roleBadge} ${styles.darkBadge}`}>Dark Mode</span>}{display && <span className={styles.roleBadge}>{host ? "Host display" : "Watch only"}</span>}
-        {roomCode && match && !watching && <button aria-expanded={invite} onClick={() => setInvite(!invite)}>Invite</button>}
+        {roomCode && (!host || match) && !watching && <button aria-expanded={invite} onClick={() => setInvite(!invite)}>Invite</button>}
         {host && roomCode && <HostRemote key={roomCode} game="Inside Ranks"
-          phase={match ? `Round ${match.round}/${match.totalRounds} · ${phases[match.phase]}` : 'Lobby'}
+          phase={match?.phase === 'batch_ranking' ? `${batch?.submittedIds.length ?? 0}/${batch?.rankerIds.length ?? 0} rankings locked` :
+            match ? `${match.simultaneous ? 'Ranking' : 'Round'} ${match.round}/${match.totalRounds} · ${phases[match.phase]}` : 'Lobby'}
           actions={remoteActions}/>}
         <button onClick={() => {
           if (host && match && match.phase !== 'finished' && !window.confirm('End the room for everyone?')) return;
@@ -205,7 +260,7 @@ export default function InsideRanks() {
         </div>
       </> : <>
         {!connected && !session.error && <p className={styles.alert} role="status">{state ? 'Reconnecting…' : 'Connecting to the room…'}</p>}
-        {roomCode && (!match || (invite && !watching)) && <aside className={`${styles.panel} ${styles.share}`} aria-label="Player invite">
+        {roomCode && ((!match && display) || (invite && !watching)) && <aside className={`${styles.panel} ${styles.share}`} aria-label="Player invite">
           {qr && <Image src={qr} unoptimized alt="Player QR: scan with your phone to join Inside Ranks" width={display ? 146 : 112} height={display ? 146 : 112}/>}
           <div className={styles.stack}><h2>Player QR · Scan to play</h2><span className={styles.code}>{roomCode}</span>
             <p>One QR for everyone. When it’s your turn to rank, the secret question appears on your phone automatically.</p>
@@ -219,13 +274,30 @@ export default function InsideRanks() {
           <h1>Who’s playing?</h1>
           <p>{online} {online === 1 ? "player" : "players"} connected · 3 minimum</p>
           <ul className={styles.players}>{players.map(player => <li key={player.id}>{player.name}{player.id === participantId ? ' (you)' : ''}{!player.connected ? ' · offline' : ''}</li>)}</ul>
-          {host ? <>{darkDeckControl}{autoRunControl}<button className={styles.primary} disabled={!connected || online < 3} onClick={() => session.dispatch({type:'start'})}>Start game</button></> : <p role="status">Your host will start the game.</p>}
+          <p role="status">{state.questionCount ?? 0} player {(state.questionCount ?? 0) === 1 ? 'question' : 'questions'} added for this game.</p>
+          {!display && participantId && <QuestionBox key={roomCode} questions={questions} disabled={!connected}
+            add={text => session.dispatch({type:'submit_question',text})} remove={id => session.dispatch({type:'remove_question',id})}/>}
+          {host ? <>{darkDeckControl}{simultaneousControl}{autoRunControl}<button className={styles.primary} disabled={!connected || online < 3} onClick={() => session.dispatch({type:'start'})}>Start game</button></> : <p role="status">Your host will start the game.</p>}
         </section>}
-        {match && <section className={styles.panel}>
+        {match && <section className={styles.panel} key={match.simultaneous && match.phase !== 'batch_ranking' ? roundKey : 'current-match'}>
           <div className={styles.actions}>
-            <span className={styles.kicker}>Round {match.round} of {match.totalRounds}</span>
+            <span className={styles.kicker}>{match.phase === 'batch_ranking' ? 'Simultaneous Ranking' : match.phase === 'finished' ? 'Inside Ranks' :
+              `${match.simultaneous ? 'Ranking' : 'Round'} ${match.round} of ${match.totalRounds}`}</span>
             {timer && typeof deadline === 'number' && <RoundTimer key={deadline} deadline={deadline} duration={timer.seconds}/>}
           </div>
+          {match.phase === 'batch_ranking' && <>
+            <h1>{lockedInBatch ? 'Ranking locked in' : assignedInBatch ? 'Rank your friends' : 'Everyone ranks at once'}</h1>
+            {batch && <div className={styles.batchProgress}>
+              <progress max={batch.rankerIds.length} value={batch.submittedIds.length} aria-label="Private rankings locked"/>
+              <p role="status">{batch.submittedIds.length} of {batch.rankerIds.length} rankings locked in</p>
+            </div>}
+            {assignedInBatch && !lockedInBatch ? prompt
+              ? <RankForm key={roundKey} players={targets} rankerId={participantId!} prompt={prompt.text} disabled={!connected} privateDraft
+                onPreview={noPreview} onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/>
+              : <p role="status">Loading your private question…</p>
+              : <p>{lockedInBatch ? 'Hang tight. The group will review the rankings one at a time.' :
+                'Rankings are private until everyone locks in or the minute is up. Then the group reviews each submitted ranking in order.'}</p>}
+          </>}
           {match.phase === 'ranking' && <>
             {isRanker && <span className={styles.roleBadge}>You’re the ranker · Private turn</span>}
             <h1>{isRanker ? 'Rank your friends' : `${match.ranker.name} is ranking the group`}</h1>
@@ -233,18 +305,19 @@ export default function InsideRanks() {
               onPreview={preview => session.dispatch({type:'rank_preview',...preview})}
               onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/> : isRanker ?
               <p role="status">Loading your private question…</p> : <>
-                <p>Watch the order change live. A hint appears after the ranker locks it in.</p>
+                <p>Watch the order change live. Once the ranker locks it in, try to guess their question.</p>
                 <LiveRanking players={targets} rankerId={match.ranker.id} preview={match.preview}/>
               </>}
             {host && !rankerOnline &&
               <button disabled={!connected} onClick={() => session.dispatch({type:'skip'})}>Skip offline ranker</button>}
           </>}
           {match.phase === 'hint' && <>
-            <h1>Guess from the hint</h1>
+            <h1>{match.customPrompt ? 'Guess the question' : 'Guess from the hint'}</h1>
             <div className={styles.roundGrid}>
               <div className={styles.stack}><h2>{match.ranker.name}’s ranking</h2><Ranking players={ranked} rankerId={match.ranker.id}/></div>
               <div className={styles.stack}>
-                <div className={styles.hint}><span className={styles.kicker}>Your hint</span><h2>{match.hint}</h2></div>
+                {match.hint ? <div className={styles.hint}><span className={styles.kicker}>Your hint</span><h2>{match.hint}</h2></div> :
+                  <span className={styles.roleBadge}>Player question · No hint</span>}
                 <p>{isRanker ? 'Keep the secret and listen to the guesses!' : 'What question fits this ranking? Try guessing out loud before showing the options.'}</p>
                 {host && <div className={styles.actions}>
                   <button className={styles.primary} disabled={!connected} onClick={() => session.dispatch({type:'show_options'})}>Show options</button>
@@ -289,7 +362,9 @@ export default function InsideRanks() {
             <h1>Final scores</h1>
             <ol className={styles.ranking}>{Object.entries(match.scores).sort((a,b) => b[1]-a[1]).map(([id,score],index) =>
               <li key={id}><span className={styles.number}>{index + 1}</span><strong>{identify(id)}</strong><span className={styles.score}>{score} {score === 1 ? 'point' : 'points'}</span></li>)}</ol>
-            {host && <>{darkDeckControl}<button className={styles.primary} disabled={!connected || online < 3} onClick={() => session.dispatch({type:'rematch'})}>Play again</button></>}
+            {!display && participantId && <QuestionBox key={roomCode} questions={questions} disabled={!connected}
+              add={text => session.dispatch({type:'submit_question',text})} remove={id => session.dispatch({type:'remove_question',id})}/>}
+            {host && <>{darkDeckControl}{simultaneousControl}<button className={styles.primary} disabled={!connected || online < 3} onClick={() => session.dispatch({type:'rematch'})}>Play again</button></>}
           </>}
         </section>}
       </>}

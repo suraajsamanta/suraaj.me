@@ -37,15 +37,16 @@
   font-weight: 850; letter-spacing: .12em;
 }
 .shell label { display: grid; gap: 5px; font-size: .88rem; font-weight: 750; }
-.shell input,.shell button,.actions a {
+.shell input,.shell textarea,.shell button,.actions a {
   border: 1px solid #f9ceff40; min-height: 46px; font: inherit; border-radius: 12px;
   padding: 9px 12px; color: inherit; background: #fff1ff10; touch-action: manipulation;
 }
-.shell input { width: 100%; background: #180f22; }
+.shell input,.shell textarea { width: 100%; background: #180f22; }
+.shell textarea { resize: vertical; min-height: 4.65rem; font-size: 1rem; }
 .shell button,.actions a { cursor: pointer; font-weight: 760; }
 .actions a { display: inline-flex; align-items: center; text-decoration: none; text-align: center; }
 .shell button:hover:not(:disabled),.actions a:hover { background: #fff1ff28; }
-.shell button:focus-visible,.shell a:focus-visible,.shell input:focus-visible {
+.shell button:focus-visible,.shell a:focus-visible,.shell input:focus-visible,.shell textarea:focus-visible {
   outline: 3px solid #fff0af; outline-offset: 3px;
 }
 .shell button:disabled { opacity: .5; cursor: not-allowed; }
@@ -181,3 +182,18 @@
 .shell .deckToggle input { accent-color: #ffc496; }
 .darkBadge { background: #683637; color: #ffe0c3; box-shadow: inset 0 0 0 1px #f4a77766; }
 .shell[data-deck='dark'] { background: radial-gradient(ellipse at 55% 0,#532831 0,transparent 57%),#1b1020; }
+
+.shell .batchToggle { border-color: #cbb0f683; background: #432c65; }
+.shell .batchToggle input { accent-color: #d5b6ff; }
+.questionBox,.batchProgress {
+  display: grid; gap: .65rem; padding: clamp(.7rem, 2vw, 1rem); min-width: 0;
+  border: 1px solid #cbb0f67d; background: #231733; border-radius: 14px;
+}
+.questionHeading { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; justify-content: space-between; }
+.questionList { display: grid; gap: .4rem; list-style: none; padding: 0; margin: 0; }
+.questionList li {
+  display: grid; align-items: center; grid-template-columns: minmax(0,1fr) auto; gap: .5rem;
+  border-top: 1px solid #f9ceff40; padding-top: .55rem; overflow-wrap: anywhere;
+}
+.batchProgress progress { width: 100%; height: 1rem; accent-color: #d8afff; }
+.batchProgress p { font-weight: 750; }

@@ -234,11 +234,11 @@ test('a player who stepped away in the lobby is included in all ranks, eligible 
 
 test('Dark Mode has its own deck, private prompts and category hints across rounds', async () => {
   const { INSIDE_RANKS_DARK_PROMPTS: dark, DARK_OPENING_CATEGORIES } = await load('./dark-prompts.ts');
-  assert.equal(dark.length, 64);
-  assert.equal(new Set(dark.map(p => p.text)).size, 64);
+  assert(dark.length >= 150);
+  assert.equal(new Set(dark.map(p => p.text.toLowerCase().replace(/[?.!]+$/u, ''))).size, dark.length);
   for (const category of new Set(dark.map(p => p.category))) {
     const categoryDeck = dark.filter(p => p.category === category);
-    assert.equal(categoryDeck.length, 8);
+    assert(categoryDeck.length >= 4);
     const categoryMatch = e.createMatch(players, categoryDeck, () => 0.8);
     assert.notEqual(e.publicView(rank(categoryMatch)).hint, 'Think about the situation this group’s ranking might fit.');
   }
@@ -264,4 +264,156 @@ test('Dark Mode has its own deck, private prompts and category hints across roun
   const next = e.nextRound(e.reveal(guessing), players, dark, () => 0.2);
   assert(next.options.every(option => darkIds.has(option.id)));
   assert(!darkIds.has(round().correct.id));
+});
+
+const customPrompts = [
+  { id: 'room-q-a', text: 'Who would bring a karaoke machine camping?' },
+  { id: 'room-q-b', text: 'Who could plan an entire reunion in ten minutes?' },
+];
+const makeBatch = (people = players, custom = customPrompts) =>
+  e.createMatch(people, bank, () => 0.8, undefined, { customPrompts: custom, simultaneous: true });
+
+test('room questions go first without hints; they never become decoys', () => {
+  assert.equal(e.normalizeCustomQuestion('  Who\t wins  karaoke?\n'), 'Who wins karaoke?');
+  assert.equal(e.normalizeCustomQuestion('tool\u202egame?'), null);
+  assert.equal(e.normalizeCustomQuestion('x'.repeat(e.MAX_CUSTOM_QUESTION_LENGTH + 1)), null);
+  assert.equal(e.normalizeCustomQuestion({ text: 'not a string' }), null);
+  const extended = [...customPrompts, { id: 'dupe', text: customPrompts[0].text.toUpperCase().replace('?', '!') }];
+  let match = e.createMatch(players, bank, () => 0.8, undefined, { customPrompts: extended });
+  for (const custom of customPrompts) {
+    assert.deepEqual(e.privateView(match, match.ranker.id), { prompt: custom });
+    assert(!JSON.stringify(e.publicView(match)).includes(custom.text));
+    assert(!match.consumedCustomPromptIds.includes(custom.id));
+    const review = rank(match);
+    assert(review.consumedCustomPromptIds.includes(custom.id));
+    assert.equal(e.publicView(review).hint, null);
+    assert.equal(e.publicView(review).customPrompt, true);
+    assert.deepEqual(e.publicView(review).options, []);
+    assert.equal(e.publicView(review).correct, null);
+    const guessing = e.showOptions(review);
+    assert.equal(guessing.options.length, 4);
+    assert.equal(guessing.options.filter(o => !bank.some(p => p.id === o.id)).length, 1);
+    const sent = e.publicView(guessing).options;
+    assert(sent.every(option => /^choice-[1-4]$/.test(option.id) && Object.keys(option).length === 2));
+    const correctChoice = sent.find(option => option.text === custom.text);
+    const guesser = review.eligibleGuesserIds[0];
+    assert.equal(e.submitGuess(guessing, guesser, custom.id), null);
+    const reveal = e.reveal(e.submitGuess(guessing, guesser, correctChoice.id));
+    assert.deepEqual(e.publicView(reveal).correct, correctChoice);
+    assert.equal(e.publicView(reveal).results[0].optionId, correctChoice.id);
+    match = e.nextRound(reveal, players, bank, () => 0.8);
+  }
+  assert.equal(match.customPrompt, false);
+  assert(bank.some(p => p.id === match.correct.id));
+  assert(e.publicView(rank(match)).hint);
+});
+
+test('a missed sequential rank does not lose the queued room question', () => {
+  const match = e.createMatch(players, bank, () => 0.8, undefined, { customPrompts });
+  const next = e.skipRound(match, players, bank, () => 0.8);
+  assert.notEqual(next.ranker.id, match.ranker.id);
+  assert.equal(next.correct.id, customPrompts[0].id);
+  assert.equal(e.nextRound(e.reveal(rank(next)), players, bank).correct.id, customPrompts[1].id);
+});
+
+test('60-second simultaneous phase keeps unique assignments and all draft orders private', () => {
+  const roster = players.map((p, index) => index === 3 ? { ...p, connected: false } : p);
+  let match = makeBatch(roster);
+  const view = e.publicView(match);
+  assert.equal(match.phase, 'batch_ranking');
+  assert.deepEqual(view.rankTargets, roster);
+  assert.equal(view.simultaneous, true);
+  assert.equal(view.batch.rankerIds.length, 3);
+  assert.equal(new Set(view.batch.rankerIds.map(id => e.privateView(match, id).prompt.id)).size, 3);
+  assert.equal(e.privateView(match, players[3].id), null);
+  assert.equal(e.privateView(match, 'late-guest'), null);
+  assert.deepEqual(e.phaseTimer(match.phase), { seconds: 60, action: 'expire_ranking' });
+  assert.equal(e.roundDeadline(false, match.phase, 1000, 1000), 61000);
+  assert.equal(e.roundDeadline(true, match.phase, 1000, 22000), 61000);
+  for (const id of view.batch.rankerIds) {
+    const { prompt } = e.privateView(match, id);
+    assert(!JSON.stringify(view).includes(prompt.text));
+    assert(!JSON.stringify(view).includes(prompt.id));
+  }
+  const [first, second] = view.batch.rankerIds;
+  const ids = players.map(player => player.id);
+  assert.equal(e.updateRankingPreview(match, first, ids, null), null);
+  assert.equal(e.submitRanking(match, first, ids.filter(id => id !== first)), null);
+  assert.equal(e.submitRanking(match, players[3].id, ids), null);
+  match = e.submitRanking(match, first, ids.toReversed());
+  assert.equal(e.privateView(match, first), null);
+  assert(e.privateView(match, second));
+  assert.deepEqual(e.publicView(match).batch.submittedIds, [first]);
+  assert.deepEqual(e.publicView(match).ranking, []);
+  assert.equal(e.submitRanking(match, first, ids), null);
+  assert.equal(e.reveal(match), null);
+});
+
+test('all simultaneous locks show slides immediately and score guesses one review at a time', () => {
+  let match = makeBatch();
+  const rankers = e.publicView(match).batch.rankerIds;
+  const assignments = rankers.map(id => e.privateView(match, id).prompt);
+  const names = players.map(p => p.id);
+  const late = { id: 'late-guest', name: 'Late Guest', connected: true };
+  for (let i = rankers.length - 1; i >= 0; i--) {
+    match = e.submitRanking(match, rankers[i], i % 2 ? names : names.toReversed(), [...players, late]);
+    if (i > 0) assert.equal(match.phase, 'batch_ranking');
+  }
+  for (let i = 0; i < rankers.length; i++) {
+    const start = e.publicView(match);
+    assert.equal(start.phase, 'hint');
+    assert.equal(start.round, i + 1);
+    assert.equal(start.totalRounds, rankers.length);
+    assert.equal(start.ranker.id, rankers[i]);
+    assert.deepEqual(start.ranking.map(p => p.id), i % 2 ? names : names.toReversed());
+    assert.equal(start.batch, null);
+    assert.equal(start.correct, null);
+    assert.equal(start.customPrompt, i < customPrompts.length);
+    assert(start.eligibleGuesserIds.includes(late.id));
+    assert(!start.eligibleGuesserIds.includes(rankers[i]));
+    assert.equal(e.privateView(match, rankers[i]), null);
+    const guessing = e.showOptions(match);
+    assert.equal(guessing.options.length, 4);
+    assert(!guessing.options.some(option => assignments.some((other, j) => j !== i && option.id === other.id)));
+    const correctChoice = e.publicView(guessing).options.find(option => option.text === assignments[i].text);
+    const locked = e.submitGuess(guessing, late.id, correctChoice.id);
+    const revealed = e.reveal(locked);
+    assert.equal(e.publicView(revealed).correct.id, correctChoice.id);
+    assert.equal(revealed.scores[late.id], i + 1);
+    match = e.nextRound(revealed, [...players, late], bank);
+  }
+  assert.equal(match.phase, 'finished');
+  assert.deepEqual(match.consumedCustomPromptIds, customPrompts.map(prompt => prompt.id));
+});
+
+test('simultaneous timeout reviews only submitted ranks, even if submitter has disconnected', () => {
+  let match = makeBatch();
+  const rankers = e.publicView(match).batch.rankerIds;
+  const finished = e.skipRound(match, players, bank);
+  assert.equal(finished.phase, 'finished');
+  assert.equal(e.publicView(finished).correct, null);
+  assert.deepEqual(e.publicView(finished).ranking, []);
+  assert.deepEqual(finished.consumedCustomPromptIds, []);
+  assert.deepEqual(finished.remainingCustomPrompts, customPrompts);
+  match = e.submitRanking(match, rankers[2], players.map(p => p.id));
+  const later = players.map(p => p.id === rankers[2] ? { ...p, connected: false } : p);
+  const firstSlide = e.skipRound(match, later, bank);
+  assert.equal(firstSlide.phase, 'hint');
+  assert.equal(firstSlide.ranker.id, rankers[2]);
+  assert.equal(firstSlide.ranker.connected, false);
+  assert.equal(firstSlide.totalRounds, 1);
+  assert.deepEqual(firstSlide.consumedCustomPromptIds, []);
+  assert.deepEqual(firstSlide.remainingCustomPrompts, customPrompts);
+  assert(firstSlide.ranking.some(p => p.id === rankers[2]));
+  assert(e.publicView(firstSlide).hint);
+  assert.equal(e.nextRound(e.reveal(firstSlide), later, bank).phase, 'finished');
+});
+
+test('a player question matching a built-in still goes first, without duplicating its choice', () => {
+  const custom = { id: 'room-builtin-match', text: bank[0].text };
+  const match = e.createMatch(players, bank, () => 0.8, undefined, { customPrompts: [custom] });
+  assert.equal(match.correct.id, custom.id);
+  assert.equal(match.options.filter(option => option.text === custom.text).length, 1);
+  const next = e.nextRound(e.reveal(rank(match)), players, bank);
+  assert(!next.options.some(option => option.id === bank[0].id));
 });

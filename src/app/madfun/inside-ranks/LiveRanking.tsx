@@ -47,8 +47,8 @@ export function LiveRanking({ players, preview, rankerId }: { players: readonly 
   </div>;
 }
 
-export function RankForm({ players, rankerId, initial, settleOnMount, prompt, disabled, onRank, onPreview }: {
-  players: readonly Player[]; rankerId: string; initial?: string[]; settleOnMount?: boolean; prompt: string; disabled: boolean;
+export function RankForm({ players, rankerId, initial, settleOnMount, prompt, disabled, privateDraft = false, onRank, onPreview }: {
+  players: readonly Player[]; rankerId: string; initial?: string[]; settleOnMount?: boolean; prompt: string; disabled: boolean; privateDraft?: boolean;
   onRank: (ids: string[]) => void; onPreview: (preview: Preview) => void;
 }) {
   const [order, setOrder] = useState(() => initial ?? players.map(player => player.id));
@@ -141,7 +141,9 @@ export function RankForm({ players, rankerId, initial, settleOnMount, prompt, di
   const held = players.find(player => player.id === drag?.id);
   return <form className={styles.stack} onSubmit={event => { event.preventDefault(); if (!disabled && !hand.current) onRank(order); }}>
     <div className={styles.private}><span className={styles.kicker}>Private • Only you can see this</span><h2>{prompt}</h2></div>
-    <p>Drag the dotted grips to rank everyone, including yourself. Put the best match at #1. Your moves are live; only you see the question.</p>
+    <p>Drag the dotted grips to rank everyone, including yourself. Put the best match at #1. {privateDraft
+      ? 'Your order stays private until the group reviews it.'
+      : 'Your moves are live; only you see the question.'}</p>
     <ol ref={list} className={`${styles.dragList} ${styles.editable}`} aria-label="Rank your friends" style={listStyle(order.length)}>
       {(dragBase ?? order).map(id => {
         const slot = order.indexOf(id);
