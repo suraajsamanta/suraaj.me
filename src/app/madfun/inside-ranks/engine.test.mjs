@@ -233,12 +233,23 @@ test('a player who stepped away in the lobby is included in all ranks, eligible 
 });
 
 test('Dark Mode has its own deck, private prompts and category hints across rounds', async () => {
-  const { INSIDE_RANKS_DARK_PROMPTS: dark } = await load('./dark-prompts.ts');
-  assert.equal(dark.length, 56);
-  assert.equal(new Set(dark.map(p => p.text)).size, 56);
+  const { INSIDE_RANKS_DARK_PROMPTS: dark, DARK_OPENING_CATEGORIES } = await load('./dark-prompts.ts');
+  assert.equal(dark.length, 64);
+  assert.equal(new Set(dark.map(p => p.text)).size, 64);
+  for (const category of new Set(dark.map(p => p.category))) {
+    const categoryDeck = dark.filter(p => p.category === category);
+    assert.equal(categoryDeck.length, 8);
+    const categoryMatch = e.createMatch(players, categoryDeck, () => 0.8);
+    assert.notEqual(e.publicView(rank(categoryMatch)).hint, 'Think about the situation this group’s ranking might fit.');
+  }
   assert.equal(new Set([...bank, ...dark].map(p => p.id)).size, bank.length + dark.length);
   const darkIds = new Set(dark.map(p => p.id));
-  const useDeck = e.createMatch(players, dark, () => 0.8);
+  for (const value of [0.05, 0.25, 0.5, 0.8, 0.95]) {
+    const opener = e.createMatch(players, dark, () => value, DARK_OPENING_CATEGORIES);
+    assert(DARK_OPENING_CATEGORIES.includes(opener.correct.category));
+    assert(opener.options.every(option => option.category === opener.correct.category));
+  }
+  const useDeck = e.createMatch(players, dark, () => 0.8, DARK_OPENING_CATEGORIES);
   const privatePrompt = e.privateView(useDeck, useDeck.ranker.id).prompt;
   assert(darkIds.has(privatePrompt.id));
   assert.equal(e.publicView(useDeck).options.length, 0);

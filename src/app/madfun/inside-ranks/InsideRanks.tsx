@@ -18,7 +18,7 @@ const quickSteps = [
   { title: 'Scan the player QR on your phone', body: 'At least three players scan the same QR, or enter the room code under Join a room. If the person setting up wants to play too, they scan on a separate phone.' },
   { title: 'Drag to rank', body: 'The game picks a different ranker each round. When your phone says YOU’RE THE RANKER, read the secret question, rank everyone, including yourself and anyone who stepped away, with the best match at #1, then lock it in. The group sees the moves live, never the question.' },
   { title: 'Run the room from a second phone', body: 'Optional: pair a phone with the private Host controller QR. On the display or controller, you can turn on Auto-run to time each stage.' },
-  { title: 'Try Dark Mode', body: 'Optional: in the lobby, the host can switch to a separate deck of morbid, absurd questions. The regular deck is the default.' },
+  { title: 'Try Dark Mode', body: 'Optional: in the lobby, the host can switch to a separate deck of group beef, dark satire, and bad decisions. The regular deck is the default.' },
   { title: 'Guess and score', body: 'First, see the ranking and a hint. Guess out loud, or choose Show options for four phone choices. Correct phone guesses get 1 point. The most points wins.' },
 ] as const;
 const cleanCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
@@ -136,7 +136,7 @@ export default function InsideRanks() {
   const darkDeckControl = <label className={`${styles.autoRun} ${styles.deckToggle}`}>
     <input type="checkbox" checked={darkDeck} disabled={!connected}
       onChange={event => session.dispatch({ type: 'set_deck', deck: event.target.checked ? 'dark' : 'classic' })}/>
-    <span><strong>Dark Mode</strong><small>Swap in morbid jokes, cursed scenarios, and extremely questionable decisions.</small></span>
+    <span><strong>Dark Mode</strong><small>Messy exes, leaked group chats, petty behavior, and dark satire. Turn it on if everyone’s up for a roast.</small></span>
   </label>;
 
   const identify = (id: string) => players.find(player => player.id === id)?.name ?? 'Player';

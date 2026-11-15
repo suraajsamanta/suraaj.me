@@ -3,7 +3,7 @@
 import { usePhoneParty, type PhonePartyConfig } from '../shared/usePhoneParty';
 import { createMatch, nextRound, roundDeadline, privateView, publicView, reveal, showOptions, skipRound, submitGuess, submitRanking, updateRankingPreview, type RankingDrag, type Match, type Player, type Prompt, type PublicView } from './engine';
 import { INSIDE_RANKS_PROMPTS } from './prompts';
-import { INSIDE_RANKS_DARK_PROMPTS } from './dark-prompts';
+import { DARK_OPENING_CATEGORIES, INSIDE_RANKS_DARK_PROMPTS } from './dark-prompts';
 
 type Deck = 'classic' | 'dark';
 const promptsFor = (deck: Deck) => deck === 'dark' ? INSIDE_RANKS_DARK_PROMPTS : INSIDE_RANKS_PROMPTS;
@@ -50,7 +50,8 @@ const config: PhonePartyConfig<Model, InsideRanksPublic> = {
     }
     if (action.type === 'start' || action.type === 'rematch') {
       if (!host || (model.match && model.match.phase !== 'finished')) return null;
-      const match = createMatch(people, promptsFor(model.deck));
+      // Give Dark Mode a group-beef opener, then let later rounds use the whole deck.
+      const match = createMatch(people, promptsFor(model.deck), Math.random, model.deck === 'dark' ? DARK_OPENING_CATEGORIES : undefined);
       const now = Date.now();
       return match ? { ...model, matchId: model.matchId + 1, match, rankingStartedAt: now,
         deadline: roundDeadline(model.autoRun, match.phase, now, now) } : null;

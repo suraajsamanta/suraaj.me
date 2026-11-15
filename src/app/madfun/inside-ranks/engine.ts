@@ -51,12 +51,13 @@ const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
   everyday: 'Think about the little things people do in everyday life.',
   spotlight: 'Picture this group in a moment that gets everyone’s attention.',
   'dark-funeral': 'Picture a funeral that does not go as planned.',
-  'dark-haunting': 'Think about how this group would deal with ghosts.',
-  'dark-villain': 'Imagine the group in a low-budget villain origin story.',
   'dark-bargain': 'Think about a cursed deal and its fine print.',
   'dark-alibi': 'Picture this group trying to explain a very suspicious evening.',
-  'dark-disaster': 'Think about who this crew becomes when everything goes wrong.',
-  'dark-apocalypse': 'Picture the group after civilization has called it a day.',
+  'dark-receipts': 'Think group chats, screenshots, and evidence nobody meant to share.',
+  'dark-exes': 'Think about dating drama that became everyone’s business.',
+  'dark-petty': 'Picture a friend doing something small enough to deny and big enough to start a fight.',
+  'dark-bigots': 'Picture somebody calling out prejudice in public.',
+  'dark-boys-club': 'Think about what happens when a sexist comment gets an answer back.',
 });
 
 export const MANUAL_RANKING_SECONDS = 90;
@@ -99,10 +100,11 @@ function readyPrompts(prompts: readonly Prompt[]): Prompt[] {
   return [...new Map(prompts.filter(prompt => prompt.id && prompt.text.trim()).map(prompt => [prompt.id, prompt])).values()];
 }
 
-function chooseOptions(prompts: Prompt[], used: string[], rng: () => number) {
+function chooseOptions(prompts: Prompt[], used: string[], rng: () => number, prefer?: readonly string[]) {
   const fresh = prompts.filter(prompt => !used.includes(prompt.id));
   const source = fresh.length >= 4 ? fresh : prompts;
-  const correct = shuffled(source, rng)[0];
+  const preferred = prefer ? source.filter(prompt => prompt.category && prefer.includes(prompt.category)) : [];
+  const correct = shuffled(preferred.length ? preferred : source, rng)[0];
   const other = shuffled(source.filter(prompt => prompt.id !== correct.id), rng);
   const related = other.filter(prompt => prompt.category === correct.category);
   const unrelated = other.filter(prompt => prompt.category !== correct.category);
@@ -110,7 +112,7 @@ function chooseOptions(prompts: Prompt[], used: string[], rng: () => number) {
   return { correct, options, usedPromptIds: [...new Set([...used, ...options.map(prompt => prompt.id)])] };
 }
 
-export function createMatch(players: readonly Player[], prompts: readonly Prompt[], rng = Math.random): Match | null {
+export function createMatch(players: readonly Player[], prompts: readonly Prompt[], rng = Math.random, openingCategories?: readonly string[]): Match | null {
   const startingRoster = [...rosterById(players).values()].map(player => ({ ...player }));
   const bank = readyPrompts(prompts);
   if (startingRoster.filter(player => player.connected).length < 3 || bank.length < 4) return null;
@@ -129,7 +131,7 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
     ranking: [],
     preview: null,
     optionsShown: false,
-    ...chooseOptions(bank, [], rng),
+    ...chooseOptions(bank, [], rng, openingCategories),
     eligibleGuesserIds: eligibleGuessers(startingRoster, [], ranker.id),
     guesses: {},
     scores: Object.fromEntries(startingRoster.map(player => [player.id, 0])),
