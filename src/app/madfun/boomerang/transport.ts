@@ -18,7 +18,7 @@ export class ArenaRoomClient {
  onState=(fn:(state:unknown)=>void)=>{this.states.add(fn);return ()=>{this.states.delete(fn);};};
  private update(p:Partial<ArenaRoomSnapshot>){this.snapshot={...this.snapshot,...p};this.listeners.forEach(f=>f());}
  private send(m:unknown,replaceable=false){if(this.ws?.readyState===WebSocket.OPEN&&this.ws.bufferedAmount<(replaceable?1:131072)){try{this.ws.send(JSON.stringify(m));}catch{/* A closing socket is handled by reconnect. */}}}
- create=(maxPlayers=10)=>this.begin({type:'create',maxPlayers,publicMatchmaking:false},'host');
+ create=()=>this.begin({type:'create',maxPlayers:10,publicMatchmaking:false},'host');
  join=(code:string,name:string)=>{code=code.trim().toUpperCase();if(!/^[A-HJ-NP-Z2-9]{6}$/.test(code)||!name.trim()||Array.from(name.trim()).length>64){this.update({error:'Enter your name (up to 64 characters) and the six-character code.'});return;}this.begin({type:'join',code,name:name.trim()},'player');};
  private begin(hello:Record<string,unknown>,role:'host'|'player'){this.leave();this.intentional=false;this.token=null;this.localThrowSequence=0;this.wireThrowSequence=0;this.hello=hello;this.retries=0;this.openedAt=Date.now();this.update({status:'connecting',role,code:null,playerId:null,players:[],error:null});this.connect();}
  private connect(){if(this.timer)clearInterval(this.timer);if(this.reconnect)clearTimeout(this.reconnect);const previous=this.ws;this.ws=null;previous?.close();const configured=process.env.NEXT_PUBLIC_BEERIO_RELAY_URL;const url=configured||(location.protocol==='https:'?'wss://beerio-relay.onrender.com/room':`ws://${location.hostname}:8787`);const ws=new WebSocket(url);this.ws=ws;

@@ -282,8 +282,4 @@
   .hostSidebar > div:not(.joinDetails) select { min-height: 44px; font-size: 14px; }
   .hostSidebar > button, .hostSidebar > button[role="switch"], .joinDetails > button { min-height: 44px; font-size: 10px; }
   .hostScreen .hostHeader > button { min-height: 44px; }
-  .hostBoard[data-driving="true"] .roster { display: none; }
-}
-@media (max-height: 500px) and (orientation: landscape) {
-  .hostBoard[data-driving="true"] { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, 30%); }
 }

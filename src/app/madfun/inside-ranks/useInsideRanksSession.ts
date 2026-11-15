@@ -30,7 +30,7 @@ const config: PhonePartyConfig<Model, InsideRanksPublic> = {
       const match = createMatch(people, INSIDE_RANKS_PROMPTS);
       return match ? { matchId: model.matchId + 1, match } : null;
     }
-    if (!model.match) return null;
+    if (!model.match || (host && (action.type === 'rank' || action.type === 'guess'))) return null;
     const match = action.type === 'rank' ? submitRanking(model.match, actor.id, action.orderedIds) :
       action.type === 'guess' ? submitGuess(model.match, actor.id, action.optionId) :
       !host ? null : action.type === 'reveal' ? reveal(model.match) :

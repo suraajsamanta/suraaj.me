@@ -10,7 +10,7 @@ import { clueError, type CardKind, type Team } from './engine';
 import styles from './codewords.module.css';
 
 const quickSteps = [
- { title: 'Create a room for 4 or more', body: 'Choose Create room, then share the player QR, invite link or code. For a TV, use Watch only. Do not mirror a clue-giver’s phone.' },
+ { title: 'Create the shared board', body: 'On the big screen, choose Create room. This screen shows the board and starts each game. It doesn’t join a team. At least four players scan the player QR on their phones.' },
  { title: 'Pick teams and roles', body: 'Each team needs one clue-giver and at least one guesser. Only the clue-givers can see which cards belong to which team.' },
  { title: 'Give a clue, then guess', body: 'On your turn, the clue-giver sends one word and a number, like Space, 2. Guessers tap a word and confirm it. You can guess up to one more than the number or end your turn early. A wrong pick ends your turn.' },
  { title: 'Find all your words', body: 'Reveal every word of your team’s color first to win. Pick the trap card and your team immediately loses.' },
@@ -27,6 +27,7 @@ export default function Codewords() {
  const [name, setName] = useState('');
  const [code, setCode] = useState('');
  const [tvMode, setTvMode] = useState(false);
+ const [invited, setInvited] = useState(false);
  const [showInvite, setShowInvite] = useState(false);
  const [editTeamsMatch, setEditTeamsMatch] = useState<number | null>(null);
  const [qr, setQr] = useState('');
@@ -41,19 +42,22 @@ export default function Codewords() {
   const timer = window.setTimeout(() => {
    setCode((query.get('room') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0,6));
    setTvMode(query.get('watch') === '1');
+   setInvited(!!query.get('room'));
   }, 0);
   return () => window.clearTimeout(timer);
  }, []);
  useEffect(() => {
   if (!roomCode) return;
   let cancelled = false;
-  QRCode.toDataURL(new URL(`${gamePath}?room=${roomCode}`, window.location.origin).href, {width:144,margin:2})
+  QRCode.toDataURL(new URL(`${gamePath}?room=${roomCode}`, window.location.origin).href, {width:240,margin:3})
    .then(src => { if (!cancelled) setQr(src); }).catch(() => {});
   return () => { cancelled = true; };
  }, [roomCode]);
 
  const game = state?.game ?? null;
- const me = state?.seats.find(s => s.id === participantId);
+ const connectedPlayers = state?.seats.filter(seat => seat.connected).length ?? 0;
+ const display = host || watching;
+ const me = !display ? state?.seats.find(s => s.id === participantId) : undefined;
  const connected = session.status === 'connected';
  const gameLive = connected && session.hostConnected;
  const canClue = gameLive && me?.team === game?.turn && me?.role === 'spymaster' && game?.phase === 'clue';
@@ -91,10 +95,10 @@ export default function Codewords() {
   setCount(1);
  };
  const teams: Team[] = ['red','blue'];
- const invite = roomCode && <aside className={`${styles.panel} ${styles.invite}`} aria-label="Invite friends">
-  {qr && <Image src={qr} unoptimized alt="Scan to join Codewords" width={108} height={108}/>}
-  <div className={styles.stack}><h2>Bring in your team</h2><div className={styles.roomBadge}>ROOM {roomCode}</div><div className={styles.actions}>
-   <button onClick={share}>Share invite</button><Link className={styles.quietLink} href={tvPath} target="_blank" rel="noopener">Open TV view ↗</Link>
+ const invite = roomCode && <aside className={`${styles.panel} ${styles.invite}`} aria-label="Player invite">
+  {qr && <Image src={qr} unoptimized alt="Player QR: scan to play Codewords on your phone" width={display ? 146 : 108} height={display ? 146 : 108}/>}
+  <div className={styles.stack}><h2>Player QR · Scan to play</h2><div className={styles.roomBadge}>ROOM {roomCode}</div><div className={styles.actions}>
+   {!watching && <button onClick={share}>Share player invite</button>}{host && <Link className={styles.quietLink} href={tvPath} target="_blank" rel="noopener">Open another display ↗</Link>}
   </div>{copyLabel && <span className={styles.small} role="status">{copyLabel}</span>}</div>
  </aside>;
 
@@ -102,14 +106,14 @@ export default function Codewords() {
   <header className={styles.header}>
    <Link className={styles.brand} href="/madfun">madfun<b>✳</b></Link>
    {active && <div className={styles.headerTools}>
-    {roomCode && <span className={styles.roomBadge}>{roomCode}</span>}
+    {roomCode && <span className={styles.roomBadge}>{roomCode}</span>}{display && <span className={styles.roomBadge}>{host ? "Host display" : "Watch only"}</span>}
     {roomCode && !watching && <button aria-expanded={showInvite || !game} onClick={() => setShowInvite(!showInvite)} hidden={!game}>Invite</button>}
     <button onClick={() => { if(!host || !game || game.phase==='finished' || window.confirm('End this room for everyone?')) leave(); }}>{host ? 'End room' : 'Leave'}</button>
    </div>}
   </header>
   <div className={styles.frame}>
    {session.error && <div className={styles.alert} role="alert">{session.error} {active && <button onClick={session.retry}>Reconnect</button>}</div>}
-   <QuickStart game="Codewords" steps={quickSteps}/>
+   {!game && <QuickStart game="Codewords" steps={quickSteps}/>}
    {!active ? <>
     <section className={styles.hero}>
      <span className={styles.kicker}>The secret-word party game</span>
@@ -128,28 +132,27 @@ export default function Codewords() {
       <button className={styles.primary} disabled={code.length!==6 || (!tvMode && !name.trim())}>{tvMode ? 'Show board' : 'Join room'}</button>
       <button type="button" onClick={() => setTvMode(!tvMode)}>{tvMode ? 'Join as a player instead' : 'Watch only (TV mode)'}</button>
      </form>
-     {!tvMode && <form className={`${styles.panel} ${styles.stack}`} onSubmit={e => { e.preventDefault(); if(name.trim()) session.create(name.trim()); }}>
-      <h2>Start a new game</h2>
-      <p className={styles.small}>Play on your phones and put the board on a TV if you like. You’ll need at least four people.</p>
-      <label>Your name<input autoComplete="nickname" maxLength={40} required value={name} onChange={e => setName(e.target.value)} placeholder="Sam"/></label>
-      <button className={styles.primary} disabled={!name.trim()}>Create room</button>
-     </form>}
+     {!tvMode && !invited && <section className={`${styles.panel} ${styles.stack}`}>
+      <h2>Host on this display</h2>
+      <p className={styles.small}>This screen runs the shared board without playing. Invite at least four players to scan the QR on their phones.</p>
+      <button className={styles.primary} onClick={session.create}>Create room</button>
+     </section>}
     </div>
    </> : <>
     {!state && !session.error && <p className={styles.status} role="status">Connecting to the room…</p>}
     {state && !gameLive && !session.error && <p className={styles.status} role="status">Reconnecting…</p>}
-    {(!game && !watching || showInvite) && invite}
-    {state && game?.phase === 'finished' && state.canStart && !watching && editTeamsMatch !== state.match && <button onClick={() => setEditTeamsMatch(state.match)}>Change teams for next game</button>}
+    {(!game || showInvite) && invite}
+    {state && game?.phase === 'finished' && state.canStart && !watching && editTeamsMatch !== state.match && <button onClick={() => setEditTeamsMatch(state.match)}>{host ? "View teams for next game" : "Change teams for next game"}</button>}
     {state && (!game || (game.phase === 'finished' && (!state.canStart || editTeamsMatch === state.match))) && <>
-     <div><span className={styles.kicker}>Mission briefing</span><h1>{watching ? 'Teams are getting ready.' : 'Pick a team.'}</h1>
-      <p className={styles.deckSubtitle}>Each team needs one clue-giver and at least one guesser.</p></div>
+     <div><span className={styles.kicker}>Mission briefing</span><h1>{display ? 'Teams are getting ready.' : 'Pick a team on this phone.'}</h1>
+      <p className={styles.deckSubtitle}>{connectedPlayers} {connectedPlayers === 1 ? 'player' : 'players'} connected · 4 minimum. Each team needs one clue-giver and at least one guesser.</p></div>
      <div className={styles.rosters}>{teams.map(team => {
       const roster = state.seats.filter(seat => seat.team === team);
       const clueGiver = roster.find(seat => seat.role === 'spymaster' && seat.connected);
       return <section key={team} className={`${styles.panel} ${styles.roster} ${styles[team]}`}>
        <h2>{teamName[team]} team</h2>
        <ul>{roster.length ? roster.map(seat => <li key={seat.id}><b>{seat.name}{seat.id === participantId ? ' (you)' : ''}</b><span className={styles.small}>{seat.role === 'spymaster' ? 'Clue-giver' : 'Guesser'}{!seat.connected ? ' · offline' : ''}</span></li>) : <li className={styles.small}>No players yet</li>}</ul>
-       {!watching && <div className={styles.actions}>
+       {!display && <div className={styles.actions}>
         <button disabled={!gameLive || (me?.team===team && me.role==='guesser')} onClick={() => session.dispatch({type:'seat',team,role:'guesser'})}>Join as guesser</button>
         <button disabled={!gameLive || !!clueGiver} onClick={() => session.dispatch({type:'seat',team,role:'spymaster'})}>{clueGiver ? 'Clue-giver taken' : 'Give clues'}</button>
        </div>}
@@ -166,7 +169,7 @@ export default function Codewords() {
       {game.phase==='guess' && <p className={styles.guesses}>{game.guessesRemaining} {game.guessesRemaining===1 ? 'guess' : 'guesses'} left</p>}
      </section>
      <div className={styles.gameIdentity}>
-      <p className={styles.small}>{watching ? 'Shared board · no controls' : me?.team ? `You’re on ${teamName[me.team]} · ${me.role === 'spymaster' ? 'Clue-giver' : 'Guesser'}` : 'Watching this round'}</p>
+      <p className={styles.small}>{display ? 'Shared board · private clues stay on player phones' : me?.team ? `You’re on ${teamName[me.team]} · ${me.role === 'spymaster' ? 'Clue-giver' : 'Guesser'}` : 'Watching this round'}</p>
       {session.key && <p className={styles.keyNotice}>Private key · don’t share this screen</p>}
      </div>
      <div className={styles.board} role="group" aria-label="Word board">

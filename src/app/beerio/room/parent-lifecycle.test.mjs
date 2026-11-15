@@ -39,12 +39,6 @@ async function fixture(t, host = true) {
     leaveRoom: () => { room.code = null; room.role = null; messages.push({ type: 'leave' }); },
     onState(listener) { stateListener = listener; return () => { stateListener = () => {}; }; }, createRoom(options) { messages.push({ type: 'create', options }); }, joinRoom(options) { messages.push({ type: 'join', options }); }, joinRandomRoom(options) { messages.push({ type: 'join_random', options }); }, setAppearance(appearance) { messages.push({ type: 'appearance', appearance }); }, setInput() {}, useItem() {}, retryConnection() { messages.push({ type: 'retry' }); }, resumeRace() { messages.push({ type: 'resume' }); }, setReady(ready) { messages.push({ type: 'ready', ready }); },
   });
-  const localDriver = { playerId: null, status: 'idle', restoreSession: () => {}, leaveRoom: () => {}, error: null,
-    joinRoom: options => messages.push({ type: 'local_join', options }),
-    chooseCharacter: choice => messages.push({ type: 'local_character', ...choice }),
-    setInput: input => messages.push({ type: 'local_input', input }),
-    useItem: () => messages.push({ type: 'local_item' }),
-  };
   const react = {
     useState(initial) {
       const slot = hook++;
@@ -80,7 +74,7 @@ async function fixture(t, host = true) {
     if (name === './game/powerups') return { POWER_UPS: { fizz: { name: 'Fizz Boost' }, dance: { name: 'Dance Break' }, diddy: { name: 'Diddy Mode' } } };
     if (name === './game/audio') return { unlockRaceAudio: () => Promise.resolve() };
     if (name === './game/track') return { TRACKS: ['sunset', 'canyon', 'brewery'].map(id => ({ id, name: id, description: id })) };
-    if (name === './room/useBeerioRoom') return { useBeerioRoom: options => options?.storageKey ? localDriver : room };
+    if (name === './room/useBeerioRoom') return { useBeerioRoom: options => { assert.equal(options?.storageKey, undefined, 'No separate driver session on the host'); return room; } };
     if (name.endsWith('.css')) return { default: new Proxy({}, { get: (_, key) => key }) };
     throw new Error(`Unexpected parent dependency: ${name}`);
   }, compiledModule, compiledModule.exports);
@@ -123,7 +117,7 @@ async function fixture(t, host = true) {
     lock();
     return game(await render());
   };
-  return { room, localDriver, messages, render, button, game, nodes, start, lock, unlock, emit: value => stateListener(value), setConfirm: value => { confirmResult = value; }, hold: () => { holdMicrotasks = true; }, flush: () => { holdMicrotasks = false; for (const fn of heldMicrotasks.splice(0)) fn(); } };
+  return { room, messages, render, button, game, nodes, start, lock, unlock, emit: value => stateListener(value), setConfirm: value => { confirmResult = value; }, hold: () => { holdMicrotasks = true; }, flush: () => { holdMicrotasks = false; for (const fn of heldMicrotasks.splice(0)) fn(); } };
 }
 
 test('parent preserves results and returns rematches to fresh character selection without ready-up', async t => {
@@ -664,7 +658,7 @@ test('v3 host keeps QR and character grid together while gathering and only enab
   f.room.players.forEach(player => { player.character = null; player.characterCursor = null; player.characterConfirmed = false; });
   let tree = await f.render();
   const grid = () => f.nodes(tree, node => node.type === 'CharacterGrid');
-  const qr = () => f.nodes(tree, node => node.props?.alt === 'QR code to join this room');
+  const qr = () => f.nodes(tree, node => node.props?.alt === 'Scan with your phone to join as a driver');
   assert.equal(grid().length, 1); assert.equal(qr().length, 1);
   assert.equal(grid()[0].props.version, 3);
   assert.equal(f.nodes(tree, node => node.type === 'StartingGrid').length, 0, 'No separate joining lobby');
@@ -750,39 +744,24 @@ test('v4 fresh picks after results start a new on-track countdown without replay
   const second=f.game(await f.render()); assert.ok(second); assert.equal(second.initialCountdown,5); assert.notEqual(second.raceKey,first.raceKey);
 });
 
-test('a phone host joins as a normal racer, selects and uses touch controls without replacing the host', async t => {
+test('the host display shares a player QR and never joins or drives on the host device', async t => {
   const f = await fixture(t);
   f.room.characterSelectionVersion = 4;
   let tree = await f.render();
-  f.button(tree, 'DRIVE ON THIS DEVICE').onClick();
-  tree = await f.render();
-  f.nodes(tree, node => node.type === 'input' && node.props.autoComplete === 'nickname')[0].props.onChange({ target: { value: 'Local Racer' } });
-  tree = await f.render();
-  f.nodes(tree, node => node.type === 'form')[0].props.onSubmit({ preventDefault() {} });
-  assert.equal(f.messages.at(-1).type, 'local_join');
-  assert.equal(f.messages.at(-1).options.code, 'ABC234');
-  assert.equal(f.messages.at(-1).options.name, 'Local Racer');
-  f.localDriver.status = 'connected'; f.localDriver.playerId = 'a';
-  tree = await f.render();
-  const selection = f.nodes(tree, node => node.type === 'CharacterController')[0];
-  assert.ok(selection.props.standalone);
-  selection.props.onChoose({ confirm: true });
-  assert.deepEqual(f.messages.at(-1), { type: 'local_character', confirm: true });
+  assert.equal(f.button(tree, 'DRIVE ON THIS DEVICE'), undefined);
+  assert.equal(f.nodes(tree, node => node.type === 'CharacterController').length, 0);
+  assert.equal(f.nodes(tree, node => node.type === 'next/image' && node.props.alt === 'Scan with your phone to join as a driver').length, 1);
+  assert.equal(f.room.players.length, 2, 'fixture players are the only driver seats');
   f.lock();
   tree = await f.render();
-  assert.equal(f.game(tree).focusPlayerId, 'a');
-  const controller = f.nodes(tree, node => node.type?.name === 'Controller')[0];
-  controller.props.send({ ...ZERO, accelerate: true });
-  controller.props.useItem();
-  assert.deepEqual(f.messages.slice(-2).map(message => message.type), ['local_input', 'local_item']);
-  f.game(tree).onInventoryChange([{ id: 'b', item: 'dance' }, { id: 'a', item: 'fizz' }]);
-  tree = await f.render();
-  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller')[0].props.item, 'fizz');
-  f.button(tree, 'SHOW ALL RACERS').onClick();
-  tree = await f.render();
-  assert.equal(f.game(tree).focusPlayerId, undefined);
-  assert.deepEqual(f.game(tree).players.map(player => player.id), ['a', 'b']);
-  f.game(tree).onFinish(RESULTS);
+  const game = f.game(tree);
+  assert.equal(game.focusPlayerId, undefined);
+  assert.equal(game.localKeyboard, false);
+  assert.deepEqual(game.players.map(player => player.id), ['a', 'b']);
+  assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
+  game.onInventoryChange([{ id: 'b', item: 'dance' }, { id: 'a', item: 'fizz' }]);
+  assert.deepEqual(f.messages.at(-1).payload, { type: 'inventory', inventory: [{ id: 'b', item: 'dance' }, { id: 'a', item: 'fizz' }] });
+  game.onFinish(RESULTS);
   tree = await f.render();
   assert.equal(f.nodes(tree, node => node.type?.name === 'Controller').length, 0);
 });

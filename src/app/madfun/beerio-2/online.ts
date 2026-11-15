@@ -8,6 +8,8 @@ import type { CarState, DriveInput, createDrivingWorld } from './drive';
 export const BEERIO2_PROTOCOL = 'madfun-beerio-2-v1';
 export const INPUT_TTL_MS = 450;
 export const TOTAL_LAPS = 3;
+export const MAX_DRIVERS = 10;
+export const MIN_DRIVERS = 2;
 export const RACE_MAX_SECONDS = 600;
 export const FINISH_GRACE_SECONDS = 60;
 export type Beerio2Phase = 'lobby' | 'countdown' | 'race' | 'paused' | 'results';
@@ -16,6 +18,8 @@ export type Beerio2Result = { id: string; name: string; time: number | null };
 export type Beerio2Frame = {
   protocol: typeof BEERIO2_PROTOCOL; raceId: number; tick: number; phase: Beerio2Phase;
   countdown: number; elapsed: number; totalLaps: 3; players: Beerio2Player[];
+  /** New rooms have no host car; older driver-host frames remain readable. */
+  displayHost?: true;
   /** Optional for compatibility with existing Seattle-only hosts. */
   trackId?: TrackId; acknowledgements?: Record<string, { stream: string; seq: number }>;
   cars: Record<string, CarState>; results: Beerio2Result[]; rejected: string[];
@@ -59,8 +63,10 @@ export function validateFrame(value: unknown): value is Beerio2Frame {
     !Number.isSafeInteger(value.raceId) || (value.raceId as number) < 0 || !Number.isSafeInteger(value.tick) || (value.tick as number) < 0 ||
     typeof value.phase !== 'string' || !phases.has(value.phase) || !finite(value.elapsed) || value.elapsed < 0 ||
     !finite(value.countdown) || value.countdown < 0 || value.countdown > 3 || !object(value.cars) ||
-    !Array.isArray(value.players) || value.players.length < 1 || value.players.length > 10 ||
+    !Array.isArray(value.players) || value.players.length > MAX_DRIVERS ||
     !Array.isArray(value.results) || value.results.length > 10 || !Array.isArray(value.rejected) || value.rejected.length > 10) return false;
+  if (value.displayHost !== undefined && value.displayHost !== true) return false;
+  if (value.displayHost === true && value.phase !== 'lobby' && value.players.length < MIN_DRIVERS) return false;
   if (value.trackId !== undefined && value.trackId !== 'seattle' && value.trackId !== 'orbit') return false;
   if (value.acknowledgements !== undefined && (!object(value.acknowledgements) || Object.keys(value.acknowledgements).length > 10 ||
     !Object.entries(value.acknowledgements).every(([id, ack]) => validId(id) && object(ack) && validId(ack.stream) && Number.isSafeInteger(ack.seq) && (ack.seq as number) >= 0))) return false;
@@ -70,7 +76,7 @@ export function validateFrame(value: unknown): value is Beerio2Frame {
       typeof p.color !== 'string' || !/^#[a-fA-F0-9]{6}$/.test(p.color) || typeof p.connected !== 'boolean' || typeof p.ready !== 'boolean' || (p.ride !== undefined && !validRide(p.ride))) return false;
     ids.add(p.id);
   }
-  if (!ids.has('host') || Object.keys(value.cars).length > 10 || !Object.entries(value.cars).every(([id, c]) => ids.has(id) && validCar(c))) return false;
+  if ((value.displayHost === true ? ids.has('host') : !ids.has('host')) || Object.keys(value.cars).length > MAX_DRIVERS || !Object.entries(value.cars).every(([id, c]) => ids.has(id) && validCar(c))) return false;
   return value.results.every(r => object(r) && ids.has(r.id as string) && typeof r.name === 'string' && (r.time === null || (finite(r.time) && r.time >= 0))) && value.rejected.every(validId);
 }
 
@@ -112,7 +118,6 @@ export class Beerio2Session {
   private lastFrame = 0;
   private verified = false;
   private connectedAt = 0;
-  private hostName = 'Host';
   private localRide: RideSelection = DEFAULT_RIDE;
   private playerRides = new Map<string, RideSelection>();
   private generation = 0;
@@ -167,10 +172,8 @@ export class Beerio2Session {
     this.lastTick = this.now();
     if (!this.timer && this.autoTick) this.timer = setInterval(this.advance, 1000 / 60);
   }
-  create = (name = 'Host', trackId: TrackId = 'seattle', ride: RideSelection = DEFAULT_RIDE) => {
+  create = (trackId: TrackId = 'seattle') => {
     this.leave();
-    this.localRide = validRide(ride) ? { ...ride } : DEFAULT_RIDE;
-    this.hostName = name.trim().slice(0, 64) || 'Host';
     this.update({ role: 'host', loading: true, trackId: trackId === 'orbit' ? 'orbit' : 'seattle' });
     this.run();
     this.client.create('simulator');
@@ -223,7 +226,7 @@ export class Beerio2Session {
       if (!host && !this.frame) this.verified = false;
     }
     this.update({ status: room.status, role: host ? 'host' : room.role === 'player' ? 'player' : room.role === 'judge' ? 'spectator' : null,
-      playerId: host ? 'host' : room.playerId, code: room.code, hostConnected: room.hostConnected,
+      playerId: host ? null : room.playerId, code: room.code, hostConnected: room.hostConnected,
       watchInvite: host ? room.judgeInvite : null, spectatorConnected: room.judgeConnected,
       error: room.role === 'judge' && room.error?.includes('Judge link') ? 'This TV link is invalid or another TV is already connected.' : room.error });
     if (host) {
@@ -238,12 +241,12 @@ export class Beerio2Session {
   private syncPlayers() {
     const room = this.client.getSnapshot();
     if (this.snapshot.phase !== 'lobby') {
-      this.update({ players: this.snapshot.players.map(p => ({ ...p, connected: p.id === 'host' ? room.status === 'connected' : room.players.some(member => member.id === p.id && member.connected) })) });
+      this.update({ players: this.snapshot.players.map(p => ({ ...p, connected: room.players.some(member => member.id === p.id && member.connected) })) });
       return;
     }
-    const players: Beerio2Player[] = [{ id: 'host', name: this.hostName, color: colors[0], connected: room.status === 'connected', ready: true, ride: this.localRide }];
+    const players: Beerio2Player[] = [];
     for (const p of room.players) {
-      if (!this.accepted.has(p.id)) continue;
+      if (!this.accepted.has(p.id) || players.length >= MAX_DRIVERS) continue;
       players.push({ ...p, color: colors[players.length], ready: true, ride: this.playerRides.get(p.id) ?? DEFAULT_RIDE });
     }
     this.update({ players });
@@ -260,7 +263,8 @@ export class Beerio2Session {
     const p = action.payload;
     if (!sender || !object(p) || p.protocol !== BEERIO2_PROTOCOL) return;
     if (p.kind === 'hello' && validId(p.stream)) {
-      if (!this.accepted.has(sender.id) && (this.snapshot.phase !== 'lobby' || this.accepted.size >= 9)) { this.publish(true); return; }
+      if ((this.snapshot.phase !== 'lobby' && !this.snapshot.players.some(player => player.id === sender.id)) ||
+        (!this.accepted.has(sender.id) && this.accepted.size >= MAX_DRIVERS)) { this.publish(true); return; }
       if (this.accepted.get(sender.id) !== p.stream) { this.inputs.delete(sender.id); this.sequences.delete(sender.id); this.consumed.delete(sender.id); }
       this.accepted.set(sender.id, p.stream);
       if (this.snapshot.phase === 'lobby' && validRide(p.ride)) {
@@ -306,7 +310,7 @@ export class Beerio2Session {
     this.update({ phase: payload.phase, countdown: payload.countdown, players: payload.players, trackId: payload.trackId ?? 'seattle', error: null });
   };
   setInput = (input: DriveInput) => {
-    if (this.snapshot.role === 'spectator') return;
+    if (this.snapshot.role !== 'player') return;
     const next = validateInput(input);
     // Preserve a one-frame reset tap until the sender/60Hz host consumes it.
     if (next) next.reset ||= this.localInput.reset;
@@ -332,9 +336,11 @@ export class Beerio2Session {
   }
   start = () => {
     if (this.snapshot.role !== 'host' || this.snapshot.status !== 'connected' || !this.world || this.snapshot.phase !== 'lobby') return;
-    if (this.snapshot.players.filter(p => p.connected && p.ready).length < 2) {
-      this.update({ error: 'Invite at least one friend before starting the online race.' }); return;
+    const players = this.snapshot.players.filter(p => p.connected && p.ready);
+    if (players.length < MIN_DRIVERS) {
+      this.update({ error: 'At least two drivers need to scan the QR and join before starting.' }); return;
     }
+    this.update({ players });
     this.raceId++; this.tick = 0; this.elapsed = 0; this.countdownLeft = 3; this.finishDeadline = RACE_MAX_SECONDS;
     this.inputs.clear(); this.consumed.clear(); this.localInput = neutral(); this.accumulator = 0; this.lastTick = this.now();
     this.drivers.clear(); this.syncDrivers();
@@ -395,8 +401,7 @@ export class Beerio2Session {
         for (const [id, driver] of this.drivers) {
           const entry = this.inputs.get(id);
           const connected = this.snapshot.players.some(p => p.id === id && p.connected);
-          const input = id === 'host' ? (now - this.inputAt <= INPUT_TTL_MS ? this.localInput : neutral()) :
-            (connected && entry && now - entry.received <= INPUT_TTL_MS ? entry.input : neutral());
+          const input = connected && entry && now - entry.received <= INPUT_TTL_MS ? entry.input : neutral();
           if (!driver.state.finished) this.world.step(driver, input, 1 / 60, TOTAL_LAPS);
           if (entry && connected) this.consumed.set(id, { stream: entry.stream, seq: entry.seq });
           if (entry?.input.reset) entry.input = { ...entry.input, reset: false };
@@ -421,10 +426,11 @@ export class Beerio2Session {
     for (const [id, driver] of this.drivers) if (players.some(p => p.id === id)) cars[id] = { ...driver.state };
     const results = players.map(p => ({ id: p.id, name: p.name, time: cars[p.id]?.finishTime ?? null }))
       .sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity));
-    const rejected = this.client.getSnapshot().players.filter(p => !this.accepted.has(p.id) &&
-      (this.accepted.size >= 9 || this.snapshot.phase !== 'lobby')).map(p => p.id);
+    const rejected = this.client.getSnapshot().players.filter(p => this.snapshot.phase === 'lobby'
+      ? !this.accepted.has(p.id) && this.accepted.size >= MAX_DRIVERS
+      : !players.some(player => player.id === p.id)).map(p => p.id);
     // Absolute authority plus consumed-input acknowledgements. Render buffering never changes physics.
-    this.frame = { protocol: BEERIO2_PROTOCOL, raceId: this.raceId, tick: ++this.tick, phase: this.snapshot.phase,
+    this.frame = { protocol: BEERIO2_PROTOCOL, displayHost: true, raceId: this.raceId, tick: ++this.tick, phase: this.snapshot.phase,
       countdown: this.snapshot.countdown, elapsed: this.elapsed, totalLaps: TOTAL_LAPS, trackId: this.snapshot.trackId,
       acknowledgements: Object.fromEntries(this.consumed), players, cars, results, rejected };
     this.lastFrame = now;

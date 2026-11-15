@@ -6,14 +6,14 @@ import { createIdentity, isPublicKey, openFor, sealFor, type Sealed } from './pr
 
 type Participant = PartyPlayer & { publicKey: string };
 type Hello = { name: string; mode: 'player' | 'watch'; publicKey: string };
-type Entry = { name: string; mode: 'player' | 'watch' };
+type Entry = { name: string; mode: 'host' | 'player' | 'watch' };
 type Envelope<Public> = { protocol: string; room: string; serial: number; state: Public; secrets: Record<string, Sealed> };
 export type PhonePartyConfig<Model, Public> = {
   protocol: string;
   initial: () => Model;
   view: (model: Model, participants: Participant[], hostId: string) => Public;
   secret: (model: Model, playerId: string) => unknown;
-  reduce: (model: Model, actor: Participant, action: unknown, participants: Participant[], hostId: string) => Model | null;
+  reduce: (model: Model, actor: PartyPlayer, action: unknown, participants: Participant[], hostId: string) => Model | null;
 };
 
 const record = (value: unknown): Record<string, unknown> | null =>
@@ -37,13 +37,11 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
 
   const participants = () => {
     const room = client.getSnapshot();
-    const host = room.playerId;
-    if (!host || !entry.current || !identity.current) return [];
-    return [{ id: host, name: entry.current.name, connected: room.status === 'connected', publicKey: identity.current.publicKey },
-      ...room.players.flatMap(player => {
-        const h = hellos.current.get(player.id);
-        return h?.mode === 'player' ? [{ ...player, name: h.name, publicKey: h.publicKey }] : [];
-      })];
+    // Only phones that joined as players can take a gameplay seat or receive secrets.
+    return room.players.flatMap(player => {
+      const h = hellos.current.get(player.id);
+      return h?.mode === 'player' ? [{ ...player, name: h.name, publicKey: h.publicKey }] : [];
+    });
   };
 
   const publish = () => {
@@ -55,8 +53,8 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
     const version = ++serial.current;
     const projected = config.view(current, players, id);
     setState(projected);
-    setSecret(config.secret(current, id));
-    void Promise.all(players.filter(p => p.id !== id).map(async p => {
+    setSecret(null);
+    void Promise.all(players.map(async p => {
       const value = config.secret(current, p.id);
       if (value == null) return null;
       try {
@@ -82,7 +80,7 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
     snapshot.current = message;
     setIssue(null);
     setState(message.state);
-    const packet = room.playerId && message.secrets[room.playerId];
+    const packet = entry.current?.mode === 'player' && room.playerId && message.secrets[room.playerId];
     const privateKey = identity.current?.privateKey;
     if (!packet || !privateKey) { setSecret(null); return; }
     void openFor(privateKey, packet).then(value => {
@@ -96,7 +94,9 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
     const room = client.getSnapshot();
     if (room.status !== 'connected' || room.role !== 'host' || model.current === null || !room.playerId) return;
     const players = participants();
-    const actor = players.find(p => p.id === id && p.connected);
+    const actor = id === room.playerId
+      ? { id, name: 'Host screen', connected: true }
+      : players.find(p => p.id === id && p.connected);
     if (!actor) return;
     const next = config.reduce(model.current, actor, value, players, room.playerId);
     if (next !== null) { model.current = next; publish(); }
@@ -122,7 +122,7 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
           publish();
         }
       } else {
-        if (!welcomed && room.hostConnected && identity.current && entry.current) {
+        if (!welcomed && room.hostConnected && identity.current && entry.current && entry.current.mode !== 'host') {
           welcomed = true;
           client.sendAction({ protocol: config.protocol, type: 'hello', ...entry.current, publicKey: identity.current.publicKey });
         }
@@ -168,7 +168,7 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
     setOpening(true);
     setWatching(who.mode === 'watch');
     try {
-      const pair = await createIdentity();
+      const pair = who.mode === 'host' ? null : await createIdentity();
       if (current !== operation.current) return;
       identity.current = pair;
       entry.current = { name, mode: who.mode };
@@ -185,15 +185,15 @@ export function usePhoneParty<Model, Public>(config: PhonePartyConfig<Model, Pub
     }
   };
   const dispatch = (action: unknown) => {
-    if (entry.current?.mode !== 'player' || connection.status !== 'connected') return;
-    if (connection.role === 'host' && connection.playerId) act(connection.playerId, action);
-    else client.sendAction({ protocol: config.protocol, type: 'game-action', action });
+    if (connection.status !== 'connected') return;
+    if (entry.current?.mode === 'host' && connection.role === 'host' && connection.playerId) act(connection.playerId, action);
+    else if (entry.current?.mode === 'player' && connection.role === 'player') client.sendAction({ protocol: config.protocol, type: 'game-action', action });
   };
   return {
-    status: opening ? 'connecting' as const : connection.status, roomCode: connection.code, participantId: connection.playerId,
+    status: opening ? 'connecting' as const : connection.status, roomCode: connection.code, participantId: connection.role === 'player' && !watching ? connection.playerId : null,
     host: connection.role === 'host', watching, hostConnected: connection.hostConnected,
     state, secret, error: issue ?? connection.error,
-    create: (name: string) => { void begin({ mode: 'player', name }); },
+    create: () => { void begin({ mode: 'host', name: 'Host screen' }); },
     join: (code: string, name: string) => { void begin({ mode: 'player', name }, code); },
     watch: (code: string) => { void begin({ mode: 'watch', name: 'TV board' }, code); },
     leave, retry: client.retry, dispatch,

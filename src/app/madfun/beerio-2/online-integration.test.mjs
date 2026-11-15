@@ -90,7 +90,7 @@ const car = client => client.getFrame()?.cars[client.getSnapshot().playerId];
 test('Beerio 2 phones drive in two isolated rooms and resume the same seat', { timeout: 18000 }, async t => {
   const f = await fixture(t);
   const a = f.make(), b = f.make();
-  a.create('Host A'); b.create('Host B');
+  a.create(); b.create();
   const codes = await until(() => {
     const codes = [a.getSnapshot().code, b.getSnapshot().code];
     return codes.every(Boolean) && codes;
@@ -102,7 +102,9 @@ test('Beerio 2 phones drive in two isolated rooms and resume the same seat', { t
   b1.join(codes[1], 'Birch');
   b2.join(codes[1], 'Brook');
   await until(() => [a1, a2, b1, b2].every(phone => phone.getSnapshot().status === 'connected' && phase(phone) === 'lobby') &&
-    [a,b].every(host => host.getSnapshot().players.length === 3), 'four phones join correct lobbies');
+    [a,b].every(host => host.getSnapshot().players.length === 2), 'four phones join correct lobbies');
+  assert.equal(a.getSnapshot().playerId, null, 'creator is not a driver');
+  assert.ok(!a.getFrame().players.some(p => p.id === 'host'), 'creator never occupies a roster slot');
   assert.equal(f.relay.rooms.rooms.size, 0, 'No Beerio v1 room has been created.');
 
   a1.start();
@@ -121,6 +123,7 @@ test('Beerio 2 phones drive in two isolated rooms and resume the same seat', { t
 
   const startA = { ...car(a1) };
   const startB = { ...car(b1) };
+  a.setInput(throttle); // Shared screen cannot send driving input.
   a1.setInput(throttle);
   await until(() => car(a1)?.speed > 3, 'room A gas reaches host physics');
   assert.ok(Math.hypot(car(a1).x - startA.x, car(a1).z - startA.z) > 0.2);
@@ -185,24 +188,33 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
     },
     dispose(){},
   });
-  const host = f.make({ createWorld }), guest = f.make(), rematchGuest = f.make();
-  const hostRide = { vehicle: 'ferrari', character: 'fox' };
+  const host = f.make({ createWorld }), guest = f.make(), second = f.make(), rematchGuest = f.make();
+  const secondRide = { vehicle: 'ferrari', character: 'fox' };
   const guestRide = { vehicle: 'ducati', character: 'panda' };
-  host.create('Timekeeper', 'seattle', hostRide);
+  host.create('seattle');
   const code = await until(() => host.getSnapshot().code && !host.getSnapshot().loading && host.getSnapshot().code, 'host prepared');
   host.start();
   await sleep(125);
   assert.equal(phase(host), 'lobby', 'Host needs a second connected racer.');
   guest.join(code, 'First Guest', guestRide);
-  await until(() => phase(guest) === 'lobby' && host.getSnapshot().players.length === 2, 'guest admitted');
+  await until(() => phase(guest) === 'lobby' && host.getSnapshot().players.length === 1, 'first guest admitted');
+  host.start();
+  assert.equal(phase(host), 'lobby', 'display does not count as the second driver');
+  second.join(code, 'Second Guest', secondRide);
+  await until(() => phase(second) === 'lobby' && host.getSnapshot().players.length === 2, 'second driver admitted');
   host.start();
   await until(() => phase(guest) === 'countdown', 'guest sees countdown');
   await until(() => phase(guest) === 'race', 'guest sees green light');
-  assert.deepEqual(guest.getFrame().players.find(p => p.id === 'host').ride, hostRide);
+  assert.deepEqual(guest.getFrame().players.find(p => p.id === second.getSnapshot().playerId).ride, secondRide);
+  assert.equal(guest.getFrame().cars.host, undefined);
   assert.deepEqual(guest.getFrame().players.find(p => p.id === guest.getSnapshot().playerId).ride, guestRide);
   const legacy = structuredClone(guest.getFrame());
   for (const p of legacy.players) delete p.ride;
-  assert.ok(validateFrame(legacy), 'A build with no cosmetics still works');
+  assert.ok(validateFrame(legacy), 'A display room frame with no cosmetics still works');
+  legacy.players.push({ id: 'host', name: 'Host', color: '#ffffff', connected: true, ready: true });
+  assert.equal(validateFrame(legacy), false, 'new display rooms explicitly exclude the host');
+  delete legacy.displayHost;
+  assert.ok(validateFrame(legacy), 'driver-host rooms from an older build are still readable');
   legacy.players[0].ride = { vehicle: 'unlisted', character: 'fox' };
   assert.equal(validateFrame(legacy), false);
   const raceId = guest.getFrame().raceId;
@@ -215,9 +227,9 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
   host.setPaused(false);
   await until(() => phase(guest) === 'race', 'guest sees resume');
 
-  const fire = setInterval(() => { host.setInput(throttle); guest.setInput(throttle); }, 40);
+  const fire = setInterval(() => { second.setInput(throttle); guest.setInput(throttle); }, 40);
   try {
-    host.setInput(throttle); guest.setInput(throttle);
+    second.setInput(throttle); guest.setInput(throttle);
     await until(() => phase(guest) === 'results', 'final results are broadcast');
   } finally {
     clearInterval(fire);
@@ -269,18 +281,18 @@ test('real driving and Rapier can complete three laps using legal controls only'
   } finally { world.dispose(); }
 });
 
-test('Private lobby admits exactly ten racers including the host', { timeout: 14000 }, async t => {
+test('Private lobby admits exactly ten racers without counting the shared screen', { timeout: 14000 }, async t => {
   const f = await fixture(t);
   const host = f.make();
-  host.create('Grid Lead');
+  host.create();
   const code = await until(() => host.getSnapshot().code, 'full grid host');
-  const guests = Array.from({ length: 9 }, (_, i) => {
+  const guests = Array.from({ length: 10 }, (_, i) => {
     const phone = f.make();
-    phone.join(code, `Racer ${i + 2}`);
+    phone.join(code, `Racer ${i + 1}`);
     return phone;
   });
   await until(() => host.getSnapshot().players.length === 10 &&
-    guests.every(p => p.getFrame()?.players.length === 10), 'all nine guest seats visible everywhere');
+    guests.every(p => p.getFrame()?.players.length === 10), 'all ten QR-joined drivers visible everywhere');
   assert.equal(new Set(host.getSnapshot().players.map(p => p.id)).size, 10);
   assert.equal(Object.keys(host.getFrame().cars).length, 10);
   const tv = f.make();
@@ -298,14 +310,13 @@ test('Private lobby admits exactly ten racers including the host', { timeout: 14
   assert.equal(host.getSnapshot().players.length, 10);
   assert.ok(host.getSnapshot().players.every(p => p.connected));
   const room = f.relay.parties.rooms.get(code);
-  await until(() => room.players.size === 9, 'full-lobby rejection also releases the relay seat');
+  await until(() => room.players.size === 10, 'full-lobby rejection also releases the relay seat');
   host.start();
   await until(() => guests.every(phone => phase(phone) === 'race'), 'ten-car race begins');
   const counts = new Map(guests.map(phone => [phone, { tick: 0, frames: 0 }]));
   const started = performance.now();
   while (performance.now() - started < 1250) {
     const input = { ...throttle, steer: Math.sin(performance.now() / 500) * .15 };
-    host.setInput(input);
     for (const phone of guests) {
       phone.setInput(input);
       const count = counts.get(phone);
@@ -331,7 +342,7 @@ const { Beerio2Session: BaselineSession } = await import(await moduleUrl('./onli
   .replace('(changed ? 25 : 50)', '50')
   .replace('this.lastInput = now;', 'this.lastInput = Number.isFinite(this.lastInput) ? this.lastInput + Math.floor((now - this.lastInput) / 50) * 50 : now;')));
 
-async function syntheticRun(Session, guests = 9) {
+async function syntheticRun(Session, guests = 10) {
   let now = 0, serial = 0, packets = 0, bytes = 0;
   const queue = [], peers = [], delivery = new Map();
   const schedule = (key, fn) => {
@@ -362,7 +373,7 @@ async function syntheticRun(Session, guests = 9) {
     step(driver, input, dt) { driver.state.x += 10 * dt; driver.state.steer = input.steer; }, dispose() {},
   });
   const host = new Session({ client: new Transport('host'), now: () => now, autoTick: false, createWorld });
-  host.create('Host', 'orbit');
+  host.create('orbit');
   await Promise.resolve(); await Promise.resolve();
   const phones = roster.map(p => {
     const phone = new Session({ client: new Transport(p.id), now: () => now, autoTick: false });
@@ -377,12 +388,12 @@ async function syntheticRun(Session, guests = 9) {
     if (now >= nextTick) {
       for (const phone of phones) phone.advance();
       host.advance(); nextTick += 1000 / 60;
-      if (!started && now > 1500) { assert.equal(host.getSnapshot().players.length, guests + 1); host.start(); started = true; }
+      if (!started && now > 1500) { assert.equal(host.getSnapshot().players.length, guests); host.start(); started = true; }
       if (now > 5500) {
         assert.equal(phones[0].getRenderFrame().cars.p0, phones[0].getFrame().cars.p0, 'remote buffering never delays the local car');
-        assert.ok(host.getRenderFrame().cars.host.x >= host.getFrame().cars.host.x, 'host renders live authoritative physics, not its network copy');
-        held.push(phones[0].getFrame().cars.host.x);
-        smooth.push(phones[0].getRenderFrame().cars.host.x);
+        assert.ok(host.getRenderFrame().cars.p1.x >= host.getFrame().cars.p1.x, 'host renders live authoritative physics, not its network copy');
+        held.push(phones[0].getFrame().cars.p1.x);
+        smooth.push(phones[0].getRenderFrame().cars.p1.x);
       }
     }
     if (now >= nextEvent) {
@@ -461,13 +472,14 @@ test('rapid changed inputs stay below relay limit; a reset tap survives coalesci
 
 test('invited TV can join a locked race, remains read-only and reconnects without a driving seat', { timeout: 14000 }, async t => {
   const f = await fixture(t);
-  const host = f.make(), guest = f.make();
-  host.create('Phone Host', 'orbit');
-  const code = await until(() => host.getSnapshot().code && !host.getSnapshot().loading && host.getSnapshot().code, 'phone host prepared');
+  const host = f.make(), guest = f.make(), other = f.make();
+  host.create('orbit');
+  const code = await until(() => host.getSnapshot().code && !host.getSnapshot().loading && host.getSnapshot().code, 'shared screen prepared');
   const invite = host.getSnapshot().watchInvite;
   assert.match(invite, /^[A-Za-z0-9_-]{32}$/);
   guest.join(code, 'Racer');
-  await until(() => host.getSnapshot().players.length === 2 && phase(guest) === 'lobby', 'driver admitted');
+  other.join(code, 'Other racer');
+  await until(() => host.getSnapshot().players.length === 2 && phase(guest) === 'lobby' && phase(other) === 'lobby', 'both drivers admitted');
   assert.equal(guest.getSnapshot().watchInvite, null, 'ordinary driver cannot obtain TV invitation from state');
   host.start();
   await until(() => phase(guest) === 'race', 'race locked and started');
@@ -487,7 +499,7 @@ test('invited TV can join a locked race, remains read-only and reconnects withou
   assert.equal(tv.getSnapshot().role, 'spectator');
   assert.equal(tv.getSnapshot().trackId, 'orbit');
   assert.equal(host.getSnapshot().players.length, 2);
-  assert.equal(f.relay.parties.rooms.get(code).players.size, 1);
+  assert.equal(f.relay.parties.rooms.get(code).players.size, 2);
   assert.equal(Object.keys(tv.getFrame().cars).length, 2);
   assert.equal(tv.getFrame().cars[id], undefined);
 

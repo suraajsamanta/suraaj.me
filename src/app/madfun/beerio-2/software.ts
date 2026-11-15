@@ -3,7 +3,7 @@ import { rideGeometry } from './ride-geometry';
 import { DEFAULT_RIDE, type RideSelection } from './ride-selection';
 
 type CarPose = { x: number; y: number; z: number; yaw: number; boost: boolean; color?: string; ride?: RideSelection };
-type State = CarPose & { camera: Point; look: Point; rivals?: readonly CarPose[]; speed?: number; reducedMotion?: boolean };
+type State = CarPose & { camera: Point; look: Point; rivals?: readonly CarPose[]; speed?: number; reducedMotion?: boolean; hideHero?: boolean };
 type Face = { points: Point[]; color: string; bx: number; bz: number; radius: number; decal?: boolean; mesh?: boolean };
 /** A real perspective/painter renderer for browsers without any GPU context. */
 export function createSoftwareView(ctx: CanvasRenderingContext2D, trackId: TrackId = 'seattle', studio = false): (state: State) => void {
@@ -310,7 +310,7 @@ export function createSoftwareView(ctx: CanvasRenderingContext2D, trackId: Track
         plume(.14,3.8,'#168cb2');plume(.065,3.25,'#bdffff');
       }
     };
-    addCar(s,true);
+    if (!s.hideHero) addCar(s,true);
     s.rivals?.forEach(pose=>addCar(pose));
     polys.sort((a,b)=>b.depth-a.depth);
     for(const f of polys){ctx.beginPath();for(let i=0;i<f.points.length;i++){const a=f.points[i],x=w/2+a.x*focal/a.z,y=h/2+a.y*focal/a.z;if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}ctx.closePath();ctx.fillStyle=f.color;ctx.fill();}

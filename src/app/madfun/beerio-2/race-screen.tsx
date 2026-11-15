@@ -258,10 +258,10 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
     <main ref={shell} className={`${styles.shell}${spectator ? ` ${styles.tvShell}` : ""}`}>
       <header className={styles.top}>
         {live
-          ? <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label={spectator ? "Exit TV view" : "Leave online race"}><span aria-hidden>‹</span> Exit</button>
+          ? <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label={host ? "End room" : spectator ? "Exit TV view" : "Leave online race"}><span aria-hidden>‹</span> Exit</button>
           : <button type="button" className={`${styles.home} ${styles.homeButton}`} onClick={exit} aria-label="Back to Beerio 2 garage"><span aria-hidden>‹</span> Garage</button>}
         <h1>BEERIO<span>02</span></h1>
-        <span className={`${styles.edition} ${spectator ? styles.tvTitle : ""}`}><i aria-hidden /> <span>{spectator ? "TV VIEW · LIVE" : live ? host ? "HOST & DRIVE" : "ONLINE RACE" : soloGrid ? "RACE AI" : "TIME TRIAL"}</span></span>
+        <span className={`${styles.edition} ${spectator ? styles.tvTitle : ""}`}><i aria-hidden /> <span>{host ? "SHARED SCREEN · HOST" : spectator ? "TV VIEW · LIVE" : live ? "ONLINE RACE" : soloGrid ? "RACE AI" : "TIME TRIAL"}</span></span>
       </header>
       <section className={styles.stage} data-course={trackId} aria-label={`${track.name} ${spectator ? "TV race view" : live ? "online race" : soloGrid ? "AI race" : "time trial"}`}>
         <canvas key={retry} ref={canvas} className={styles.canvas} aria-label="Live 3D race view" />
@@ -351,7 +351,7 @@ export default function RaceScreen({ onlineView, banner, exit, racing = true, la
         {panel && <div className={styles.racePanel}>{panel}</div>}
       </section>
       <footer className={`${styles.bottom} ${spectator ? styles.tvControls : ""}`}>
-        <span className={styles.mode}>{spectator ? (cameraDriver ? `FOLLOWING ${cameraDriver}` : "READ-ONLY DISPLAY") : live ? "ONLINE RACE" : "SOLO RUN"} <span>·</span> {hud.renderer || "3D"}{hud.roadKernel === "WASM SIMD" && <span> · WASM SIMD</span>}</span>
+        <span className={styles.mode}>{spectator ? (cameraDriver ? `FOLLOWING ${cameraDriver}` : "SHARED DISPLAY") : live ? "ONLINE RACE" : "SOLO RUN"} <span>·</span> {hud.renderer || "3D"}{hud.roadKernel === "WASM SIMD" && <span> · WASM SIMD</span>}</span>
         <span className={raceUi.connection} title="FPS and applied-input round-trip time">
           {!!hud.fps && `${hud.fps} FPS`}{stats?.inputAckMs != null && `  ·  ${Math.round(stats.inputAckMs)} ms input`}
         </span>

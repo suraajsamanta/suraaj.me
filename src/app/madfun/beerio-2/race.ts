@@ -138,6 +138,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
     let own: VisualState | undefined;
     let cameraYaw = anchor.yaw, cameraPitch = 0, accumulator = 0, hudTick = 0;
     let lastRaceId: number | undefined;
+    let lastCameraId: string | undefined;
     const rivals = new Map<string, { model: GraphicalCar | null; pose: VisualState; color: string; ride: RideSelection }>();
     let driftCharge = 0, wasBoost = false, boostPower = 0, previousSpeed = 0, impactCooldown = 0;
     let previousLap = 1, wasFinished = false, countdownNote = -1, previousPhase = '', chargeCue = false;
@@ -149,7 +150,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       speed: Math.round(state.speed * 2.236936), lap: state.lap, seconds: state.seconds, best: state.best, boost: state.boost, renderer,
       drifting: driftCharge > 0, driftCharge: clamp(driftCharge / .5, 0, 1), boostPower, gear: Math.min(6, 1 + Math.floor(state.speed / 7)),
       roadKernel: world?.roadKernel, audioReady: sound.ready, muted: !!settings.muted, fps: Math.round(fps), soloRace: soloRace?.status(),
-      map: [{ id: online?.id ?? 'you', x: state.x, z: state.z, color: ownColor ?? '#38bdf8', own: true },
+      map: [...(!online || online.id ? [{ id: online?.id ?? 'you', x: state.x, z: state.z, color: ownColor ?? '#38bdf8', own: true }] : []),
         ...[...rivals].map(([id, rival]) => ({ id, x: rival.pose.x, z: rival.pose.z, color: rival.color }))],
     });
     const resize = () => {
@@ -200,9 +201,12 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
           accumulator -= K;
         }
       }
-      const source = solo?.state ?? (online && frame?.cars[online.id]) ?? anchor;
-      const jump = !own || frame?.raceId !== lastRaceId || Math.hypot(own.x - source.x, own.z - source.z) > 15;
+      const cameraId = online?.id;
+      const viewedCar = cameraId ? frame?.cars[cameraId] : undefined;
+      const source = solo?.state ?? viewedCar ?? anchor;
+      const jump = !own || frame?.raceId !== lastRaceId || cameraId !== lastCameraId || Math.hypot(own.x - source.x, own.z - source.z) > 15;
       lastRaceId = frame?.raceId;
+      lastCameraId = cameraId;
       const t = online && online.id !== 'host' ? 1 - Math.exp(-dt * 38) : 1;
       own = interpolate(own, source, jump ? 1 : t);
       const { x, y, z, yaw, facing, pitch, steer, speed, boost } = own;
@@ -244,6 +248,8 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
         ownColor = paint;
         car?.metadata.setPaint?.(paint);
       }
+      car?.setEnabled(!online || !!viewedCar);
+      shadow?.setEnabled(!online || !!viewedCar);
       if (car) {
         car.position.set(x, y + 0.045, z);
         car.rotation.set(pitch + accelerationPitch, yaw, lean);
@@ -258,10 +264,10 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       }
       const current = frame?.cars ?? Object.fromEntries((soloRace?.rivals ?? []).map(rival => [rival.id, rival.driver.state]));
       for (const [id, rival] of rivals) {
-        if (!Object.hasOwn(current, id)) { rival.model?.dispose(false, true); rivals.delete(id); }
+        if (id === cameraId || !Object.hasOwn(current, id)) { rival.model?.dispose(false, true); rivals.delete(id); }
       }
       for (const [id, state] of Object.entries(current)) {
-        if (id === online?.id) continue;
+        if (id === cameraId) continue;
         let rival = rivals.get(id);
         const entry = frame?.players.find(player => player.id === id);
         const color = entry?.color ?? soloRace?.rivals.find(rival => rival.id === id)?.color ?? rivalColor(id);
@@ -295,7 +301,7 @@ export async function startRace(canvas: HTMLCanvasElement, input: RaceInput, onH
       camera.rotation.z = -lean * .23 * motion;
       camera.fov = mix(camera.fov, fovBase + (clamp(speed / 37, 0, 1) * .09 + boostPower * .095) * motion, 1 - Math.exp(-dt * 4));
       effects?.update({ x, y, z, yaw, pitch, speed, steer, boost, drift: driftCharge, reducedMotion: !motion }, dt);
-      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, speed, reducedMotion: !motion, color: ownColor, ride: ownRide, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color, ride:rival.ride})) });
+      if (software) software({ x, y, z, yaw, camera: camera.position, look, boost, speed, reducedMotion: !motion, hideHero: !!online && !viewedCar, color: ownColor, ride: ownRide, rivals: [...rivals.values()].map(rival => ({...rival.pose, color:rival.color, ride:rival.ride})) });
       else scene3d.render();
       hudTick += dt;
       if (hudTick >= 0.096) { hudTick = 0; hud(source); }

@@ -4,7 +4,7 @@ import Link from "next/link";
 import Image from "next/image";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState, useSyncExternalStore, type FormEvent } from "react";
-import { Beerio2Session } from "./online";
+import { Beerio2Session, MIN_DRIVERS, MAX_DRIVERS } from "./online";
 import RaceScreen, { type RaceBanner } from "./race-screen";
 import type { OnlineRaceView } from "./race";
 import { TRACKS, getTrack, type TrackId } from "./course";
@@ -17,13 +17,13 @@ const CarLab = dynamic(() => import("./car-lab"), { ssr: false, loading: () => <
 type Screen = "menu" | "solo" | "host" | "join" | "watch" | "lab";
 const quickStartSteps = [
   { title: "Pick a circuit and car", body: "Choose Seattle Night or Neon Orbit. Open Car Lab to pick your car and character. Race AI puts you on the grid against three rivals; Time Trial is for chasing your best lap." },
-  { title: "Create a race or join friends", body: "Choose Host & Drive, enter your name, and tap Create room. Share the player invite, QR, or room code. Guests choose Join a room, and the host taps Start race once at least two drivers are in." },
-  { title: "Drive on your own screen", body: "Everyone gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE as needed. Hold DRIFT while steering, then release it to get a boost." },
-  { title: "Race three laps", body: "First across the finish line wins the race. For a shared display, open Optional TV view from the host phone and share the TV link to the display. The TV watches; the phone still hosts." },
+  { title: "Create a race or join friends", body: "Choose Create on shared screen on the TV or laptop. Everyone who wants to drive scans the player QR on a separate device. Tap Start race on the shared screen once two drivers have joined." },
+  { title: "Drive on your own screen", body: "Every driver gets their own chase view. Drag the steering wheel left or right, hold GAS to accelerate, and use BRAKE as needed. Hold DRIFT while steering, then release it to get a boost." },
+  { title: "Race three laps", body: "First across the finish line wins the race. The screen that created the room shows the race and results without entering as a driver." },
 ] as const;
 const tvQuickStartSteps = [
   { title: "Put this link on the big screen", body: "Open the TV link on a TV browser or on a computer connected to the TV, then select Open TV view." },
-  { title: "Join from phones", body: "Drivers use the separate player invite, room code, or QR. The host starts and controls the race from their phone. This screen only watches and does not take a driver slot." },
+  { title: "Join from phones", body: "Drivers use the separate player invite, room code, or QR. The host starts and controls the race on the screen that created it. This screen only watches and does not take a driver slot." },
 ] as const;
 const ROOM_CODE = /^[A-HJ-NP-Z2-9]{6}$/;
 const CONTROL = /[\p{Cc}\p{Cf}]/u;
@@ -74,7 +74,7 @@ export default function Beerio2Page() {
   const savedRide = useSyncExternalStore(() => () => {}, readRide, () => DEFAULT_RIDE);
   const [rideOverride, setRideOverride] = useState<RideSelection | null>(null);
   const ride = rideOverride ?? savedRide;
-  const [labReturn, setLabReturn] = useState<"menu" | "host" | "join">("menu");
+  const [labReturn, setLabReturn] = useState<"menu" | "join">("menu");
   const vehicleName = RIDES.find(entry => entry.id === ride.vehicle)?.name;
   const characterName = CHARACTERS.find(entry => entry.id === ride.character)?.name;
   const [trackId, setTrackId] = useState<TrackId>("seattle");
@@ -87,18 +87,23 @@ export default function Beerio2Page() {
   const room = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const screen = choice ?? (ROOM_CODE.test(inviteCode) ? watchToken ? "watch" : "join" : labLink ? "lab" : "menu");
   const code = typedCode ?? inviteCode;
-  const inRoom = !!room.playerId && !!room.code;
-  const seatId = inRoom ? room.playerId : null;
   const host = room.role === "host";
-  const spectator = room.role === "spectator";
+  const additionalScreen = room.role === "spectator";
+  const spectator = host || additionalScreen;
+  const seatId = room.playerId;
+  const inRoom = !!room.code && (host || !!seatId);
   const connecting = room.status === "connecting" || room.status === "reconnecting" || room.loading;
-  const onlineView = useMemo<OnlineRaceView | undefined>(() => seatId ? {
-    id: spectator ? "host" : seatId,
+  const onlineView = useMemo<OnlineRaceView | undefined>(() => inRoom ? {
+    get id() {
+      if (!spectator) return seatId ?? "";
+      const drivers = session.getFrame()?.players ?? [];
+      return drivers.find(driver => driver.connected)?.id ?? drivers[0]?.id ?? "";
+    },
     getFrame: session.getFrame,
     getRenderFrame: session.getRenderFrame,
     getNetworkStats: spectator ? undefined : session.getNetworkStats,
-    setInput: spectator ? () => {} : (input) => session.setInput(input),
-  } : undefined, [seatId, session, spectator]);
+    setInput: spectator ? () => {} : session.setInput,
+  } : undefined, [inRoom, seatId, session, spectator]);
 
   useEffect(() => {
     const whenHidden = () => { if (document.hidden) session.setPaused(true); };
@@ -122,13 +127,19 @@ export default function Beerio2Page() {
   function leave() {
     if (host && inRoom && !window.confirm("End this Beerio 2 room for everyone?")) return;
     session.leave();
-    if (spectator || screen === "watch") window.history.replaceState(window.history.state, "", "/madfun/beerio-2");
+    if (additionalScreen || screen === "watch") window.history.replaceState(window.history.state, "", "/madfun/beerio-2");
     choose("menu");
   }
 
   function connect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (connecting) return;
+    if (screen === "host") {
+      setValidation("");
+      setShareStatus("");
+      session.create(trackId);
+      return;
+    }
     const driver = name.trim();
     if (!driver || Array.from(driver).length > 24 || CONTROL.test(driver)) {
       setValidation("Enter a driver name of 1–24 characters.");
@@ -141,8 +152,7 @@ export default function Beerio2Page() {
     setValidation("");
     setShareStatus("");
     void import("./race").catch(() => {});
-    if (screen === "host") void session.create(driver, trackId, ride);
-    else session.join(code, driver, ride);
+    session.join(code, driver, ride);
   }
 
   async function share(useShareSheet: boolean, tv = false) {
@@ -151,7 +161,7 @@ export default function Beerio2Page() {
     const url = tv && room.watchInvite ? tvUrl(code, room.watchInvite) : inviteUrl(code);
     if (useShareSheet && navigator.share) {
       try {
-        await navigator.share({ title: tv ? "Beerio 2 · TV view" : `Beerio 2 · ${getTrack(room.trackId).name}`, text: tv ? "Open on a TV browser or a computer connected to your TV. The host phone controls the race." : `Join my ${getTrack(room.trackId).name} race`, url });
+        await navigator.share({ title: tv ? "Beerio 2 · TV view" : `Beerio 2 · ${getTrack(room.trackId).name}`, text: tv ? "Open on a TV browser or a computer connected to your TV. The screen that created the room controls the race." : `Join my ${getTrack(room.trackId).name} race`, url });
         return;
       } catch (cause) {
         if (cause instanceof DOMException && cause.name === "AbortError") return;
@@ -195,33 +205,33 @@ export default function Beerio2Page() {
     }
 
     const lobbyPanel = lobby && !closed && <section className={styles.roomPanel} aria-label="Race lobby" data-mobile-host={host ? "true" : undefined}>
-      <div className={styles.kicker}><i aria-hidden /> {spectator ? "TV VIEW · WAITING FOR THE PHONE HOST" : host ? "YOU’RE HOSTING ON THIS DEVICE" : "PRIVATE GRID"}</div>
+      <div className={styles.kicker}><i aria-hidden /> {host ? "SHARED SCREEN · HOST ONLY" : additionalScreen ? "EXTRA DISPLAY · WATCH ONLY" : "PRIVATE GRID"}</div>
       <div className={styles.roomTop}>
-        <div><h2>{spectator ? "Ready to watch" : "Starting grid"}</h2><p>{roomTrack.name} · Three laps · {racers.length}/10 drivers</p></div>
+        <div><h2>{additionalScreen ? "Ready to watch" : "Starting grid"}</h2><p>{roomTrack.name} · Three laps · {racers.length}/{MAX_DRIVERS} drivers</p></div>
         <div className={styles.codeDisplay}><small>ROOM CODE</small><b>{room.code}</b></div>
       </div>
       <div className={styles.lobbyActionBar}>
-        {host && <button className={styles.primaryAction} type="button" disabled={racers.length < 2 || !hostAvailable || room.loading} onClick={() => void session.start()}>
-          {room.loading ? "Preparing the race…" : racers.length < 2 ? "Waiting for another driver" : "Start race"}
+        {host && <button className={styles.primaryAction} type="button" disabled={racers.length < MIN_DRIVERS || !hostAvailable || room.loading} onClick={() => void session.start()}>
+          {room.loading ? "Preparing the race…" : racers.length < MIN_DRIVERS ? "Waiting for two drivers" : "Start race"}
         </button>}
-        {!spectator && <div className={styles.shareRow}>
+        {!additionalScreen && <div className={styles.shareRow}>
           <button className={styles.secondaryAction} type="button" onClick={() => void share(true)}>Invite players</button>
           <button className={styles.secondaryAction} type="button" onClick={() => void share(false)}>Copy driver link</button>
         </div>}
       </div>
       {room.code && <div className={styles.lobbyExtras}><RoomQr code={room.code} autoOpen={spectator} /></div>}
       {host && room.code && room.watchInvite && <details className={styles.lobbyExtras}>
-        <summary>{room.spectatorConnected ? "TV view · Connected" : "Optional TV view"}</summary>
-        <p>Open this link once on a TV browser or a computer connected to it. You’ll start and run the race from this phone.</p>
+        <summary>{room.spectatorConnected ? "Extra display · Connected" : "Optional extra display"}</summary>
+        <p>Mirror the race to an additional display. This screen still starts and runs the race.</p>
         <button className={styles.secondaryAction} type="button" onClick={() => void share(true, true)}>Share TV link</button>
         <label>TV link<input readOnly value={tvUrl(room.code, room.watchInvite)} onFocus={event => event.currentTarget.select()} aria-label="Private TV link" /></label>
       </details>}
       <p className={styles.statusLine} role="status">{shareStatus}</p>
-      <div className={styles.rosterTitle}><b>DRIVERS</b><span>{racers.length} / 10</span></div>
+      <div className={styles.rosterTitle}><b>DRIVERS</b><span>{racers.length} / {MAX_DRIVERS}</span></div>
       <ol className={styles.roster}>
         {room.players.map((player) => <li key={player.id}>
           <i className={styles.driverDot} style={{ backgroundColor: player.color }} aria-hidden />
-          <span>{player.name}</span><small>{player.id === room.playerId ? "YOU" : player.id === "host" ? "HOST" : !player.connected ? "OFFLINE" : "IN GRID"}</small>
+          <span>{player.name}</span><small>{player.id === room.playerId ? "YOU" : !player.connected ? "OFFLINE" : "IN GRID"}</small>
         </li>)}
       </ol>
       {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
@@ -267,7 +277,7 @@ export default function Beerio2Page() {
         <span className={styles.kicker}>BEERIO 2 · OPTIONAL TV VIEW</span>
         <h2>Put the race on TV.</h2>
         <QuickStart game="Beerio 2 TV view" steps={tvQuickStartSteps} />
-        <p>This is a watch-only screen. Once connected, the host phone runs the race.</p>
+        <p>This is a watch-only screen. The screen that created the room still runs the race.</p>
         {room.error && <p className={styles.formError} role="alert">{room.error}</p>}
         <button type="button" className={styles.primaryAction} disabled={connecting || !watchToken || !ROOM_CODE.test(inviteCode)} onClick={() => session.watch(inviteCode, watchToken)}>{connecting ? "Connecting…" : "Open TV view"}</button>
         <button type="button" className={styles.backAction} onClick={leave}>‹ Back to Beerio 2</button>
@@ -297,21 +307,21 @@ export default function Beerio2Page() {
           <button className={styles.secondaryAction} type="button" onClick={() => { setLabReturn("menu"); choose("lab"); }}><span><b>Car Lab</b><small>Pick your car, driver and paint</small></span><span className={styles.actionArrow} aria-hidden>↗</span></button>
           <div className={styles.modeDivider}><span>BETTER WITH RIVALS</span></div>
           <div className={styles.onlineChoices}>
-            <button className={styles.secondaryAction} type="button" onClick={() => choose("host")}><span><b>Host &amp; drive</b><small>Create a private room</small></span><span aria-hidden>＋</span></button>
-            <button className={styles.secondaryAction} type="button" onClick={() => choose("join")}><span><b>Join a room</b><small>Enter an invite code</small></span><span aria-hidden>→</span></button>
+            <button className={styles.secondaryAction} type="button" onClick={() => choose("host")}><span><b>Create on shared screen</b><small>Show the race and a player QR</small></span><span aria-hidden>＋</span></button>
+            <button className={styles.secondaryAction} type="button" onClick={() => choose("join")}><span><b>Join a room</b><small>Drive on this phone</small></span><span aria-hidden>→</span></button>
           </div>
-          <div className={styles.cardFoot}><span aria-hidden>◉</span> Up to 10 drivers · Every device is a cockpit</div>
+          <div className={styles.cardFoot}><span aria-hidden>◉</span> Up to 10 drivers · Host display is not a driver</div>
         </section> : <form className={styles.entryCard} onSubmit={connect}>
           <button className={styles.backAction} type="button" onClick={() => { session.leave(); choose("menu"); }}>‹ All modes</button>
           <div className={styles.kicker}>{screen === "host" ? "BUILD YOUR STARTING GRID" : "YOUR SEAT IS WAITING"}</div>
-          <h2>{screen === "host" ? "Host & drive." : "Join the grid."}</h2>
-          <p>{screen === "host" ? "Create a room, invite friends, and start from this phone. No TV or computer needed." : "Same race. Your own screen. Enter the code from your host."}</p>
+          <h2>{screen === "host" ? "Set up the shared screen." : "Join the grid."}</h2>
+          <p>{screen === "host" ? "Create the room here, then show the QR. Everyone who drives joins on a separate device, including you." : "Same race. Your own screen. Enter the code from your host."}</p>
           {screen === "host" ? <div className={styles.formCircuit}><TrackMap trackId={trackId} /><div><small>YOUR CIRCUIT</small><strong>{selectedTrack.name}</strong><span>Choose a circuit below before creating.</span></div></div> : <div className={styles.joinNote}>Your host’s circuit loads automatically.</div>}
-          <button className={styles.secondaryAction} type="button" disabled={connecting} onClick={() => { setLabReturn(screen === "join" ? "join" : "host"); choose("lab"); }}>
+          {screen === "join" && <><button className={styles.secondaryAction} type="button" disabled={connecting} onClick={() => { setLabReturn("join"); choose("lab"); }}>
             <span><b>Edit car &amp; driver</b><small>{vehicleName} · {characterName}</small></span><span aria-hidden>↗</span>
           </button>
           <label>DRIVER NAME<input value={name} onChange={(event) => setName(event.target.value)} name="driver-name" autoComplete="nickname" placeholder="What should we call you?" required maxLength={48} disabled={connecting} /></label>
-          {screen === "join" && <label>ROOM CODE<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label>}
+          <label>ROOM CODE<input className={styles.codeInput} value={code} onChange={(event) => setTypedCode(cleanCode(event.target.value))} name="room-code" autoCapitalize="characters" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="ABC234" required minLength={6} maxLength={6} disabled={connecting} /></label></>}
           {(validation || room.error) && <p className={styles.formError} role="alert">{validation || room.error}</p>}
           {connecting && <p className={styles.statusLine} role="status">Connecting to the race relay…</p>}
           <button className={styles.primaryAction} type="submit" disabled={connecting}>{connecting ? "Connecting…" : screen === "host" ? "Create room" : "Join race"}<span aria-hidden>↗</span></button>
@@ -369,12 +379,12 @@ function RoomQr({ code, autoOpen = false }: { code: string; autoOpen?: boolean }
   useEffect(() => {
     if (!open) return;
     let active = true;
-    void import("qrcode").then((module) => module.toDataURL(inviteUrl(code), { width: 128, margin: 2 }))
+    void import("qrcode").then((module) => module.toDataURL(inviteUrl(code), { width: 232, margin: 3 }))
       .then((src) => { if (active) setQr({ code, src }); }).catch(() => {});
     return () => { active = false; };
   }, [code, open]);
   return <details className={styles.roomQr} open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
-    <summary>Join by scanning QR</summary>
-    {qr?.code === code ? <Image src={qr.src} width={128} height={128} alt="Scan this Beerio 2 invite with your phone camera" unoptimized /> : <p>Preparing QR code…</p>}
+    <summary>Player QR · Scan to drive</summary>
+    {qr?.code === code ? <Image src={qr.src} width={176} height={176} alt="Scan this Beerio 2 invite with your phone camera" unoptimized /> : <p>Preparing QR code…</p>}
   </details>;
 }

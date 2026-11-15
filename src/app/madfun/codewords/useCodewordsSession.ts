@@ -38,6 +38,8 @@ const config: PhonePartyConfig<Model, CodewordsPublic> = {
       const prev = new Set(model.game?.board.map(c => c.word) ?? []);
       return { ...model, match: model.match + 1, game: createGame(CODEWORDS.filter(word => !prev.has(word))) };
     }
+    // The host may start and rematch, but cannot claim either team role.
+    if (actor.id === hostId) return null;
     if (action.type === 'seat') {
       if (model.game && model.game.phase !== 'finished') return null;
       if (action.team !== 'red' && action.team !== 'blue') return null;
