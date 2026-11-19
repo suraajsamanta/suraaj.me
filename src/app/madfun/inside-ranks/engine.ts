@@ -25,6 +25,8 @@ export type Match = {
   remainingCustomPrompts: Prompt[];
   consumedCustomPromptIds: string[];
   excludedBuiltinIds: string[];
+  reshufflesUsed: Record<string, number>;
+  discardedPromptIds: string[];
   batchAssignments: Assignment[];
   queue: Player[];
   startingRoster: Player[];
@@ -94,6 +96,12 @@ const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
 export const MANUAL_RANKING_SECONDS = 90;
 export const BATCH_RANKING_SECONDS = 60;
 export const MAX_CUSTOM_QUESTION_LENGTH = 180;
+export const MAX_QUESTION_RESHUFFLES = 3;
+export function rankingTimeWarning(seconds: number): 30 | 10 | null {
+  if (seconds <= 30 && seconds > 26) return 30;
+  if (seconds <= 10 && seconds > 6) return 10;
+  return null;
+}
 
 export function normalizeCustomQuestion(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > MAX_CUSTOM_QUESTION_LENGTH * 4) return null;
@@ -295,6 +303,8 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
     optionsShown: false,
     ...next,
     consumedCustomPromptIds: [],
+    reshufflesUsed: {},
+    discardedPromptIds: [],
     excludedBuiltinIds,
     eligibleGuesserIds: eligibleGuessers(startingRoster, [], ranker.id),
     guesses: {},
@@ -359,6 +369,46 @@ export function privateView(match: Match, playerId: string): { prompt: Prompt; o
     } : null;
   }
   return match.phase === 'ranking' && match.ranker.id === playerId ? { prompt: privatePrompt(match.correct), ...(match.anonymous && match.preview ? { orderedIds: match.preview.orderedIds } : {}) } : null;
+}
+
+export function reshufflesLeft(match: Match, playerId: string): number {
+  if (!match.anonymous) return 0;
+  return Math.max(0, MAX_QUESTION_RESHUFFLES - (Object.hasOwn(match.reshufflesUsed, playerId) ? match.reshufflesUsed[playerId] : 0));
+}
+
+export function reshuffleQuestion(match: Match, playerId: string, expectedPromptId: unknown, prompts: readonly Prompt[], rng = Math.random): Match | null {
+  if (!reshufflesLeft(match, playerId)) return null;
+  const batch = match.phase === 'batch_ranking';
+  const index = batch ? match.batchAssignments.findIndex(a => a.ranker.id === playerId && !a.orderedIds) : -1;
+  if (batch ? index < 0 : match.phase !== 'ranking' || match.ranker.id !== playerId) return null;
+  const current = batch ? match.batchAssignments[index].correct : match.correct;
+  if (current.id !== expectedPromptId) return null; // Ignore taps from a stale screen.
+  const discardedPromptIds = [...match.discardedPromptIds, current.id];
+  const reserved = new Set([...match.excludedBuiltinIds, ...discardedPromptIds, ...match.batchAssignments.map(a => a.correct.id)]);
+  const bank = readyPrompts(prompts).filter(p => !reserved.has(p.id));
+  const available = bank.filter(p => !match.usedPromptIds.includes(p.id));
+  const custom = match.remainingCustomPrompts.find(p => p.authorId !== playerId && !discardedPromptIds.includes(p.id));
+  if (!custom && !available.length) return null;
+  const replacement = custom ?? chooseOptions(available, [], rng).correct;
+  const replacementOptions = optionsFor(replacement, bank, match.usedPromptIds, rng);
+  if (replacementOptions.length !== GUESS_OPTION_COUNT) return null;
+  const common = {
+    reshufflesUsed: { ...match.reshufflesUsed, [playerId]: MAX_QUESTION_RESHUFFLES - reshufflesLeft(match, playerId) + 1 },
+    discardedPromptIds,
+    remainingCustomPrompts: match.remainingCustomPrompts.filter(p => p.id !== replacement.id),
+  };
+  if (!batch) return {
+    ...match, ...common, correct: replacement, customPrompt: !!custom, options: replacementOptions,
+    usedPromptIds: [...new Set([...match.usedPromptIds, ...replacementOptions.map(p => p.id)])],
+  };
+  return {
+    ...match, ...common,
+    batchAssignments: match.batchAssignments.map((a, i) => i === index
+      ? { ...a, correct: replacement, customPrompt: !!custom, options: replacementOptions }
+      : a.options.some(p => p.id === replacement.id)
+        ? { ...a, options: optionsFor(a.correct, bank.filter(p => p.id !== replacement.id), match.usedPromptIds, rng) }
+        : a),
+  };
 }
 
 function validOrder(match: Match, playerId: string, orderedIds: unknown): orderedIds is string[] {
@@ -510,7 +560,7 @@ function advance(match: Match, players: readonly Player[], prompts: readonly Pro
     // A skipped turn never unmasks its unused prompt as an answer.
     return { ...match, phase: 'finished', preview: null };
   }
-  const bank = readyPrompts(prompts).filter(prompt => !match.excludedBuiltinIds.includes(prompt.id));
+  const bank = readyPrompts(prompts).filter(prompt => !match.excludedBuiltinIds.includes(prompt.id) && !match.discardedPromptIds.includes(prompt.id));
   if (!bank.length && !match.remainingCustomPrompts.length) return { ...match, phase: 'finished', preview: null };
   const ranker = { ...match.queue[nextIndex], connected: true };
   const rankTargets = match.startingRoster.map(player => ({

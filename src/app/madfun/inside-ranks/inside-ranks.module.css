@@ -197,3 +197,9 @@
 }
 .batchProgress progress { width: 100%; height: 1rem; accent-color: #d8afff; }
 .batchProgress p { font-weight: 750; }
+
+.timerToastRegion { position: fixed; inset-block-start: max(.75rem, env(safe-area-inset-top)); inset-inline-end: max(.75rem, env(safe-area-inset-right)); z-index: 50; pointer-events: none; }
+.timerToast { display: block; padding: .65rem .9rem; border: 1px solid #ffd6a0; border-radius: .7rem; background: #342234; color: #fff6e9; box-shadow: 0 6px 20px #160a21a6; font-size: .9rem; font-weight: 850; }
+.timerToast[data-urgent='true'] { background: #72283f; border-color: #ffb7d0; }
+.shell .reshuffle { justify-self: start; }
+.reshuffle span { opacity: .8; }

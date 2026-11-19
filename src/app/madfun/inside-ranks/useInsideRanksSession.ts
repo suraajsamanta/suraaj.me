@@ -1,7 +1,7 @@
 'use client';
 
 import { usePhoneParty, type PhonePartyConfig } from '../shared/usePhoneParty';
-import { createMatch, expireRanking, nextRound, roundDeadline, privateView, publicView, normalizeCustomQuestion, reveal, showOptions, skipRound, submitGuess, submitRanking, updateRankingPreview, type RankingDrag, type Match, type Player, type Prompt, type PublicView } from './engine';
+import { createMatch, expireRanking, nextRound, roundDeadline, reshuffleQuestion, reshufflesLeft, privateView, publicView, normalizeCustomQuestion, reveal, showOptions, skipRound, submitGuess, submitRanking, updateRankingPreview, type RankingDrag, type Match, type Player, type Prompt, type PublicView } from './engine';
 import { INSIDE_RANKS_PROMPTS } from './prompts';
 import { DARK_OPENING_CATEGORIES, INSIDE_RANKS_DARK_PROMPTS } from './dark-prompts';
 
@@ -14,7 +14,8 @@ type Model = { simultaneous: boolean; questions: Question[]; questionSerial: num
 type InsideRanksPublic = { simultaneous: boolean; questionCount: number; deck: Deck; matchId: number; hostId: string; players: Player[]; match: PublicView | null; autoRun: boolean; deadline: number | null };
 export type InsideRanksAction = { type: 'set_deck'; deck: Deck } | { type: 'set_simultaneous'; enabled: boolean } |
   { type: 'submit_question'; text: string } | { type: 'remove_question'; id: string } | { type: 'set_auto'; enabled: boolean } | { type: 'start' | 'show_options' | 'expire_ranking' | 'reveal' | 'next' | 'skip' | 'rematch' | 'restart' } |
-  { type: 'rank'; orderedIds: string[] } | { type: 'guess'; optionId: string } |
+  { type: 'reshuffle'; promptId: string } |
+  { type: 'rank'; orderedIds: string[]; promptId?: string } | { type: 'guess'; optionId: string } |
   { type: 'rank_preview'; orderedIds: string[]; drag: RankingDrag | null };
 const questionKey = (value: string) => value.toLowerCase().replace(/[?!.]+$/u, '');
 const roster = (players: Player[]) => players.map(({ id, name, connected }) => ({ id, name, connected }));
@@ -40,7 +41,7 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
     const batch = match?.phase === 'batch_ranking' ? match.batchAssignments.find(a => a.ranker.id === id) : null;
     const role = match?.anonymous ? { ranker: match.ranker.id === id && match.phase !== 'batch_ranking', canGuess: match.eligibleGuesserIds.includes(id), guessed: Object.hasOwn(match.guesses, id), batchAssigned: !!batch, batchLocked: !!batch?.orderedIds } : undefined;
     return hidden || editable || role
-      ? { prompt: hidden?.prompt ?? null, orderedIds: hidden?.orderedIds, questions, role, matchId: model.matchId, round: model.match?.round }
+      ? { prompt: hidden?.prompt ?? null, orderedIds: hidden?.orderedIds, questions, role, ...(hidden && match?.anonymous ? { reshufflesLeft: reshufflesLeft(match, id) } : {}), matchId: model.matchId, round: model.match?.round }
       : null;
   },
   shouldPublish(_before, after, incoming) {
@@ -94,11 +95,14 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
         deadline: roundDeadline(model.autoRun, match?.phase, now, now) };
     }
     if (!model.match) return null;
-    const submitted = action.type === 'rank' || action.type === 'guess' || action.type === 'rank_preview';
+    const submitted = action.type === 'rank' || action.type === 'guess' || action.type === 'rank_preview' || action.type === 'reshuffle';
     const now = Date.now();
     const expired = model.deadline !== null && now >= model.deadline;
     if (submitted && (host || expired)) return null;
-    const match = action.type === 'rank_preview' ? updateRankingPreview(model.match, actor.id, action.orderedIds, action.drag) :
+    if (action.type === 'rank' && Object.hasOwn(model.match.reshufflesUsed, actor.id) &&
+        privateView(model.match, actor.id)?.prompt.id !== action.promptId) return null;
+    const match = action.type === 'reshuffle' ? reshuffleQuestion(model.match, actor.id, action.promptId, promptsFor(model.deck)) :
+      action.type === 'rank_preview' ? updateRankingPreview(model.match, actor.id, action.orderedIds, action.drag) :
       action.type === 'rank' ? submitRanking(model.match, actor.id, action.orderedIds, people) :
       action.type === 'guess' ? submitGuess(model.match, actor.id, action.optionId) :
       !host ? null : action.type === 'show_options' ? showOptions(model.match) :
@@ -116,12 +120,13 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
 };
 export function useInsideRanksSession() {
   const party = usePhoneParty(insideRanksConfig);
-  const packet = party.secret as { matchId: number; round?: number; prompt: Prompt | null; questions?: Prompt[]; orderedIds?: string[]; role?: { ranker: boolean; canGuess: boolean; guessed: boolean; batchAssigned: boolean; batchLocked: boolean } } | null;
+  const packet = party.secret as { matchId: number; round?: number; prompt: Prompt | null; questions?: Prompt[]; orderedIds?: string[]; reshufflesLeft?: number; role?: { ranker: boolean; canGuess: boolean; guessed: boolean; batchAssigned: boolean; batchLocked: boolean } } | null;
   const current = packet && packet.matchId === party.state?.matchId && packet.round === party.state.match?.round ? packet : null;
   return { ...party,
     prompt: party.state?.match?.phase === 'ranking' || party.state?.match?.phase === 'batch_ranking' ? current?.prompt ?? null : null,
     questions: current?.questions ?? [],
     role: current?.role,
+    reshufflesLeft: current?.reshufflesLeft ?? 0,
     draftOrder: current?.orderedIds ?? null,
     dispatch: (action: InsideRanksAction) => party.dispatch({ action, matchId: party.state?.matchId, round: party.state?.match?.round }),
   };

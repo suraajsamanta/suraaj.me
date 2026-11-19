@@ -253,3 +253,29 @@ test('Dark Mode permits authored prompts, hides the ranker and keeps Paranoid de
     assert.equal(publicMatch().reviewNumber, 2);
   }
 });
+
+test('reshuffle preserves the ranking deadline and stale lock-ins cannot submit a replaced question', () => {
+  for (const simultaneous of [false, true]) {
+    let state = config.initial();
+    state = act(state, host, { type: 'set_deck', deck: 'dark' });
+    if (simultaneous) state = act(state, host, { type: 'set_simultaneous', enabled: true });
+    state = act(state, host, { type: 'start' });
+    const ranker = simultaneous ? state.match.batchAssignments[0].ranker : state.match.ranker;
+    const before = config.secret(state, ranker.id);
+    assert.equal(before.reshufflesLeft, 3);
+    assert.equal(act(state, host, { type: 'reshuffle', promptId: before.prompt.id }), null);
+    assert.equal(act({ ...state, deadline: Date.now() - 1 }, ranker, { type: 'reshuffle', promptId: before.prompt.id }), null);
+    const changed = act(state, ranker, { type: 'reshuffle', promptId: before.prompt.id });
+    assert.equal(changed.deadline, state.deadline);
+    const after = config.secret(changed, ranker.id);
+    assert.equal(after.reshufflesLeft, 2);
+    const orderedIds = changed.match.rankTargets.map(p => p.id);
+    assert.equal(act(changed, ranker, { type: 'rank', promptId: before.prompt.id, orderedIds }), null);
+    const locked = act(changed, ranker, { type: 'rank', promptId: after.prompt.id, orderedIds });
+    assert(locked);
+    assert.equal(act(locked, ranker, { type: 'reshuffle', promptId: after.prompt.id }), null);
+    const restarted = act(locked, host, { type: 'restart' });
+    const newRanker = simultaneous ? restarted.match.batchAssignments[0].ranker : restarted.match.ranker;
+    assert.equal(config.secret(restarted, newRanker.id).reshufflesLeft, 3);
+  }
+});

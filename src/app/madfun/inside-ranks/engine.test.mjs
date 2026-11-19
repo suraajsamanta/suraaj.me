@@ -475,3 +475,49 @@ test('six distinct options stay in the chosen bank over whole matches including 
     }
   }
 });
+
+test('ranking warnings appear briefly at 30 and 10 seconds, not at zero', () => {
+  assert.deepEqual([31, 30, 27, 26, 11, 10, 7, 6, 0].map(e.rankingTimeWarning),
+    [null, 30, 30, null, null, 10, 10, null, null]);
+});
+
+test('Dark reshuffles are private and bounded per player, preserve drafts and leave custom no-hint behavior intact', async () => {
+  const { INSIDE_RANKS_DARK_PROMPTS: dark } = await load('./dark-prompts.ts');
+  const customPrompts = [
+    { id: 'custom-first', text: 'Who would leave everyone on read after borrowing their charger?', authorId: players[0].id },
+    { id: 'custom-second', text: 'Who would bring three desserts to a potluck?', authorId: players[1].id },
+  ];
+  for (const simultaneous of [false, true]) {
+    const start = e.createMatch(players, dark, () => 0.8, undefined, { simultaneous, anonymous: true, customPrompts });
+    const player = simultaneous ? start.batchAssignments[0].ranker : start.ranker;
+    const ids = [...players].reverse().map(p => p.id);
+    const initial = e.privateView(start, player.id).prompt;
+    const seen = new Set([initial.id]);
+    assert.equal(initial.id, 'custom-first');
+    const other = players.find(p => p.id !== player.id);
+    assert.equal(e.reshuffleQuestion(start, other.id, initial.id, dark), null);
+    assert.equal(e.reshuffleQuestion({ ...start, anonymous: false }, player.id, initial.id, dark), null);
+    let match = e.updateRankingPreview(start, player.id, ids, null);
+    for (let left = 2; left >= 0; left--) {
+      const priorId = e.privateView(match, player.id).prompt.id;
+      match = e.reshuffleQuestion(match, player.id, priorId, dark, () => 0.8);
+      assert(match);
+      const { prompt, orderedIds } = e.privateView(match, player.id);
+      assert(!seen.has(prompt.id));
+      seen.add(prompt.id);
+      assert.deepEqual(orderedIds, ids);
+      assert.equal(e.reshufflesLeft(match, player.id), left);
+      assert.equal(e.reshufflesLeft(match, other.id), 3);
+      assert.equal(e.reshuffleQuestion(match, player.id, priorId, dark), null);
+      assert(!JSON.stringify(e.publicView(match)).includes(prompt.text));
+      assert.notEqual(customPrompts.find(p => p.id === prompt.id)?.authorId, player.id);
+    }
+    assert.equal(e.reshuffleQuestion(match, player.id, e.privateView(match, player.id).prompt.id, dark), null);
+    const expired = e.expireRanking(match, players);
+    assert.deepEqual(expired.ranking.map(p => p.id), ids);
+    assert.equal(expired.options.length, 6);
+    assert.equal(e.publicView(expired).options.length, 0);
+    assert.equal(e.reshuffleQuestion(expired, player.id, expired.correct.id, dark), null);
+    assert.equal(e.reshufflesLeft(start, player.id), 3);
+  }
+});

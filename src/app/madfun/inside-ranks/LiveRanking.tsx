@@ -47,8 +47,9 @@ export function LiveRanking({ players, preview, rankerId }: { players: readonly 
   </div>;
 }
 
-export function RankForm({ players, rankerId, initial, settleOnMount, prompt, disabled, privateDraft = false, onRank, onPreview }: {
+export function RankForm({ players, rankerId, initial, settleOnMount, prompt, disabled, privateDraft = false, onRank, onPreview, questionAction }: {
   players: readonly Player[]; rankerId: string; initial?: string[]; settleOnMount?: boolean; prompt: string; disabled: boolean; privateDraft?: boolean;
+  questionAction?: import('react').ReactNode;
   onRank: (ids: string[]) => void; onPreview: (preview: Preview) => void;
 }) {
   const [order, setOrder] = useState(() => initial ?? players.map(player => player.id));
@@ -145,6 +146,7 @@ export function RankForm({ players, rankerId, initial, settleOnMount, prompt, di
     <p>Drag the dotted grips to rank everyone, including yourself. Put the best match at #1. {privateDraft
       ? 'Your order stays private until the group reviews it.'
       : 'Your moves are live; only you see the question.'} Your current order locks in when time runs out. If you don’t move anyone, the starting order is used.</p>
+    {questionAction}
     <ol ref={list} className={`${styles.dragList} ${styles.editable}`} aria-label="Rank your friends" style={listStyle(order.length)}>
       {(dragBase ?? order).map(id => {
         const slot = order.indexOf(id);

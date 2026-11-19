@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { useEffect, useEffectEvent, useState } from 'react';
-import { MANUAL_RANKING_SECONDS, MAX_CUSTOM_QUESTION_LENGTH, normalizeCustomQuestion, phaseTimer, type Player, type Prompt } from './engine';
+import { MANUAL_RANKING_SECONDS, MAX_CUSTOM_QUESTION_LENGTH, normalizeCustomQuestion, phaseTimer, rankingTimeWarning, type Player, type Prompt } from './engine';
 import { MAX_PLAYER_QUESTIONS, useInsideRanksSession } from './useInsideRanksSession';
 import { LiveRanking, RankForm, RankName } from './LiveRanking';
 import { useKeepScreenAwake } from './useKeepScreenAwake';
@@ -65,7 +65,7 @@ function QuestionBox({ questions, disabled, add, remove }: {
   </div>;
 }
 
-function RoundTimer({ deadline, duration }: { deadline: number; duration: number }) {
+function RoundTimer({ deadline, duration, showWarning }: { deadline: number; duration: number; showWarning: boolean }) {
   const [seconds, setSeconds] = useState(duration);
   useEffect(() => {
     const update = () => setSeconds(Math.min(duration, Math.max(0, Math.ceil((deadline - Date.now()) / 1000))));
@@ -73,7 +73,13 @@ function RoundTimer({ deadline, duration }: { deadline: number; duration: number
     const interval = window.setInterval(update, 250);
     return () => { window.clearTimeout(first); window.clearInterval(interval); };
   }, [deadline, duration]);
-  return <span className={styles.roleBadge} role="timer" aria-label="Time remaining">{seconds}s left</span>;
+  const warning = showWarning ? rankingTimeWarning(seconds) : null;
+  return <>
+    <span className={styles.roleBadge} role="timer" aria-label="Time remaining">{seconds}s left</span>
+    <span className={styles.timerToastRegion} role="status" aria-live="polite" aria-atomic="true">
+      {warning && <span className={styles.timerToast} data-urgent={warning === 10}>{warning} seconds left</span>}
+    </span>
+  </>;
 }
 
 function Ranking({ players, rankerId }: { players: readonly Player[]; rankerId?: string }) {
@@ -129,6 +135,15 @@ export default function InsideRanks() {
   const withPresence = (person: Player) => ({ ...person, connected: onlineIds.has(person.id) });
   const targets = match?.rankTargets.map(withPresence) ?? [];
   const ranked = match?.ranking.map(withPresence) ?? [];
+  const isActivelyRanking = !!prompt && (match?.phase === 'ranking' && isRanker ||
+    match?.phase === 'batch_ranking' && assignedInBatch && !lockedInBatch);
+  const reshuffleControl = darkDeck && isActivelyRanking && prompt ? (
+    <button type="button" className={styles.reshuffle}
+      disabled={!connected || !session.reshufflesLeft}
+      onClick={() => session.dispatch({ type: 'reshuffle', promptId: prompt.id })}>
+      Reshuffle question <span>({session.reshufflesLeft} left)</span>
+    </button>
+  ) : null;
   const pendingCount = darkDeck && match ? match.eligibleCount - match.guessCount : match?.eligibleGuesserIds.filter(id => players.some(player => player.id === id && player.connected) && !match.guessedIds.includes(id)).length ?? 0;
   const joinLink = `${path}?room=${roomCode ?? ''}`;
   const tvLink = `${joinLink}&watch=1`;
@@ -289,7 +304,7 @@ export default function InsideRanks() {
           <div className={styles.actions}>
             <span className={styles.kicker}>{match.phase === 'batch_ranking' ? 'Simultaneous Ranking' : match.phase === 'finished' ? 'Inside Ranks' : darkDeck ? 'Dark Mode' :
               `${match.simultaneous ? 'Ranking' : 'Round'} ${match.round} of ${match.totalRounds}`}</span>
-            {timer && typeof deadline === 'number' && <RoundTimer key={deadline} deadline={deadline} duration={timer.seconds}/>}
+            {timer && typeof deadline === 'number' && <RoundTimer key={deadline} deadline={deadline} duration={timer.seconds} showWarning={isActivelyRanking}/>}
           </div>
           {match.phase === 'batch_ranking' && <>
             <h1>{lockedInBatch ? 'Ranking locked in' : assignedInBatch ? 'Rank your friends' : 'Everyone ranks at once'}</h1>
@@ -299,7 +314,7 @@ export default function InsideRanks() {
             </div>}
             {assignedInBatch && !lockedInBatch ? prompt
               ? <RankForm key={roundKey} players={targets} rankerId={participantId!} initial={draftOrder ?? undefined} prompt={prompt.text} disabled={!connected} privateDraft
-                onPreview={({ orderedIds }) => session.dispatch({type:'rank_preview', orderedIds, drag:null})} onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/>
+                onPreview={({ orderedIds }) => session.dispatch({type:'rank_preview', orderedIds, drag:null})} onRank={orderedIds => session.dispatch({type:'rank',orderedIds,promptId:prompt.id})} questionAction={reshuffleControl}/>
               : <p role="status">Loading your private question…</p>
               : <p>{lockedInBatch ? 'Hang tight. The group will review the rankings one at a time.' :
                 'Rankings are private until everyone locks in or the minute is up. At zero, each player’s current order locks in automatically.'}</p>}
@@ -309,7 +324,7 @@ export default function InsideRanks() {
             <h1>{isRanker ? 'Rank your friends' : darkDeck ? 'A ranking is in progress' : `${match.ranker?.name} is ranking the group`}</h1>
             {isRanker && prompt ? <RankForm key={roundKey} players={targets} rankerId={participantId!} initial={darkDeck ? draftOrder ?? undefined : match.preview?.orderedIds} privateDraft={darkDeck} settleOnMount={!!match.preview?.drag} prompt={prompt.text} disabled={!connected}
               onPreview={preview => session.dispatch({type:'rank_preview',...preview})}
-              onRank={orderedIds => session.dispatch({type:'rank',orderedIds})}/> : isRanker ?
+              onRank={orderedIds => session.dispatch({type:'rank',orderedIds,promptId:prompt.id})} questionAction={reshuffleControl}/> : isRanker ?
               <p role="status">Loading your private question…</p> : <>
                 <p>{darkDeck ? 'The rankings stay private until it’s time to guess.' : 'Watch the order change live. Once the ranker locks it in, try to guess their question.'}</p>
                 {match.ranker && <LiveRanking players={targets} rankerId={match.ranker.id} preview={match.preview}/>}
