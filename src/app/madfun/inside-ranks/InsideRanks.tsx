@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { useEffect, useEffectEvent, useState } from 'react';
-import { MANUAL_RANKING_SECONDS, MAX_CUSTOM_QUESTION_LENGTH, normalizeCustomQuestion, phaseTimer, rankingTimeWarning, type Player, type Prompt } from './engine';
+import { BATCH_RANKING_SECONDS, MANUAL_RANKING_SECONDS, MAX_CUSTOM_QUESTION_LENGTH, normalizeCustomQuestion, phaseTimer, rankingTimeWarning, type Player, type Prompt } from './engine';
 import { MAX_PLAYER_QUESTIONS, useInsideRanksSession } from './useInsideRanksSession';
 import { LiveRanking, RankForm, RankName } from './LiveRanking';
 import { useKeepScreenAwake } from './useKeepScreenAwake';
@@ -17,7 +17,7 @@ const quickSteps = [
   { title: 'Create a room on the shared screen', body: 'Choose Create room on the screen everyone can see. This screen starts rounds and shows results, but it never joins as a player or sees the secret question.' },
   { title: 'Scan the player QR on your phone', body: 'At least three players scan the same QR, or enter the room code under Join a room. If the person setting up wants to play too, they scan on a separate phone.' },
   { title: 'Add your own questions', body: 'Write a question on your phone before the game. Player questions are played early, without hints, and nobody gets their own. Built-in Dark Mode questions come from the Paranoid bank.' },
-  { title: 'Drag to rank', body: 'Read your secret question, then drag the grips to put the best match at #1. Rank everyone, including yourself and anyone who stepped away. Normally the group sees your moves live. Turn on Simultaneous Ranking to give each player their own question and 60 seconds to rank privately, then review the rankings one at a time. When the timer ends, whatever order is on your phone locks in automatically.' },
+  { title: 'Drag to rank', body: `Read your secret question, then drag the grips to put the best match at #1. Rank everyone, including yourself and anyone who stepped away. Normally the group sees your moves live. Turn on Simultaneous Ranking to give each player their own question and ${BATCH_RANKING_SECONDS} seconds to rank privately, then review the rankings one at a time. When the timer ends, whatever order is on your phone locks in automatically.` },
   { title: 'Run the room from a second phone', body: 'Optional: pair a phone with the private Host controller QR. On the display or controller, you can turn on Auto-run to time each stage.' },
   { title: 'Try Dark Mode', body: 'Optional: in the lobby, the host can switch to a separate deck of group beef, dark satire, and bad decisions. The regular deck is the default.' },
   { title: 'Guess and score', body: 'See the ranking, then try to guess the question. Only built-in questions have a hint. Guess out loud, or choose Show options for six phone choices. Correct phone guesses get 1 point. The most points wins.' },
@@ -204,7 +204,7 @@ export default function InsideRanks() {
   const simultaneousControl = <label className={`${styles.autoRun} ${styles.batchToggle}`}>
     <input type="checkbox" checked={simultaneous} disabled={!connected}
       onChange={event => session.dispatch({ type: 'set_simultaneous', enabled: event.target.checked })}/>
-    <span><strong>Simultaneous Ranking</strong><small>Everyone gets one secret question and 60 seconds to rank privately. At zero, everyone’s current order locks in for review.</small></span>
+    <span><strong>Simultaneous Ranking</strong><small>Everyone gets one secret question and {BATCH_RANKING_SECONDS} seconds to rank privately. At zero, everyone’s current order locks in for review.</small></span>
   </label>;
 
   const identify = (id: string) => players.find(player => player.id === id)?.name ?? 'Player';
@@ -317,7 +317,7 @@ export default function InsideRanks() {
                 onPreview={({ orderedIds }) => session.dispatch({type:'rank_preview', orderedIds, drag:null})} onRank={orderedIds => session.dispatch({type:'rank',orderedIds,promptId:prompt.id})} questionAction={reshuffleControl}/>
               : <p role="status">Loading your private question…</p>
               : <p>{lockedInBatch ? 'Hang tight. The group will review the rankings one at a time.' :
-                'Rankings are private until everyone locks in or the minute is up. At zero, each player’s current order locks in automatically.'}</p>}
+                'Rankings are private until everyone locks in or time runs out. At zero, each player’s current order locks in automatically.'}</p>}
           </>}
           {match.phase === 'ranking' && <>
             {isRanker && <span className={styles.roleBadge}>You’re the ranker · Private turn</span>}
@@ -365,8 +365,23 @@ export default function InsideRanks() {
                   <p className={styles.muted} role="status">{match.guessCount} of {match.eligibleCount} guesses received</p>
                 </> : <>
                   {match.correct && <h2 className={styles.answer}>{match.correct.text}</h2>}
+                  {match.guessBreakdown && <div className={styles.stack}>
+                    <p className={styles.muted}>{match.guessBreakdown.total === 0 ? 'No guesses submitted.' :
+                      `Based on ${match.guessBreakdown.total} submitted ${match.guessBreakdown.total === 1 ? 'guess' : 'guesses'}.`}</p>
+                    <ol className={styles.options} aria-label="Guess percentages by question">
+                      {match.options.map((option, index) => {
+                        const correct = option.id === match.correct?.id;
+                        const percent = match.guessBreakdown?.choices.find(choice => choice.optionId === option.id)?.percent ?? 0;
+                        return <li key={option.id} className={`${styles.option} ${styles.guessResult}`} data-correct={correct}>
+                          <b>{'ABCDEF'[index]}</b>
+                          <span>{option.text}{correct && <strong className={styles.correctTag}>Correct answer</strong>}</span>
+                          <strong>{percent}%</strong>
+                        </li>;
+                      })}
+                    </ol>
+                  </div>}
                   {!match.options.length ? <p>Revealed after the verbal guesses. No phone points this round.</p> :
-                    darkDeck ? <p>Scores will appear at the end.</p> : match.results.some(result => result.points) ?
+                    darkDeck ? <p>Scores will appear at the end.</p> : match.guessBreakdown?.total === 0 ? null : match.results.some(result => result.points) ?
                     <p>Got it right: {match.results.filter(result => result.points).map(result => identify(result.playerId)).join(', ')}.</p> : <p>No one guessed it this round.</p>}
                 </>}
               </div>

@@ -136,7 +136,7 @@ test('verbal solve reveals the correct question without opening options or chang
 });
 
 test('auto-run sets deadlines without choosing rankings or guesses', () => {
-  assert.deepEqual(e.phaseTimer('ranking'), { seconds: 75, action: 'expire_ranking' });
+  assert.deepEqual(e.phaseTimer('ranking'), { seconds: 90, action: 'expire_ranking' });
   assert.equal(e.phaseTimer('finished'), null);
   assert.deepEqual(e.phaseTimer('hint'), { seconds: 20, action: 'show_options' });
   assert.deepEqual(e.phaseTimer('guessing'), { seconds: 25, action: 'reveal' });
@@ -186,7 +186,7 @@ test('manual mode gives a fixed 90-second ranking window; toggling auto-run cann
   const start = 100_000;
   assert.equal(e.roundDeadline(false,'ranking',start,start),190_000);
   assert.equal(e.roundDeadline(false,'ranking',start,start+20_000),190_000);
-  assert.equal(e.roundDeadline(true,'ranking',start,start+25_000),175_000);
+  assert.equal(e.roundDeadline(true,'ranking',start,start+25_000),190_000);
   assert.equal(e.roundDeadline(false,'hint',null,start),null);
   assert.equal(e.roundDeadline(true,'hint',null,start),120_000);
 });
@@ -316,7 +316,7 @@ test('a missed sequential rank does not lose the queued room question', () => {
   assert.equal(e.nextRound(e.reveal(rank(next)), players, bank).correct.id, customPrompts[1].id);
 });
 
-test('60-second simultaneous phase keeps unique assignments and all draft orders private', () => {
+test('90-second simultaneous phase keeps unique assignments and all draft orders private', () => {
   const roster = players.map((p, index) => index === 3 ? { ...p, connected: false } : p);
   let match = makeBatch(roster);
   const view = e.publicView(match);
@@ -327,9 +327,9 @@ test('60-second simultaneous phase keeps unique assignments and all draft orders
   assert.equal(new Set(view.batch.rankerIds.map(id => e.privateView(match, id).prompt.id)).size, 3);
   assert.equal(e.privateView(match, players[3].id), null);
   assert.equal(e.privateView(match, 'late-guest'), null);
-  assert.deepEqual(e.phaseTimer(match.phase), { seconds: 60, action: 'expire_ranking' });
-  assert.equal(e.roundDeadline(false, match.phase, 1000, 1000), 61000);
-  assert.equal(e.roundDeadline(true, match.phase, 1000, 22000), 61000);
+  assert.deepEqual(e.phaseTimer(match.phase), { seconds: 90, action: 'expire_ranking' });
+  assert.equal(e.roundDeadline(false, match.phase, 1000, 1000), 91000);
+  assert.equal(e.roundDeadline(true, match.phase, 1000, 22000), 91000);
   for (const id of view.batch.rankerIds) {
     const { prompt } = e.privateView(match, id);
     assert(!JSON.stringify(view).includes(prompt.text));
@@ -519,5 +519,41 @@ test('Dark reshuffles are private and bounded per player, preserve drafts and le
     assert.equal(e.publicView(expired).options.length, 0);
     assert.equal(e.reshuffleQuestion(expired, player.id, expired.correct.id, dark), null);
     assert.equal(e.reshufflesLeft(start, player.id), 3);
+  }
+});
+
+test('reveal publishes every choice’s share of valid submitted guesses without exposing Dark identities', async () => {
+  const { INSIDE_RANKS_DARK_PROMPTS: dark } = await load('./dark-prompts.ts');
+  for (const simultaneous of [false, true]) for (const anonymous of [false, true]) {
+    const custom = { id: 'my-question', text: 'Who would show up with three lunches?' };
+    const initial = e.createMatch(players, anonymous ? dark : bank, () => 0.8, undefined,
+      { simultaneous, anonymous, customPrompts: [custom] });
+    const review = e.expireRanking(initial, players);
+    assert.equal(e.publicView(review).hint, null);
+    assert.equal(e.publicView(review).guessBreakdown, null);
+    assert.equal(e.publicView(e.reveal(review)).guessBreakdown, null);
+    let guessing = e.showOptions(review);
+    const opts = e.publicView(guessing).options;
+    const right = opts.find(option => option.text === custom.text);
+    const wrong = opts.find(option => option.id !== right.id);
+    assert.equal(e.publicView(e.reveal(guessing)).guessBreakdown.total, 0);
+    assert(e.publicView(e.reveal(guessing)).guessBreakdown.choices.every(choice => choice.percent === 0));
+    const [first, second] = guessing.eligibleGuesserIds;
+    guessing = e.submitGuess(guessing, first, right.id);
+    assert.equal(e.submitGuess(guessing, first, wrong.id), null);
+    assert.equal(e.submitGuess(guessing, second, 'invalid'), null);
+    guessing = e.submitGuess(guessing, second, wrong.id);
+    assert.equal(e.publicView(guessing).guessBreakdown, null);
+    const result = e.publicView(e.reveal(guessing));
+    assert.equal(result.guessBreakdown.total, 2);
+    assert.equal(result.correct.id, right.id);
+    assert.deepEqual(result.guessBreakdown.choices, opts.map(option => ({
+      optionId: option.id, percent: [right.id, wrong.id].includes(option.id) ? 50 : 0,
+    })));
+    if (anonymous) {
+      assert.deepEqual(result.guessedIds, []);
+      assert.deepEqual(result.results, []);
+      assert(!JSON.stringify(result.guessBreakdown).includes(first));
+    }
   }
 });

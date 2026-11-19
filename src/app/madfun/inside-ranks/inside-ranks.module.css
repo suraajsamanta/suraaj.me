@@ -203,3 +203,7 @@
 .timerToast[data-urgent='true'] { background: #72283f; border-color: #ffb7d0; }
 .shell .reshuffle { justify-self: start; }
 .reshuffle span { opacity: .8; }
+
+.shell .guessResult { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; overflow-wrap: anywhere; }
+.shell .guessResult[data-correct='true'] { border-color: #a4e5b0; background: #244238; color: #e6ffee; }
+.correctTag { display: block; margin-block-start: .22rem; color: #b2edba; font-size: .76em; }

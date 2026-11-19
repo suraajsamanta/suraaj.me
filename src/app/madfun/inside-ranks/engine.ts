@@ -44,6 +44,8 @@ export type Match = {
   results: Result[];
 };
 
+type GuessBreakdown = { total: number; choices: { optionId: string; percent: number }[] };
+
 export type PublicView = {
   phase: Phase;
   round: number;
@@ -56,6 +58,7 @@ export type PublicView = {
   ranker: Player | null;
   rankerConnected: boolean;
   guessCount: number;
+  guessBreakdown: GuessBreakdown | null;
   eligibleCount: number;
   rankTargets: Player[];
   ranking: Player[];
@@ -94,7 +97,7 @@ const hintByCategory: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export const MANUAL_RANKING_SECONDS = 90;
-export const BATCH_RANKING_SECONDS = 60;
+export const BATCH_RANKING_SECONDS = 90;
 export const MAX_CUSTOM_QUESTION_LENGTH = 180;
 export const MAX_QUESTION_RESHUFFLES = 3;
 export function rankingTimeWarning(seconds: number): 30 | 10 | null {
@@ -114,7 +117,7 @@ export function normalizeCustomQuestion(value: unknown): string | null {
 export function phaseTimer(phase: Phase | undefined) {
   switch (phase) {
     case 'batch_ranking': return { seconds: BATCH_RANKING_SECONDS, action: 'expire_ranking' } as const;
-    case 'ranking': return { seconds: 75, action: 'expire_ranking' } as const;
+    case 'ranking': return { seconds: MANUAL_RANKING_SECONDS, action: 'expire_ranking' } as const;
     case 'hint': return { seconds: 20, action: 'show_options' } as const;
     case 'guessing': return { seconds: 25, action: 'reveal' } as const;
     case 'reveal': return { seconds: 8, action: 'next' } as const;
@@ -124,7 +127,7 @@ export function phaseTimer(phase: Phase | undefined) {
 
 export function roundDeadline(autoRun: boolean, phase: Phase | undefined, rankingStartedAt: number | null, now: number) {
   if (phase === 'batch_ranking') return (rankingStartedAt ?? now) + BATCH_RANKING_SECONDS * 1000;
-  if (phase === 'ranking') return (rankingStartedAt ?? now) + (autoRun ? (phaseTimer('ranking')?.seconds ?? 75) : MANUAL_RANKING_SECONDS) * 1000;
+  if (phase === 'ranking') return (rankingStartedAt ?? now) + MANUAL_RANKING_SECONDS * 1000;
   const timer = autoRun ? phaseTimer(phase) : null;
   return timer ? now + timer.seconds * 1000 : null;
 }
@@ -322,6 +325,26 @@ function publicOption(match: Match, option: Prompt): Prompt {
   return match.customPrompt ? { id: publicOptionId(match, option.id), text: option.text } : option;
 }
 
+function revealedGuessBreakdown(match: Match): GuessBreakdown | null {
+  if (match.phase !== 'reveal' || !match.optionsShown || !match.options.length) return null;
+  const counts = new Map(match.options.map(option => [option.id, 0]));
+  const eligible = new Set(match.eligibleGuesserIds);
+  let total = 0;
+  for (const [playerId, optionId] of Object.entries(match.guesses)) {
+    const count = counts.get(optionId);
+    if (count === undefined || !eligible.has(playerId)) continue;
+    counts.set(optionId, count + 1);
+    total++;
+  }
+  return {
+    total,
+    choices: match.options.map(option => ({
+      optionId: publicOptionId(match, option.id),
+      percent: total ? Math.round((counts.get(option.id) ?? 0) * 100 / total) : 0,
+    })),
+  };
+}
+
 export function publicView(match: Match, rankerConnected = true): PublicView {
   const revealed = match.phase === 'reveal' || (match.phase === 'finished' && match.ranking.length > 0);
   return {
@@ -341,6 +364,7 @@ export function publicView(match: Match, rankerConnected = true): PublicView {
     ranker: match.anonymous ? null : match.ranker,
     rankerConnected: match.phase === 'ranking' && rankerConnected,
     guessCount: Object.keys(match.guesses).length,
+    guessBreakdown: revealedGuessBreakdown(match),
     eligibleCount: match.eligibleGuesserIds.length,
     rankTargets: match.rankTargets,
     ranking: match.ranking,

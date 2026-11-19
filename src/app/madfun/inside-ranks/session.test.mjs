@@ -46,7 +46,7 @@ test('each phone can queue and remove its own private question before play; othe
   assert.equal(act(started, players[0], { type: 'remove_question', id: 'custom-1' }), null);
 });
 
-test('simultaneous mode has one host-controlled 60s deadline and locks each phone independently', t => {
+test('simultaneous mode has one host-controlled 90s deadline and locks each phone independently', t => {
   let now = 1000;
   t.mock.method(Date, 'now', () => now);
   const base = config.initial();
@@ -54,8 +54,8 @@ test('simultaneous mode has one host-controlled 60s deadline and locks each phon
   const selected = act(base, host, { type: 'set_simultaneous', enabled: true });
   const started = act(selected, host, { type: 'start' });
   assert.equal(started.match.phase, 'batch_ranking');
-  assert.equal(started.deadline, 61000);
-  assert.equal(act(started, host, { type: 'set_auto', enabled: true }).deadline, 61000);
+  assert.equal(started.deadline, 91000);
+  assert.equal(act(started, host, { type: 'set_auto', enabled: true }).deadline, 91000);
   assert.equal(act(started, host, { type: 'expire_ranking' }), null);
   const order = players.map(p => p.id).reverse();
   const locked = act(started, players[0], { type: 'rank', orderedIds: order });
@@ -70,6 +70,8 @@ test('simultaneous mode has one host-controlled 60s deadline and locks each phon
   assert.deepEqual(config.secret(drafted, players[1].id).orderedIds, order);
   assert.equal(config.secret(drafted, players[2].id).orderedIds, undefined);
   now = 61000;
+  assert.equal(act(drafted, host, { type: 'expire_ranking' }), null);
+  now = 91000;
   assert.equal(act(locked, players[1], { type: 'rank', orderedIds: order }), null);
   const review = act(drafted, host, { type: 'expire_ranking' });
   assert.equal(review.match.phase, 'hint');
@@ -191,7 +193,7 @@ test('host restarts in place with a fresh match ID, deadline, and score, without
   const restarted = act(state, host, { type: 'restart' });
   assert.equal(restarted.matchId, state.matchId + 1);
   assert.equal(restarted.match.phase, 'batch_ranking');
-  assert.equal(restarted.deadline, 80_000);
+  assert.equal(restarted.deadline, 110_000);
   assert.equal(restarted.deck, 'dark');
   assert.equal(restarted.simultaneous, true);
   assert.equal(restarted.autoRun, true);
