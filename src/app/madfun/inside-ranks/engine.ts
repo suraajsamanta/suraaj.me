@@ -1,5 +1,5 @@
 export type Player = { id: string; name: string; connected: boolean };
-export type Prompt = { id: string; text: string; category?: string };
+export type Prompt = { id: string; text: string; category?: string; authorId?: string };
 export type Phase = 'batch_ranking' | 'ranking' | 'hint' | 'guessing' | 'reveal' | 'finished';
 export type Result = { playerId: string; optionId: string; points: number };
 export type RankingDrag = { id: string; position: number };
@@ -12,13 +12,15 @@ type Assignment = {
   draftOrder: string[] | null;
   orderedIds: string[] | null;
 };
-type MatchSettings = { customPrompts?: readonly Prompt[]; simultaneous?: boolean };
+type MatchSettings = { customPrompts?: readonly Prompt[]; simultaneous?: boolean; anonymous?: boolean };
 
 export type Match = {
   phase: Phase;
   round: number;
   totalRounds: number;
   simultaneous: boolean;
+  anonymous: boolean;
+  reviewNumber: number;
   customPrompt: boolean;
   remainingCustomPrompts: Prompt[];
   consumedCustomPromptIds: string[];
@@ -45,9 +47,14 @@ export type PublicView = {
   round: number;
   totalRounds: number;
   simultaneous: boolean;
-  batch: { submittedIds: string[]; rankerIds: string[] } | null;
+  anonymous: boolean;
+  reviewNumber: number;
+  batch: { submittedIds: string[]; rankerIds: string[]; submittedCount: number; total: number } | null;
   customPrompt: boolean;
-  ranker: Player;
+  ranker: Player | null;
+  rankerConnected: boolean;
+  guessCount: number;
+  eligibleCount: number;
   rankTargets: Player[];
   ranking: Player[];
   preview: RankingPreview | null;
@@ -133,33 +140,62 @@ function eligibleGuessers(startingRoster: readonly Player[], present: readonly P
 }
 
 function readyPrompts(prompts: readonly Prompt[]): Prompt[] {
-  return [...new Map(prompts.filter(prompt => prompt.id && prompt.text.trim()).map(prompt => [prompt.id, prompt])).values()];
+  return [...new Map(prompts.filter(prompt => prompt.id && prompt.text.trim()).map(prompt => [prompt.id, prompt])).values()].filter((prompt, i, all) => all.findIndex(other => customQuestionKey(other.text) === customQuestionKey(prompt.text)) === i);
 }
+
+export const GUESS_OPTION_COUNT = 6;
 
 function chooseOptions(prompts: Prompt[], used: string[], rng: () => number, prefer?: readonly string[]) {
   const fresh = prompts.filter(prompt => !used.includes(prompt.id));
-  const source = fresh.length >= 4 ? fresh : prompts;
+  const source = fresh.length >= GUESS_OPTION_COUNT ? fresh : prompts;
   const preferred = prefer ? source.filter(prompt => prompt.category && prefer.includes(prompt.category)) : [];
-  const correct = shuffled(preferred.length ? preferred : source, rng)[0];
-  const other = shuffled(source.filter(prompt => prompt.id !== correct.id), rng);
-  const related = other.filter(prompt => prompt.category === correct.category);
-  const unrelated = other.filter(prompt => prompt.category !== correct.category);
-  const options = shuffled([correct, ...related, ...unrelated].slice(0, 4), rng);
+  const social = source.filter(prompt => socialFriction.test(prompt.text));
+  const correct = shuffled(preferred.length ? preferred : social.length ? social : source, rng)[0];
+  const options = optionsFor(correct, prompts, used, rng);
   return { correct, options, usedPromptIds: [...new Set([...used, ...options.map(prompt => prompt.id)])] };
 }
 
-function optionsFor(correct: Prompt, bank: Prompt[], used: string[], rng: () => number): Prompt[] {
-  const others = bank.filter(prompt => prompt.id !== correct.id);
-  const fresh = others.filter(prompt => !used.includes(prompt.id));
-  const source = fresh.length >= 3 ? fresh : others;
-  const ordered = shuffled(source, rng);
-  const related = ordered.filter(prompt => prompt.category === correct.category);
-  const unrelated = ordered.filter(prompt => prompt.category !== correct.category);
-  return shuffled([correct, ...[...related, ...unrelated].slice(0, 3)], rng);
+const socialFriction = /\b(?:friend|friends|group chat|side chat|screenshot|screenshots|text|dm|dms|unfollow|unfriend|ghost|post|online|shade|blocked|block|mute|gossip|rumor|secret|betray)\b/iu;
+const filler = new Set('who what would could is the to a an of their they them if for and in that with on most likely be your you it or someone get about just right'.split(' '));
+const duplicateScenarios = [
+  /\b(?:spread|start) (?:a |the )?rumou?r\b|\bgossip about\b/iu,
+  /\bleak (?:a |the )?(?:secret|screenshot)|\b(?:share|post|send) (?:a |the )?screenshot/iu,
+  /\b(?:unfollow|unfriend|block) (?:a |their )?friend/iu,
+];
+const scenario = (text: string) => duplicateScenarios.findIndex(pattern => pattern.test(text));
+function details(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter(word => !filler.has(word)));
+}
+function resembles(first: Set<string>, second: Set<string>): boolean {
+  const common = [...first].filter(word => second.has(word)).length;
+  return common >= 2 && common / new Set([...first, ...second]).size >= 0.5;
 }
 
-function pickRound(bank: Prompt[], custom: Prompt[], used: string[], rng: () => number, prefer?: readonly string[]) {
-  const [correct, ...remainingCustomPrompts] = custom;
+function optionsFor(correct: Prompt, bank: Prompt[], used: string[], rng: () => number): Prompt[] {
+  const others = bank.filter(prompt => prompt.id !== correct.id && customQuestionKey(prompt.text) !== customQuestionKey(correct.text));
+  const score = (prompt: Prompt) => Number(!used.includes(prompt.id)) * 12 +
+    Number(!!correct.category && prompt.category === correct.category) * 5 +
+    Number(socialFriction.test(prompt.text)) * 4;
+  const ordered = shuffled(others, rng).sort((a, b) => score(b) - score(a));
+  const decoys: Prompt[] = [];
+  const seen = [details(correct.text)];
+  const scenarios = new Set([scenario(correct.text)]);
+  for (const candidate of ordered) {
+    if (decoys.length === GUESS_OPTION_COUNT - 1) break;
+    const tokens = details(candidate.text);
+    const scenarioId = scenario(candidate.text);
+    if (scenarioId >= 0 && scenarios.has(scenarioId) || seen.some(previous => resembles(previous, tokens))) continue;
+    scenarios.add(scenarioId);
+    seen.push(tokens);
+    decoys.push(candidate);
+  }
+  return shuffled([correct, ...decoys], rng);
+}
+
+function pickRound(bank: Prompt[], custom: Prompt[], used: string[], rng: () => number, rankerId: string, prefer?: readonly string[]) {
+  const selected = custom.findIndex(prompt => prompt.authorId !== rankerId);
+  const correct = custom[selected];
+  const remainingCustomPrompts = selected < 0 ? custom : custom.filter((_, i) => i !== selected);
   if (!correct) {
     return { ...chooseOptions(bank, used, rng, prefer), customPrompt: false, remainingCustomPrompts };
   }
@@ -179,7 +215,7 @@ function cleanCustomPrompts(prompts: readonly Prompt[], bank: readonly Prompt[])
     if (!value || !prompt.id || ids.has(prompt.id) || texts.has(customQuestionKey(value))) continue;
     ids.add(prompt.id);
     texts.add(customQuestionKey(value));
-    custom.push({ id: prompt.id, text: value });
+    custom.push({ id: prompt.id, text: value, authorId: prompt.authorId });
   }
   return custom;
 }
@@ -193,17 +229,32 @@ function prepareBatch(rankers: Player[], bank: Prompt[], custom: Prompt[], rng: 
   }
   // Select all answers before drawing any decoys. No other assignment's prompt is
   // ever shown as a candidate for the current slide.
-  const assigned = [...custom, ...shuffledBuiltIns].slice(0, rankers.length);
-  const reserved = new Set(assigned.map(prompt => prompt.id));
+  const available = [...rankers];
+  const assigned: { correct: Prompt; ranker: Player; customPrompt: boolean }[] = [];
+  const remainingCustomPrompts: Prompt[] = [];
+  for (const correct of custom) {
+    const index = available.findIndex(ranker => ranker.id !== correct.authorId);
+    if (index < 0 && available.length && assigned.some(a => a.correct.authorId !== available[0].id)) {
+      const swap = assigned.find(a => a.correct.authorId !== available[0].id)!;
+      const ranker = swap.ranker;
+      swap.ranker = available.shift()!;
+      assigned.push({ correct, ranker, customPrompt: true });
+    } else if (index < 0) remainingCustomPrompts.push(correct);
+    else assigned.push({ correct, ranker: available.splice(index, 1)[0], customPrompt: true });
+  }
+  available.forEach((ranker, i) => {
+    const correct = shuffledBuiltIns[i];
+    if (correct) assigned.push({ correct, ranker, customPrompt: false });
+  });
+  const reserved = new Set(assigned.map(({ correct }) => correct.id));
   const decoys = bank.filter(prompt => !reserved.has(prompt.id));
-  const customCount = Math.min(custom.length, assigned.length);
   let used: string[] = [];
-  const batchAssignments = assigned.map((correct, index): Assignment => {
+  const batchAssignments = assigned.map(({ correct, ranker, customPrompt }): Assignment => {
     const options = optionsFor(correct, decoys, used, rng);
     used = [...new Set([...used, ...options.map(prompt => prompt.id)])];
-    return { ranker: rankers[index], correct, options, customPrompt: index < customCount, draftOrder: null, orderedIds: null };
+    return { ranker, correct, options, customPrompt, draftOrder: null, orderedIds: null };
   });
-  return { batchAssignments, remainingCustomPrompts: custom.slice(customCount) };
+  return { batchAssignments, remainingCustomPrompts };
 }
 
 export function createMatch(players: readonly Player[], prompts: readonly Prompt[], rng = Math.random, openingCategories?: readonly string[], settings: MatchSettings = {}): Match | null {
@@ -211,10 +262,11 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
   const bank = readyPrompts(prompts);
   if (startingRoster.filter(player => player.connected).length < 3 || bank.length < 4) return null;
   const queue = shuffled(startingRoster, rng);
-  // A player who already stepped away is still in the game, but doesn't delay the first turn.
-  const [ranker] = queue.splice(queue.findIndex(player => player.connected), 1);
-  queue.unshift(ranker);
   const custom = cleanCustomPrompts(settings.customPrompts ?? [], bank);
+  // A player who already stepped away is still in the game, but doesn't delay the first turn.
+  const eligibleOpeningRanker = queue.findIndex(player => player.connected && (!custom[0] || player.id !== custom[0].authorId));
+  const [ranker] = queue.splice(eligibleOpeningRanker, 1);
+  queue.unshift(ranker);
   const customTexts = new Set(custom.map(prompt => customQuestionKey(prompt.text)));
   const excludedBuiltinIds = bank.filter(prompt => customTexts.has(customQuestionKey(prompt.text))).map(prompt => prompt.id);
   const distinctBank = bank.filter(prompt => !excludedBuiltinIds.includes(prompt.id));
@@ -226,12 +278,14 @@ export function createMatch(players: readonly Player[], prompts: readonly Prompt
     usedPromptIds: [],
     customPrompt: false,
     ...batch,
-  } : { ...pickRound(distinctBank, custom, [], rng, openingCategories), batchAssignments: [] };
+  } : { ...pickRound(distinctBank, custom, [], rng, ranker.id, openingCategories), batchAssignments: [] };
   return {
     phase: simultaneous ? 'batch_ranking' : 'ranking',
     round: 1,
     totalRounds: batch?.batchAssignments.length ?? queue.length,
     simultaneous,
+    anonymous: settings.anonymous === true,
+    reviewNumber: 0,
     queue,
     startingRoster,
     ranker,
@@ -265,15 +319,22 @@ export function publicView(match: Match, rankerConnected = true): PublicView {
     round: match.round,
     totalRounds: match.totalRounds,
     simultaneous: match.simultaneous,
+    anonymous: match.anonymous,
+    reviewNumber: match.reviewNumber,
     batch: match.phase === 'batch_ranking' ? {
-      submittedIds: match.batchAssignments.filter(assignment => assignment.orderedIds).map(assignment => assignment.ranker.id),
-      rankerIds: match.batchAssignments.map(assignment => assignment.ranker.id),
+      submittedCount: match.batchAssignments.filter(assignment => assignment.orderedIds).length,
+      total: match.batchAssignments.length,
+      submittedIds: match.anonymous ? [] : match.batchAssignments.filter(assignment => assignment.orderedIds).map(assignment => assignment.ranker.id),
+      rankerIds: match.anonymous ? [] : match.batchAssignments.map(assignment => assignment.ranker.id),
     } : null,
     customPrompt: match.phase !== 'batch_ranking' && match.phase !== 'ranking' && match.customPrompt,
-    ranker: match.ranker,
+    ranker: match.anonymous ? null : match.ranker,
+    rankerConnected: match.phase === 'ranking' && rankerConnected,
+    guessCount: Object.keys(match.guesses).length,
+    eligibleCount: match.eligibleGuesserIds.length,
     rankTargets: match.rankTargets,
     ranking: match.ranking,
-    preview: match.phase === 'ranking' && match.preview
+    preview: !match.anonymous && match.phase === 'ranking' && match.preview
       ? { ...match.preview, drag: rankerConnected ? match.preview.drag : null }
       : null,
     options: match.optionsShown ? match.options.map(option => publicOption(match, option)) : [],
@@ -281,22 +342,23 @@ export function publicView(match: Match, rankerConnected = true): PublicView {
       ? (match.correct.category && Object.hasOwn(hintByCategory, match.correct.category) ? hintByCategory[match.correct.category] : 'Think about the situation this group’s ranking might fit.')
       : null,
     correct: revealed ? publicOption(match, match.correct) : null,
-    eligibleGuesserIds: match.eligibleGuesserIds,
-    guessedIds: Object.keys(match.guesses),
-    scores: match.scores,
-    results: revealed ? match.results.map(result => ({ ...result, optionId: publicOptionId(match, result.optionId) })) : [],
+    eligibleGuesserIds: match.anonymous ? [] : match.eligibleGuesserIds,
+    guessedIds: match.anonymous ? [] : Object.keys(match.guesses),
+    scores: match.anonymous && match.phase !== 'finished' ? {} : match.scores,
+    results: revealed && !match.anonymous ? match.results.map(result => ({ ...result, optionId: publicOptionId(match, result.optionId) })) : [],
   };
 }
 
+const privatePrompt = ({ id, text, category }: Prompt): Prompt => ({ id, text, ...(category ? { category } : {}) });
 export function privateView(match: Match, playerId: string): { prompt: Prompt; orderedIds?: string[] } | null {
   if (match.phase === 'batch_ranking') {
     const assignment = match.batchAssignments.find(candidate => candidate.ranker.id === playerId && !candidate.orderedIds);
     return assignment ? {
-      prompt: assignment.correct,
+      prompt: privatePrompt(assignment.correct),
       ...(assignment.draftOrder ? { orderedIds: [...assignment.draftOrder] } : {}),
     } : null;
   }
-  return match.phase === 'ranking' && match.ranker.id === playerId ? { prompt: match.correct } : null;
+  return match.phase === 'ranking' && match.ranker.id === playerId ? { prompt: privatePrompt(match.correct), ...(match.anonymous && match.preview ? { orderedIds: match.preview.orderedIds } : {}) } : null;
 }
 
 function validOrder(match: Match, playerId: string, orderedIds: unknown): orderedIds is string[] {
@@ -349,7 +411,7 @@ export function submitRanking(match: Match, playerId: string, orderedIds: readon
     return batchAssignments.every(assignment => assignment.orderedIds) ? showSlide(updated, 0, present) : updated;
   }
   const byId = new Map(match.rankTargets.map(player => [player.id, player]));
-  return { ...match, phase: 'hint', ranking: orderedIds.map(id => byId.get(id)!), preview: null,
+  return { ...match, phase: 'hint', reviewNumber: match.reviewNumber + 1, ranking: orderedIds.map(id => byId.get(id)!), preview: null,
     consumedCustomPromptIds: match.customPrompt ? [...match.consumedCustomPromptIds, match.correct.id] : match.consumedCustomPromptIds };
 
 }
@@ -416,6 +478,7 @@ function showSlide(match: Match, index: number, present: readonly Player[]): Mat
   return {
     ...match,
     phase: 'hint',
+    reviewNumber: index + 1,
     round: index + 1,
     ranker,
     rankTargets,
@@ -463,7 +526,7 @@ function advance(match: Match, players: readonly Player[], prompts: readonly Pro
     ranking: [],
     preview: null,
     optionsShown: false,
-    ...pickRound(bank, match.remainingCustomPrompts, match.usedPromptIds, rng),
+    ...pickRound(bank, match.remainingCustomPrompts, match.usedPromptIds, rng, ranker.id),
     eligibleGuesserIds,
     guesses: {},
     scores: extendScores(match.scores, eligibleGuesserIds),

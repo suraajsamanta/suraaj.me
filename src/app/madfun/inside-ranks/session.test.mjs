@@ -207,23 +207,49 @@ test('host restarts in place with a fresh match ID, deadline, and score, without
 });
 
 
-test('Dark Mode uses only the Paranoid bank in normal and simultaneous play; Classic submissions are retained', () => {
+test('Dark Mode permits authored prompts, hides the ranker and keeps Paranoid decoys', () => {
   const { INSIDE_RANKS_DARK_PROMPTS } = load('./dark-prompts');
-  const bank = new Set(INSIDE_RANKS_DARK_PROMPTS.map(prompt => prompt.id));
+  const bank = new Set(INSIDE_RANKS_DARK_PROMPTS.map(prompt => prompt.text));
   for (const simultaneous of [false, true]) {
-    const submitted = act(config.initial(), players[0], { type: 'submit_question', text: 'Who would annex the moon?' });
-    let dark = act(submitted, host, { type: 'set_deck', deck: 'dark' });
-    assert.equal(config.view(dark, players, host.id).questionCount, 0);
-    assert.equal(config.secret(dark, players[0].id), null);
-    assert.equal(act(dark, players[1], { type: 'submit_question', text: 'Who would annex the sun?' }), null);
-    const classic = act(dark, host, { type: 'set_deck', deck: 'classic' });
-    assert.deepEqual(config.secret(classic, players[0].id).questions, [{ id: 'custom-1', text: 'Who would annex the moon?' }]);
-    if (simultaneous) dark = act(dark, host, { type: 'set_simultaneous', enabled: true });
-    const started = act(dark, host, { type: 'start' });
-    const rounds = simultaneous ? started.match.batchAssignments : [started.match];
-    for (const assignment of rounds) {
-      assert(bank.has(assignment.correct.id));
-      assert(assignment.options.every(option => bank.has(option.id)));
+    let state = act(config.initial(), host, { type: 'set_deck', deck: 'dark' });
+    for (const [index, player] of players.entries()) {
+      state = act(state, player, { type: 'submit_question', text: `Who would annex moon number ${index}?` });
     }
+    assert.equal(config.view(state, players, host.id).questionCount, players.length);
+    if (simultaneous) state = act(state, host, { type: 'set_simultaneous', enabled: true });
+    state = act(state, host, { type: 'start' });
+    const publicMatch = () => config.view(state, players, host.id).match;
+    assert.equal(publicMatch().ranker, null);
+    assert.deepEqual(publicMatch().eligibleGuesserIds, []);
+    if (simultaneous) {
+      assert.deepEqual(publicMatch().batch.rankerIds, []);
+      assert.deepEqual(publicMatch().batch.submittedIds, []);
+      for (const assignment of state.match.batchAssignments) {
+        assert.notEqual(assignment.ranker.id, assignment.correct.authorId);
+        assert.equal(config.secret(state, assignment.ranker.id).role.batchAssigned, true);
+      }
+      for (const player of players) state = act(state, player, { type: 'rank', orderedIds: players.map(p => p.id) });
+    } else {
+      const ranker = state.match.ranker;
+      assert.notEqual(ranker.id, state.match.correct.authorId);
+      assert.equal(config.secret(state, ranker.id).role.ranker, true);
+      state = act(state, ranker, { type: 'rank', orderedIds: players.map(p => p.id) });
+    }
+    assert.equal(publicMatch().reviewNumber, 1);
+    assert.deepEqual(publicMatch().ranking.map(p => p.id), players.map(p => p.id));
+    assert.equal(publicMatch().hint, null);
+    assert.deepEqual(publicMatch().options, []);
+    state = act(state, host, { type: 'show_options' });
+    assert.equal(publicMatch().ranker, null);
+    assert.equal(publicMatch().options.length, 6);
+    assert.equal(new Set(publicMatch().options.map(o => o.text)).size, 6);
+    assert.equal(publicMatch().options.filter(option => bank.has(option.text)).length, 5);
+    state = act(state, host, { type: 'reveal' });
+    assert.equal(publicMatch().ranker, null);
+    assert.deepEqual(publicMatch().results, []);
+    assert.equal(publicMatch().correct.text, state.match.correct.text);
+    state = act(state, host, { type: 'next' });
+    if (!simultaneous) state = act(state, state.match.ranker, { type: 'rank', orderedIds: players.map(p => p.id) });
+    assert.equal(publicMatch().reviewNumber, 2);
   }
 });

@@ -29,20 +29,23 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
     return { ...model, match: { ...match, preview: { ...match.preview, drag: null } } };
   },
   view({ deck, simultaneous, questions, matchId, match, autoRun, deadline }, people, hostId) {
-    return { deck, simultaneous, questionCount: deck === 'classic' ? questions.length : 0, matchId, hostId, players: roster(people), autoRun, deadline,
+    return { deck, simultaneous, questionCount: questions.length, matchId, hostId, players: roster(people), autoRun, deadline,
       match: match && publicView(match, people.some(person => person.id === match.ranker.id && person.connected)) };
   },
   secret(model, id) {
-    const editable = model.deck === 'classic' && (!model.match || model.match.phase === 'finished');
+    const editable = !model.match || model.match.phase === 'finished';
     const questions = editable ? model.questions.filter(q => q.authorId === id).map(({ id, text }) => ({ id, text })) : [];
     const hidden = model.match && privateView(model.match, id);
-    return hidden || editable
-      ? { prompt: hidden?.prompt ?? null, orderedIds: hidden?.orderedIds, questions, matchId: model.matchId, round: model.match?.round }
+    const match = model.match;
+    const batch = match?.phase === 'batch_ranking' ? match.batchAssignments.find(a => a.ranker.id === id) : null;
+    const role = match?.anonymous ? { ranker: match.ranker.id === id && match.phase !== 'batch_ranking', canGuess: match.eligibleGuesserIds.includes(id), guessed: Object.hasOwn(match.guesses, id), batchAssigned: !!batch, batchLocked: !!batch?.orderedIds } : undefined;
+    return hidden || editable || role
+      ? { prompt: hidden?.prompt ?? null, orderedIds: hidden?.orderedIds, questions, role, matchId: model.matchId, round: model.match?.round }
       : null;
   },
   shouldPublish(_before, after, incoming) {
     const action = (incoming as { action?: InsideRanksAction })?.action;
-    return action?.type !== 'rank_preview' || after.match?.phase !== 'batch_ranking';
+    return action?.type !== 'rank_preview' || (after.match?.phase !== 'batch_ranking' && !after.match?.anonymous);
   },
   reduce(model, actor, incoming, participants, hostId) {
     if (!incoming || typeof incoming !== 'object') return null;
@@ -56,7 +59,7 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
       return { ...model, simultaneous: action.enabled };
     }
     if (action.type === 'submit_question' || action.type === 'remove_question') {
-      if (host || !editable || model.deck !== 'classic' || !people.some(p => p.id === actor.id && p.connected)) return null;
+      if (host || !editable || !people.some(p => p.id === actor.id && p.connected)) return null;
       if (action.type === 'remove_question') {
         const questions = model.questions.filter(q => q.authorId !== actor.id || q.id !== action.id);
         return questions.length !== model.questions.length ? { ...model, questions } : null;
@@ -81,7 +84,8 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
       // Give Dark Mode a group-beef opener, then let later rounds use the whole deck.
       const match = createMatch(people, promptsFor(model.deck), Math.random,
         model.deck === 'dark' ? DARK_OPENING_CATEGORIES : undefined, {
-          customPrompts: model.deck === 'dark' ? [] : model.questions.map(({ id, text }) => ({ id, text })),
+          customPrompts: model.questions,
+          anonymous: model.deck === 'dark',
           simultaneous: model.simultaneous,
         });
       const now = Date.now();
@@ -112,11 +116,12 @@ export const insideRanksConfig: PhonePartyConfig<Model, InsideRanksPublic> = {
 };
 export function useInsideRanksSession() {
   const party = usePhoneParty(insideRanksConfig);
-  const packet = party.secret as { matchId: number; round?: number; prompt: Prompt | null; questions?: Prompt[]; orderedIds?: string[] } | null;
+  const packet = party.secret as { matchId: number; round?: number; prompt: Prompt | null; questions?: Prompt[]; orderedIds?: string[]; role?: { ranker: boolean; canGuess: boolean; guessed: boolean; batchAssigned: boolean; batchLocked: boolean } } | null;
   const current = packet && packet.matchId === party.state?.matchId && packet.round === party.state.match?.round ? packet : null;
   return { ...party,
     prompt: party.state?.match?.phase === 'ranking' || party.state?.match?.phase === 'batch_ranking' ? current?.prompt ?? null : null,
     questions: current?.questions ?? [],
+    role: current?.role,
     draftOrder: current?.orderedIds ?? null,
     dispatch: (action: InsideRanksAction) => party.dispatch({ action, matchId: party.state?.matchId, round: party.state?.match?.round }),
   };

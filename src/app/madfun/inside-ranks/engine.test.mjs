@@ -32,8 +32,8 @@ test('ranking and guessing redact the correct prompt and identities until allowe
   assert.deepEqual(e.privateView(s,s.ranker.id),{prompt:s.correct});
   const guessed=e.submitGuess(e.showOptions(rank(s)),guesser,s.correct.id);
   const view=e.publicView(guessed);
-  assert.equal(view.options.length,4);
-  assert(new Set(view.options.map(p=>p.id)).size===4);
+  assert.equal(view.options.length,6);
+  assert(new Set(view.options.map(p=>p.id)).size===6);
   assert.equal(view.correct,null);
   assert.equal(e.privateView(guessed,s.ranker.id),null);
   assert.deepEqual(view.guessedIds,[guesser]);
@@ -120,7 +120,7 @@ test('hint stage exposes context and ranking, but no candidate wording, IDs, or 
   assert.equal(e.submitGuess(hint, s.eligibleGuesserIds[0], s.correct.id), null);
   const choosing = e.showOptions(hint);
   assert.equal(e.showOptions(choosing), null);
-  assert.equal(e.publicView(choosing).options.length, 4);
+  assert.equal(e.publicView(choosing).options.length, 6);
   assert.equal(e.publicView(choosing).correct, null);
 });
 
@@ -259,7 +259,7 @@ test('Dark Mode has its own deck, private prompts and category hints across roun
   assert.notEqual(hint, 'Think about the situation this group’s ranking might fit.');
   assert(!hint.includes(privatePrompt.text));
   const guessing = e.showOptions(locked);
-  assert.equal(e.publicView(guessing).options.length, 4);
+  assert.equal(e.publicView(guessing).options.length, 6);
   assert(e.publicView(guessing).options.every(option => darkIds.has(option.id)));
   const next = e.nextRound(e.reveal(guessing), players, dark, () => 0.2);
   assert(next.options.every(option => darkIds.has(option.id)));
@@ -291,10 +291,10 @@ test('room questions go first without hints; they never become decoys', () => {
     assert.deepEqual(e.publicView(review).options, []);
     assert.equal(e.publicView(review).correct, null);
     const guessing = e.showOptions(review);
-    assert.equal(guessing.options.length, 4);
+    assert.equal(guessing.options.length, 6);
     assert.equal(guessing.options.filter(o => !bank.some(p => p.id === o.id)).length, 1);
     const sent = e.publicView(guessing).options;
-    assert(sent.every(option => /^choice-[1-4]$/.test(option.id) && Object.keys(option).length === 2));
+    assert(sent.every(option => /^choice-[1-6]$/.test(option.id) && Object.keys(option).length === 2));
     const correctChoice = sent.find(option => option.text === custom.text);
     const guesser = review.eligibleGuesserIds[0];
     assert.equal(e.submitGuess(guessing, guesser, custom.id), null);
@@ -382,7 +382,7 @@ test('all simultaneous locks show slides immediately and score guesses one revie
     assert(!start.eligibleGuesserIds.includes(rankers[i]));
     assert.equal(e.privateView(match, rankers[i]), null);
     const guessing = e.showOptions(match);
-    assert.equal(guessing.options.length, 4);
+    assert.equal(guessing.options.length, 6);
     assert(!guessing.options.some(option => assignments.some((other, j) => j !== i && option.id === other.id)));
     const correctChoice = e.publicView(guessing).options.find(option => option.text === assignments[i].text);
     const locked = e.submitGuess(guessing, late.id, correctChoice.id);
@@ -449,4 +449,29 @@ test('a player question matching a built-in still goes first, without duplicatin
   assert.equal(match.options.filter(option => option.text === custom.text).length, 1);
   const next = e.nextRound(e.reveal(rank(match)), players, bank);
   assert(!next.options.some(option => option.id === bank[0].id));
+});
+
+test('six distinct options stay in the chosen bank over whole matches including full-size simultaneous rooms', async () => {
+  const { INSIDE_RANKS_DARK_PROMPTS: dark } = await load('./dark-prompts.ts');
+  for (const deck of [bank, dark]) for (const simultaneous of [false, true]) {
+    const largeGroup = Array.from({ length: 10 }, (_, i) => ({ id: String(i), name: `Player ${i}`, connected: true }));
+    const deckIds = new Set(deck.map(prompt => prompt.id));
+    for (const seed of [2, 19, 42]) {
+      let n = seed;
+      const rng = () => ((n = (Math.imul(n, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+      let match = e.createMatch(largeGroup, deck, rng, undefined, { simultaneous });
+      for (let reviewNumber = 1; reviewNumber <= largeGroup.length; reviewNumber++) {
+        if (match.phase === 'ranking' || match.phase === 'batch_ranking') match = e.expireRanking(match, largeGroup);
+        assert.equal(match.reviewNumber, reviewNumber);
+        assert.equal(e.publicView(match).options.length, 0);
+        const guess = e.showOptions(match);
+        assert.equal(guess.options.length, 6);
+        assert.equal(new Set(guess.options.map(o => o.text)).size, 6);
+        assert.equal(guess.options.filter(o => o.id === guess.correct.id).length, 1);
+        assert(guess.options.every(o => deckIds.has(o.id)));
+        match = e.nextRound(e.reveal(guess), largeGroup, deck, rng);
+      }
+      assert.equal(match.phase, 'finished');
+    }
+  }
 });
