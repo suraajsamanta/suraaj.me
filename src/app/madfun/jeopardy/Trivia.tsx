@@ -1,4 +1,5 @@
 'use client';
+import { useMadfunActivity } from '../shared/useMadfunActivity';
 import Link from 'next/link';
 import QuickStart from '../shared/QuickStart';
 import HostRemote from '../shared/HostRemote';
@@ -25,6 +26,7 @@ export default function Trivia(){
  const [autoRun,setAutoRun]=useState(false),[privateReviewVersion,setPrivateReviewVersion]=useState<number|null>(null);
  const host=room.role==='host',online=room.status==='connected',canAct=online&&(host||room.hostConnected),view=host?(run?publicRun(run,queue,deck?.title??'Eesha Lore Night'):null):remote;
  const me=room.playerId??'',active=run?queue[run.index]:null;
+ useMadfunActivity('jeopardy', host, room.code, online, !run ? 'lobby' : run.phase === 'results' ? 'finished' : 'playing', room.players, undefined, run?.players.map(p => p.id));
  const mascot='/madfun/eesha-sticker.png';
  const joinUrl=host&&room.code&&typeof window!=='undefined'?new URL('/madfun/jeopardy?join='+room.code,location.origin).href:'';
  useEffect(()=>{const t=setTimeout(()=>{const c=new URLSearchParams(location.search).get('join');if(c){setCode(c.toUpperCase().slice(0,6));setInvited(/^[A-Z0-9]{6}$/i.test(c));}},0);return()=>clearTimeout(t);},[]);

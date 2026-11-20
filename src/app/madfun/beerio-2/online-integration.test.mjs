@@ -35,6 +35,7 @@ async function moduleUrl(path, imports = {}, transform = source => source) {
   return 'data:text/javascript;base64,' + Buffer.from(js).toString('base64');
 }
 
+const analyticsUrl = await moduleUrl('../../beerio/room/race-analytics.ts');
 const courseUrl = await moduleUrl('./course.ts');
 const roadBytesUrl = await moduleUrl('./road-simd-bytes.ts');
 const roadSimdUrl = await moduleUrl('./road-simd.ts', { './road-simd-bytes': roadBytesUrl });
@@ -47,9 +48,11 @@ const partyUrl = await moduleUrl('../shared/party-client.ts');
 const appearanceUrl = await moduleUrl('../../beerio/appearance.ts');
 const rideUrl = await moduleUrl('./ride-selection.ts', { '../../beerio/appearance': appearanceUrl });
 const { Beerio2Session, validateFrame } = await import(await moduleUrl('./online.ts', {
+  '../../beerio/room/race-analytics': analyticsUrl,
   './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl, './ride-selection': rideUrl,
 }));
 const { PartyClient } = await import(partyUrl);
+const { RaceAnalytics } = await import(analyticsUrl);
 
 async function fixture(t) {
   const relay = createRelay({ logger: { error() {} } });
@@ -188,7 +191,9 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
     },
     dispose(){},
   });
-  const host = f.make({ createWorld }), guest = f.make(), second = f.make(), rematchGuest = f.make();
+  const events = [];
+  const analytics = new RaceAnalytics("beerio-2", e => events.push(e));
+  const host = f.make({ createWorld, analytics }), guest = f.make(), second = f.make(), rematchGuest = f.make();
   const secondRide = { vehicle: 'ferrari', character: 'fox' };
   const guestRide = { vehicle: 'ducati', character: 'panda' };
   host.create('seattle');
@@ -204,6 +209,7 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
   await until(() => phase(second) === 'lobby' && host.getSnapshot().players.length === 2, 'second driver admitted');
   host.start();
   await until(() => phase(guest) === 'countdown', 'guest sees countdown');
+  assert.deepEqual(events.map(e => e.kind), ['game_join', 'game_join'], 'countdown and display host count as neither start nor player');
   await until(() => phase(guest) === 'race', 'guest sees green light');
   assert.deepEqual(guest.getFrame().players.find(p => p.id === second.getSnapshot().playerId).ride, secondRide);
   assert.equal(guest.getFrame().cars.host, undefined);
@@ -238,6 +244,10 @@ test('Only the host can start, pause and rematch; results reach all racers', { t
   assert.equal(results.length, 2);
   assert.ok(results.every(r => r.time > 0));
   assert.ok(guest.getFrame().cars[guest.getSnapshot().playerId].finished);
+  assert.deepEqual(events.map(e => e.kind), ['game_join', 'game_join', 'game_start', 'game_end', 'game_player_duration', 'game_player_duration']);
+  assert.equal(events[3].durationMs, Math.round(guest.getFrame().elapsed * 1000));
+  assert.ok(events.slice(3).every(e => e.outcome === 'completed' && !e.estimated));
+  assert.doesNotMatch(JSON.stringify(events), new RegExp([code, 'Guest'].join('|')));
 
   guest.rematch();
   await sleep(125);
@@ -337,6 +347,7 @@ test('Private lobby admits exactly ten racers without counting the shared screen
 // The baseline restores the former timer-only, phase-aligned 20Hz input sender.
 // Both variants use identical host physics, packets, 15Hz snapshots and injected network delays.
 const { Beerio2Session: BaselineSession } = await import(await moduleUrl('./online.ts', {
+  '../../beerio/room/race-analytics': analyticsUrl,
   './course': courseUrl, './drive': driveUrl, '../shared/party-client': partyUrl, './ride-selection': rideUrl,
 }, source => source.replace('this.sendInput(this.inputAt);', '')
   .replace('(changed ? 25 : 50)', '50')

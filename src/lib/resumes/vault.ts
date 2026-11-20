@@ -47,7 +47,7 @@ function html(body: string, status = 200) {
 }
 
 function track(request: NextRequest, kind: EventKind) {
-  if (isBot(request)) return;
+  if (isBot(request) || request.headers.get("sec-gpc") === "1" || request.headers.get("dnt") === "1") return;
   const event = eventFrom(request, kind);
   after(() => record(event));
 }
@@ -69,9 +69,10 @@ export function resumeRoute(payload: string) {
       return html(desktopPage(pathname));
     }
     const download = searchParams.has("download");
-    if (download) track(request, "resume_download");
+    const pdf = new Uint8Array(decrypt(payload, vault.key));
+    track(request, download ? "resume_download" : "resume_pdf_loaded");
     const disposition = download ? "attachment" : "inline";
-    return new NextResponse(new Uint8Array(decrypt(payload, vault.key)), {
+    return new NextResponse(pdf, {
       headers: {
         ...PRIVATE_HEADERS,
         "Content-Type": "application/pdf",

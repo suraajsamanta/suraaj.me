@@ -53,7 +53,8 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
     });
   }
 
-  if (!RESUME_PATHS.has(pathname) && isNavigation(request) && !isBot(request)) {
+  if (!RESUME_PATHS.has(pathname) && isNavigation(request) && !isBot(request) &&
+      request.headers.get("sec-gpc") !== "1" && request.headers.get("dnt") !== "1") {
     const visit = eventFrom(request, "view");
     visit.vid = vid;
     event.waitUntil(record(visit));

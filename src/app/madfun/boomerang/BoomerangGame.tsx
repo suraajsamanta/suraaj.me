@@ -1,4 +1,5 @@
 "use client";
+import { useMadfunActivity } from '../shared/useMadfunActivity';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import Image from "next/image";
@@ -38,6 +39,7 @@ export default function BoomerangGame() {
   const [autoStatus, setAutoStatus] = useState<{ cycle: string; seconds: number } | null>(null);
   const [arena, setArena] = useState<ArenaState>(() => createArena([]));
   const pendingStart = useRef(false);
+  useMadfunActivity('boomerang', room.role === "host" && mode === "host", room.code, room.status === "connected", arena.phase === "lobby" ? "lobby" : arena.phase === "matchOver" ? "finished" : "playing", room.players, undefined, arena.players.filter(p => !p.bot).map(p => p.id));
   const arenaRef = useRef(arena); const localInput = useRef<ArenaInput>({ ...EMPTY_INPUT });
   const [, redraw] = useState(0);
   const resetArena = useCallback((next: ArenaState) => { arenaRef.current = next; setArena(next); }, []);

@@ -1,5 +1,6 @@
 'use client';
 
+import { useMadfunActivity } from '../shared/useMadfunActivity';
 import { useEffect, useEffectEvent, useRef, useState, type FormEvent } from 'react';
 import QuickStart from '../shared/QuickStart';
 import HostRemote, { type RemoteAction } from '../shared/HostRemote';
@@ -67,6 +68,7 @@ export default function Codewords() {
  const display = host || watching;
  const me = !display ? state?.seats.find(s => s.id === participantId) : undefined;
  const connected = session.status === 'connected';
+ useMadfunActivity('codewords', host && !watching, roomCode || null, connected, !game ? 'lobby' : game.phase === 'finished' ? 'finished' : 'playing', state?.seats.filter(p => p.id !== state.hostId), state?.match, state?.seats.filter(p => p.team !== null).map(p => p.id));
  const gameLive = connected && session.hostConnected;
  const deadline = state?.deadline ?? null;
  const autoRun = state?.autoRun === true;

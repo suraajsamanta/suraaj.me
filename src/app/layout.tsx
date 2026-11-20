@@ -1,5 +1,7 @@
 import { madfunMetadata } from './madfun/shared/share-metadata';
 import "./globals.css";
+import Script from "next/script";
+import AnalyticsNavigation from "./AnalyticsNavigation";
 
 export const metadata = {
   ...madfunMetadata('suraaj'),
@@ -12,7 +14,11 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body>
+        {children}
+        <AnalyticsNavigation />
+        <Script src="/journey-analytics.js" strategy="afterInteractive" />
+      </body>
     </html>
   );
 }

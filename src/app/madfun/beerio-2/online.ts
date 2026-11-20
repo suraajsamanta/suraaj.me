@@ -1,5 +1,6 @@
 "use client";
 
+import { RaceAnalytics } from "../../beerio/room/race-analytics";
 import { PartyClient, type PartyAction, type PartySnapshot } from '../shared/party-client';
 import { DEFAULT_RIDE, validRide, type RideSelection } from './ride-selection';
 import type { TrackId } from './course';
@@ -36,7 +37,7 @@ export type Beerio2Snapshot = {
 type DrivingWorld = Awaited<ReturnType<typeof createDrivingWorld>>;
 type Driver = ReturnType<DrivingWorld['spawn']>;
 type ReceivedInput = { input: DriveInput; received: number; seq: number; stream: string };
-type Options = { url?: string; client?: PartyClient; now?: () => number; createWorld?: (trackId?: TrackId) => Promise<DrivingWorld>; autoTick?: boolean };
+type Options = { url?: string; client?: PartyClient; now?: () => number; createWorld?: (trackId?: TrackId) => Promise<DrivingWorld>; autoTick?: boolean; analytics?: RaceAnalytics };
 const colors = ['#38bdf8', '#f97316', '#a78bfa', '#22c55e', '#f472b6', '#facc15', '#2dd4bf', '#fb7185', '#c084fc', '#e2e8f0'];
 const neutral = (): DriveInput => ({ steer: 0, throttle: false, brake: false, drift: false, reset: false });
 const initial = (): Beerio2Snapshot => ({ status: 'idle', role: null, code: null, playerId: null, players: [], phase: 'lobby', countdown: 0, watchInvite: null, spectatorConnected: false, trackId: 'seattle', hostConnected: false, error: null, loading: false });
@@ -83,6 +84,7 @@ export function validateFrame(value: unknown): value is Beerio2Frame {
 /** One private Party room per instance. No legacy Beerio socket, storage key or protocol is used. */
 export class Beerio2Session {
   private client: PartyClient;
+  private readonly analytics: RaceAnalytics;
   private now: () => number;
   private createWorld: (trackId?: TrackId) => Promise<DrivingWorld>;
   private snapshot = initial();
@@ -126,6 +128,7 @@ export class Beerio2Session {
   private autoTick: boolean;
 
   constructor(options: Options = {}) {
+    this.analytics = options.analytics ?? new RaceAnalytics("beerio-2");
     this.client = options.client ?? new PartyClient(options.url); // Do not borrow Simulator's persisted seat.
     this.now = options.now ?? (() => performance.now());
     this.createWorld = options.createWorld ?? (async (trackId) => (await import('./drive')).createDrivingWorld({ trackId }));
@@ -165,7 +168,17 @@ export class Beerio2Session {
   private update(patch: Partial<Beerio2Snapshot>) {
     const next = { ...this.snapshot, ...patch };
     if (JSON.stringify(next) === JSON.stringify(this.snapshot)) return;
+    const previous = this.snapshot.phase;
     this.snapshot = next;
+    if (next.role === 'host') {
+      const authorized = next.status === 'connected' && next.hostConnected;
+      const running = authorized && next.phase === 'race';
+      this.analytics.observeRoom(next.code, next.players, authorized, running);
+      if (running && previous !== 'race') this.analytics.start(next.players);
+      if (next.phase === 'results' && previous !== 'results') {
+        this.analytics.finish(this.elapsed, [...this.drivers].map(([id, driver]) => ({ id, time: driver.state.finishTime })));
+      } else if (next.phase === 'lobby' && previous !== 'lobby') this.analytics.finish();
+    }
     this.listeners.forEach(fn => fn());
   }
   private run() {
@@ -438,7 +451,9 @@ export class Beerio2Session {
   }
   retry = () => { this.lastTick = this.now(); this.client.retry(); };
   private fail(error: string) { this.leave(); this.update({ status: 'error', error }); }
+  flushAnalytics = () => { this.analytics.closeRoom(); };
   leave = () => {
+    this.flushAnalytics();
     this.generation++;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;

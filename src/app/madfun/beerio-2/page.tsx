@@ -112,8 +112,10 @@ export default function Beerio2Page() {
 
   useEffect(() => {
     const whenHidden = () => { if (document.hidden) session.setPaused(true); };
+    const pagehide = (event: PageTransitionEvent) => { if (!event.persisted) session.flushAnalytics(); };
     document.addEventListener("visibilitychange", whenHidden);
-    return () => { document.removeEventListener("visibilitychange", whenHidden); session.leave(); };
+    window.addEventListener("pagehide", pagehide);
+    return () => { document.removeEventListener("visibilitychange", whenHidden); window.removeEventListener("pagehide", pagehide); session.leave(); };
   }, [session]);
 
   useEffect(() => {

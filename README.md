@@ -1,6 +1,17 @@
 # suraaj.me
 
-A quiet, dark landing page for Suraaj Samanta, built with Next.js App Router, React, and TypeScript. Black and white design with a centered name, a simple learning/building/exploring tagline, and GitHub and LinkedIn links. Responsive and reduced-motion aware, with no analytics, tracking, or backend services.
+A quiet, dark landing page for Suraaj Samanta, built with Next.js App Router, React, and TypeScript. Black and white design with a centered name, a simple learning/building/exploring tagline, and GitHub and LinkedIn links. Responsive and reduced-motion aware. Also hosts the Madfun arcade and the owner-only analytics dashboard.
+
+## Private analytics
+
+`internal.suraaj.me` is an owner-only dashboard. Set `INTERNAL_PASSWORD`, `INTERNAL_SECRET`, `KV_REST_API_URL`, and `KV_REST_API_TOKEN` on the deployment; do not put credentials in the repo. The activity collector uses the same existing Upstash-backed storage, but activity has a separate maximum-size list so time samples don't evict visits.
+
+- **Browser sessions** include main-site section views, selected clicks, and estimated foreground active time (excluding hidden tabs and capped after inactivity). Browser IDs do not identify a person, and visit events without a tab ID can only be associated approximately.
+- **Resumes** distinguish reaching the gate, unlocking, opening the viewer, and the server preparing an inline or download PDF response. These are not proof of reading or saving.
+- **Madfun** distinguishes link opens from accepted online guest slots. Host-observed room spans and connected player time can be incomplete or estimated, and solo play and bots are excluded. Playing in multiple rooms counts multiple joins. No player names, answers, controls, or raw room codes are collected by the activity endpoint.
+- Only new events include the new measurements. This cannot recover duration or joins for older visits. Analytics honors browser Global Privacy Control and Do Not Track signals; the activity endpoint validates same-origin requests, event vocabulary and payload sizes and caps write rates.
+
+Focused analytics checks: `node --test src/lib/analytics/*.test.mjs scripts/journey-analytics.test.mjs src/app/madfun/shared/activity.test.mjs src/app/beerio/room/race-analytics.test.mjs`.
 
 ## Development
 

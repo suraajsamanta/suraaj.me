@@ -187,6 +187,7 @@ body.wait,body.wait *{cursor:wait!important}
   later(login, 750 + lines.length * 150 + 450 + 1900);
 })();
 </script>
+<script src="/journey-analytics.js" defer></script>
 </body></html>`;
 }
 
@@ -272,7 +273,7 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
 <nav id="icons" aria-label="Desktop">
   <button class="icon" type="button" tabindex="-1" aria-hidden="true">${ICONS.computer}<b>My Computer</b></button>
   <button class="icon" type="button" id="docicon" aria-label="Open resume">${ICONS.doc}<b>Resume.pdf</b></button>
-  <a class="icon" href="/" aria-label="Go to suraaj.me">${ICONS.globe}<b>suraaj.me</b></a>
+  <a class="icon" href="/" data-analytics-action="home_link" aria-label="Go to suraaj.me">${ICONS.globe}<b>suraaj.me</b></a>
   <button class="icon" type="button" tabindex="-1" aria-hidden="true">${ICONS.bin}<b>Recycle Bin</b></button>
 </nav>
 
@@ -285,8 +286,8 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
   </div>
   <div class="menu" aria-hidden="true"><span>File</span><span>Edit</span><span>View</span><span>Help</span></div>
   <div class="tools">
-    <a class="btn raised" href="${pdf}&amp;download=1">Save</a>
-    <a class="btn raised" href="${pdf}" target="_blank" rel="noopener">Open in new tab</a>
+    <a class="btn raised" data-analytics-action="download_click" href="${pdf}&amp;download=1">Save</a>
+    <a class="btn raised" data-analytics-action="open_pdf_tab" href="${pdf}" target="_blank" rel="noopener">Open in new tab</a>
   </div>
   <div class="view sunken"><iframe id="pdf" title="Suraaj Samanta resume" src="${pdf}#view=FitH"></iframe></div>
   <div class="status"><span class="sunken">Ready</span><span class="sunken">suraaj.me${path}</span></div>
@@ -305,8 +306,8 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
   <div class="side"><b>Suraaj</b>OS 98</div>
   <ul>
     <li><button type="button" data-open role="menuitem">${ICONS.doc}Open Resume</button></li>
-    <li><a href="${pdf}&amp;download=1" role="menuitem">${ICONS.doc}Download PDF</a></li>
-    <li><a href="/" role="menuitem">${ICONS.globe}Visit suraaj.me</a></li>
+    <li><a data-analytics-action="download_click" href="${pdf}&amp;download=1" role="menuitem">${ICONS.doc}Download PDF</a></li>
+    <li><a href="/" data-analytics-action="home_link" role="menuitem">${ICONS.globe}Visit suraaj.me</a></li>
     <li><hr></li>
     <li><button type="button" data-off role="menuitem">${ICONS.computer}Shut Down&hellip;</button></li>
   </ul>
@@ -336,9 +337,12 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
   function place(r) { for (var k in r) zoom.style[k] = r[k] + "px"; }
   function select(on) { icon.classList.toggle("sel", on); }
 
-  function open() {
+  function note(action) { document.dispatchEvent(new CustomEvent("ss:resume-action", { detail: action })); }
+
+  function open(event) {
     closeMenu();
     if (body.classList.contains("open")) return;
+    if (event) note("open_resume");
     select(true);
     body.classList.remove("min");
     if (calm) { body.classList.add("open"); task.classList.add("down"); return; }
@@ -347,20 +351,20 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
     requestAnimationFrame(function () { requestAnimationFrame(function () { place(to); }); });
     setTimeout(function () { zoom.style.display = "none"; body.classList.add("open"); task.classList.add("down"); }, 340);
   }
-  function close() { body.classList.remove("open", "min"); select(false); }
-  function minimize() { body.classList.remove("open"); body.classList.add("min"); task.classList.remove("down"); }
+  function close() { note("close_resume"); body.classList.remove("open", "min"); select(false); }
+  function minimize() { note("minimize_resume"); body.classList.remove("open"); body.classList.add("min"); task.classList.remove("down"); }
 
-  icon.addEventListener("click", function () { select(true); if (matchMedia("(hover: none)").matches) open(); });
+  icon.addEventListener("click", function (e) { select(true); if (matchMedia("(hover: none)").matches) open(e); });
   icon.addEventListener("dblclick", open);
-  icon.addEventListener("keydown", function (e) { if (e.key === "Enter") open(); });
+  icon.addEventListener("keydown", function (e) { if (e.key === "Enter") open(e); });
   document.addEventListener("pointerdown", function (e) {
     if (!icon.contains(e.target) && !win.contains(e.target)) select(false);
     if (!menu.contains(e.target) && !start.contains(e.target)) closeMenu();
   });
   win.querySelector("[data-close]").addEventListener("click", close);
   win.querySelector("[data-min]").addEventListener("click", minimize);
-  win.querySelector("[data-max]").addEventListener("click", function () { win.classList.toggle("max"); });
-  task.addEventListener("click", function () { body.classList.contains("open") ? minimize() : (body.classList.remove("min"), body.classList.add("open"), task.classList.add("down")); });
+  win.querySelector("[data-max]").addEventListener("click", function () { note("maximize_resume"); win.classList.toggle("max"); });
+  task.addEventListener("click", function () { body.classList.contains("open") ? minimize() : (note("open_resume"), body.classList.remove("min"), body.classList.add("open"), task.classList.add("down")); });
 
   function closeMenu() { menu.classList.remove("show"); start.classList.remove("down"); }
   start.addEventListener("click", function () { var s = menu.classList.toggle("show"); start.classList.toggle("down", s); });
@@ -382,7 +386,7 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
     win.style.top = Math.max(0, Math.min(innerHeight - 60, e.clientY - drag.y)) + "px";
   });
   title.addEventListener("pointerup", function () { drag = null; document.getElementById("pdf").style.pointerEvents = ""; });
-  title.addEventListener("dblclick", function (e) { if (!e.target.closest("button")) win.classList.toggle("max"); });
+  title.addEventListener("dblclick", function (e) { if (!e.target.closest("button")) { note("maximize_resume"); win.classList.toggle("max"); } });
 
   if (calm) return;
   body.classList.remove("open");
@@ -392,5 +396,6 @@ ${[1, 2, 3, 4].map((n) => `body[data-phase=desktop] .icon:nth-child(${n}){animat
   setTimeout(open, 2300);
 })();
 </script>
+<script src="/journey-analytics.js" defer></script>
 </body></html>`;
 }

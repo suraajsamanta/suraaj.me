@@ -30,7 +30,8 @@ export type GameViewProps = {
   autoSteer?: boolean;
   /** Pauses authoritative simulation while the host connection is unavailable. */
   paused?: boolean;
-  onFinish?: (results: RaceResult[]) => void;
+  onStart?: () => void;
+  onFinish?: (results: RaceResult[], elapsed: number) => void;
   /** Host-only item snapshot: changes at most 2 Hz, with a 2s reconnect heartbeat.
    * Never emitted while paused, on the finishing frame, or after race completion.
    */
@@ -72,9 +73,10 @@ function clock(seconds: number) {
 function suffix(place: number) { return place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'; }
 
 /** One authoritative simulation and one WebGL context, split into up to ten chase cameras. */
-export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECONDS, trackId = 'sunset', raceKey = 0, localKeyboard = true, focusPlayerId, autoSteer = true, paused = false, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
+export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECONDS, trackId = 'sunset', raceKey = 0, localKeyboard = true, focusPlayerId, autoSteer = true, paused = false, onStart, onFinish, onInventoryChange, onRematch, onLobby, lobbyLabel = 'Back to lobby', rematchDisabled = false }: GameViewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playersRef = useRef(players);
+  const startRef = useRef(onStart);
   const finishRef = useRef(onFinish);
   const inventoryRef = useRef(onInventoryChange);
   const keyboardRef = useRef(localKeyboard);
@@ -101,7 +103,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
   const spareCells = focused ? 0 : columns * rows - roster.length;
 
   useEffect(() => { playersRef.current = players; }, [players]);
-  useEffect(() => { finishRef.current = onFinish; }, [onFinish]);
+  useEffect(() => { startRef.current = onStart; finishRef.current = onFinish; }, [onStart, onFinish]);
   useEffect(() => { inventoryRef.current = onInventoryChange; }, [onInventoryChange]);
   useEffect(() => { keyboardRef.current = localKeyboard; }, [localKeyboard]);
   useEffect(() => { focusRef.current = focusPlayerId; }, [focusPlayerId]);
@@ -133,7 +135,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
     let renderer: RaceRenderer | null = null;
     let frame = 0, last = 0, accumulator = 0, lastHud = 0;
     let observedPauseVersion = pauseVersionRef.current;
-    let stopped = false, didFinish = false, failed = false;
+    let stopped = false, didStart = false, didFinish = false, failed = false;
     let lastInventoryAt = -Infinity;
     let lastInventorySignature: string | null = null;
     const publishInventory = (now: number) => {
@@ -253,6 +255,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
           setError(cause instanceof Error ? cause.message : 'The 3D renderer was interrupted. Restart the race to reconnect.');
           return;
         }
+        if (!didStart && race.elapsed > 0) { didStart = true; startRef.current?.(); }
         updateAudio(race);
         if (now - lastHud > 80 || lastHud === 0 || (race.complete && !didFinish)) {
           setHud(snapshot(race, playersRef.current)); lastHud = now;
@@ -262,7 +265,7 @@ export function GameView({ players, laps = 3, initialCountdown = COUNTDOWN_SECON
         if (race.complete) {
           if (!didFinish) {
             didFinish = true;
-            finishRef.current?.(raceResults(race));
+            finishRef.current?.(raceResults(race), race.elapsed);
           }
         } else {
           publishInventory(now);

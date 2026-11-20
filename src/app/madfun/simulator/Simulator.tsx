@@ -1,4 +1,5 @@
 'use client';
+import { useMadfunActivity } from '../shared/useMadfunActivity';
 import {useState,useRef,useEffect,useCallback,useSyncExternalStore} from 'react';
 import QuickStart from '../shared/QuickStart';
 import HostRemote from '../shared/HostRemote';
@@ -99,6 +100,7 @@ export default function Simulator(){
   return()=>clearTimeout(timer);
  },[autoRun,mode,room.role,room.status,view.phase,view.round,broadcast]);
  const hostConnected=room.role==='host'&&room.status==='connected';
+ useMadfunActivity('simulator', room.role === 'host', room.code, hostConnected, view.phase === 'lobby' ? 'lobby' : view.phase === 'finished' ? 'finished' : 'playing', room.players, undefined, view.players.filter(p => p.eligible).map(p => p.id));
  const canBegin=hostConnected&&room.judgeConnected&&room.players.filter(p=>p.connected).length>=2;
  const sendAnswers=()=>{if(hostConnected&&room.judgeConnected&&state.current.phase==='answering'&&state.current.answers.length){beginJudging(state.current);broadcast();}};
  const advance=()=>{if(hostConnected&&next(state.current))broadcast();};

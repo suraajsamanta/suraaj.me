@@ -19,12 +19,12 @@ export default function Home() {
     <main className="site">
       <div className="grain" aria-hidden="true" />
       <span className="corner-note">suraaj.me</span>
-      <section className="intro" aria-labelledby="name">
+      <section className="intro" data-analytics-section="intro" aria-labelledby="name">
         <p className="hello">hey, I’m</p>
         <h1 id="name">Suraaj Samanta</h1>
         <p className="tagline">learning, building, exploring.</p>
-        <nav className="socials" aria-label="Find me online">
-          <a href={github} target="_blank" rel="noopener noreferrer">
+        <nav className="socials" data-analytics-section="socials" aria-label="Find me online">
+          <a href={github} data-analytics-action="github" target="_blank" rel="noopener noreferrer">
             <GithubIcon />
             <span>GitHub</span>
             <span className="arrow" aria-hidden="true">
@@ -32,7 +32,7 @@ export default function Home() {
             </span>
           </a>
           <span className="separator" aria-hidden="true" />
-          <a href={linkedin} target="_blank" rel="noopener noreferrer">
+          <a href={linkedin} data-analytics-action="linkedin" target="_blank" rel="noopener noreferrer">
             <LinkedInIcon />
             <span>LinkedIn</span>
             <span className="arrow" aria-hidden="true">
@@ -41,7 +41,7 @@ export default function Home() {
           </a>
         </nav>
       </section>
-      <footer>
+      <footer data-analytics-section="footer">
         <span>always a work in progress.</span>
         <span>© 2026</span>
       </footer>

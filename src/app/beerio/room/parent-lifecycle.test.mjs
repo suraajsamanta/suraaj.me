@@ -6,6 +6,12 @@ import ts from 'typescript';
 const source = ts.transpileModule(readFileSync(process.env.BEERIO_PARENT_SOURCE || new URL('../Beerio.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
 }).outputText;
+const analyticsSource = ts.transpileModule(readFileSync(new URL('./race-analytics.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const analyticsModule = { exports: {} };
+new Function('exports', analyticsSource)(analyticsModule.exports);
+const { RaceAnalytics } = analyticsModule.exports;
 const ZERO = { steer: 0, accelerate: false, brake: false };
 const RESULTS = [
   { id: 'a', name: 'First', color: '#ffffff', place: 1, time: 100, finished: true, itemsUsed: 3 },
@@ -16,12 +22,13 @@ const RESULTS = [
 // The room stub models asynchronous lock acknowledgments and dropped sends while
 // offline. Network delivery, input resets and simulation have separate tests.
 async function fixture(t, host = true) {
-  const prior = { window: globalThis.window, localStorage: globalThis.localStorage, queueMicrotask: globalThis.queueMicrotask };
+  const prior = { window: globalThis.window, document: globalThis.document, localStorage: globalThis.localStorage, queueMicrotask: globalThis.queueMicrotask };
   let holdMicrotasks = false; const heldMicrotasks = [];
   globalThis.queueMicrotask = fn => { if (holdMicrotasks) heldMicrotasks.push(fn); else prior.queueMicrotask(fn); };
   const state = [], dependencies = [], cleanups = [];
   let hook = 0, pending = [], dirty = false;
-  const messages = [];
+  const messages = [], analytics = [];
+  let analyticsId = 0;
   let stateListener = () => {}; let confirmResult = true;
   const room = {
     code: host ? 'ABC234' : null, role: host ? 'host' : null, status: host ? 'connected' : 'idle',
@@ -75,11 +82,15 @@ async function fixture(t, host = true) {
     if (name === './game/powerups') return { POWER_UPS: { fizz: { name: 'Fizz Boost' }, dance: { name: 'Dance Break' }, diddy: { name: 'Diddy Mode' } } };
     if (name === './game/audio') return { unlockRaceAudio: () => Promise.resolve() };
     if (name === './game/track') return { TRACKS: ['sunset', 'canyon', 'brewery'].map(id => ({ id, name: id, description: id })) };
+    if (name === './room/race-analytics') return { RaceAnalytics: class extends RaceAnalytics {
+      constructor(game) { super(game, event => analytics.push(event), () => 0, () => String(++analyticsId)); }
+    } };
     if (name === './room/useBeerioRoom') return { useBeerioRoom: options => { assert.equal(options?.storageKey, undefined, 'No separate driver session on the host'); return room; } };
     if (name.endsWith('.css')) return { default: new Proxy({}, { get: (_, key) => key }) };
     throw new Error(`Unexpected parent dependency: ${name}`);
   }, compiledModule, compiledModule.exports);
   globalThis.window = { location: { search: '', href: 'https://beerio.example/beerio' }, addEventListener() {}, removeEventListener() {}, confirm: () => confirmResult, matchMedia: () => ({ matches: true }) };
+  globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
   globalThis.localStorage = { getItem: () => null, setItem() {} };
   t.after(() => { for (const cleanup of cleanups) cleanup?.(); Object.assign(globalThis, prior); });
   const render = async () => {
@@ -118,7 +129,7 @@ async function fixture(t, host = true) {
     lock();
     return game(await render());
   };
-  return { room, messages, render, button, game, nodes, start, lock, unlock, emit: value => stateListener(value), setConfirm: value => { confirmResult = value; }, hold: () => { holdMicrotasks = true; }, flush: () => { holdMicrotasks = false; for (const fn of heldMicrotasks.splice(0)) fn(); } };
+  return { room, messages, analytics, render, button, game, nodes, start, lock, unlock, emit: value => stateListener(value), setConfirm: value => { confirmResult = value; }, hold: () => { holdMicrotasks = true; }, flush: () => { holdMicrotasks = false; for (const fn of heldMicrotasks.splice(0)) fn(); } };
 }
 
 test('parent preserves results and returns rematches to fresh character selection without ready-up', async t => {
@@ -801,4 +812,16 @@ test('opt-in auto-run waits for two connected drivers and only opens character s
   const afterOpening = await f.render();
   assert.equal(f.messages.filter(message => message.type === 'select_characters').length, 1);
   assert.equal(f.game(afterOpening), undefined, 'no race until players confirm and relay locks');
+});
+
+test('only acknowledged host entrants are tracked and race clock excludes the countdown', async t => {
+  const f = await fixture(t);
+  const race = await f.start();
+  assert.deepEqual(f.analytics.map(e => e.kind), ['game_join', 'game_join']);
+  race.onStart();
+  race.onFinish(RESULTS, 113);
+  assert.deepEqual(f.analytics.map(e => e.kind), ['game_join', 'game_join', 'game_start', 'game_end', 'game_player_duration', 'game_player_duration']);
+  assert.equal(f.analytics[3].durationMs, 113000);
+  assert.equal(f.analytics[4].durationMs, 100000);
+  assert.equal(f.analytics[5].estimated, true);
 });

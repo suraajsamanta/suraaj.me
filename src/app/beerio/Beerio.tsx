@@ -12,6 +12,7 @@ import { CHARACTERS, GARAGE_VEHICLES, currentGarageVehicle, PALETTE, DEFAULT_APP
 import type { RoomPlayer } from "./room/types";
 import { unlockRaceAudio } from "./game/audio";
 import { TRACKS, type TrackId } from "./game/track";
+import { RaceAnalytics } from "./room/race-analytics";
 import { useBeerioRoom } from "./room/useBeerioRoom";
 import styles from "./beerio.module.css";
 import StartingGrid from "./lobby/StartingGrid";
@@ -255,6 +256,7 @@ function Controller({ send, useItem: activateItem, item, itemFeedback = "" }: { 
 
 export default function Beerio({ quickStart }: { quickStart?: ReactNode } = {}) {
   const room = useBeerioRoom();
+  const [analytics] = useState(() => new RaceAnalytics("beerio"));
   const { code: roomCode, role: roomRole, status: roomStatus, setLocked, publishState, onState } = room;
   const [mode, setMode] = useState<Mode>("home");
   const [name, setName] = useState("");
@@ -291,6 +293,21 @@ export default function Beerio({ quickStart }: { quickStart?: ReactNode } = {}) 
   const appearanceRef = useRef<Appearance>(DEFAULT_APPEARANCE);
   const selectionArmed = useRef(false);
   const needsLobbyUnlock = useRef(false);
+  useEffect(() => {
+    const isHost = roomRole === "host" && mode === "host";
+    const running = isHost && roomStatus === "connected" && !room.recovering && racing && !raceFinished;
+    const page = document;
+    const update = () => analytics.observeRoom(isHost ? roomCode : null, room.players, isHost && roomStatus === "connected", running && !page.hidden);
+    update();
+    page.addEventListener("visibilitychange", update);
+    return () => page.removeEventListener("visibilitychange", update);
+  }, [analytics, mode, roomCode, roomRole, roomStatus, room.players, room.recovering, racing, raceFinished]);
+  useEffect(() => {
+    const pagehide = (event: PageTransitionEvent) => { if (!event.persisted) analytics.closeRoom(); };
+    const browser = window;
+    browser.addEventListener("pagehide", pagehide);
+    return () => { browser.removeEventListener("pagehide", pagehide); analytics.closeRoom(); };
+  }, [analytics]);
   const self = room.players.find((player) => player.id === room.playerId);
   // Room state messages are optional on older clients/relays. Only accept a
   // known item for this phone while the durable room lock says it is racing.
@@ -406,7 +423,7 @@ export default function Beerio({ quickStart }: { quickStart?: ReactNode } = {}) 
     const active = (mode === "practice" && !raceFinished) || (mode === "host" && racing && !raceFinished) || (mode === "join" && room.locked && phonePhase !== "results");
     return !active || window.confirm("Leave this race? Your current race progress will be lost.");
   };
-  const exit = () => { if (!confirmLeavingRace()) return; setAutoRun(false); acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; setStarting(false); setStartError(""); room.leaveRoom(); setJoinFeedback(""); setRacing(false); setRaceFinished(false); setMode("home"); };
+  const exit = () => { if (!confirmLeavingRace()) return; analytics.closeRoom(); setAutoRun(false); acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; setStarting(false); setStartError(""); room.leaveRoom(); setJoinFeedback(""); setRacing(false); setRaceFinished(false); setMode("home"); };
   const { beginCharacterSelection } = room;
   const hasConnectedDrivers = room.players.some(player => player.connected);
   // Resume audio directly inside the gesture, before React mounts the race.
@@ -426,7 +443,7 @@ export default function Beerio({ quickStart }: { quickStart?: ReactNode } = {}) 
     return () => clearTimeout(timer);
   }, [autoJoining, autoRoster, start]);
   const practice = () => { void unlockRaceAudio(); setLocalItem(undefined); setLocalItemFeedback(""); setPracticeInput(neutral); setPracticeAction(0); setRaceFinished(false); setRaceTrack(selectedTrack); setMode("practice"); setRaceKey((n) => n + 1); };
-  const lobby = () => { if (!confirmLeavingRace()) return; acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; needsLobbyUnlock.current = true; setStarting(false); setStartError(""); setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
+  const lobby = () => { if (!confirmLeavingRace()) return; analytics.finish(); acceptInventory.current = false; resultsRef.current = null; startGeneration.current++; selectionArmed.current = false; needsLobbyUnlock.current = true; setStarting(false); setStartError(""); setRacing(false); setRaceFinished(false); room.setLocked(false); room.publishState({ phase: "lobby" }); };
   const players = mode === "practice" ? [{ id: "practice", name: "YOU", ...appearance, input: { ...practiceInput, action: practiceAction } }] : raceRoster.map((driver) => {
     const current = room.players.find((player) => player.id === driver.id);
     return { ...driver, character: driver.character ?? undefined, connected: current?.connected === true, retired: !current || current.inRace === false, input: current?.connected ? current.input : neutral };
@@ -459,7 +476,8 @@ export default function Beerio({ quickStart }: { quickStart?: ReactNode } = {}) 
   if (mode === "practice" || (mode === "host" && racing)) return <main className={`${styles.race} ${showRaceControls ? styles.withRaceControls : ""}`}>
     <GameView initialCountdown={mode === "host" && (room.characterSelectionVersion ?? 1) < 4 ? 0 : 5} players={players} paused={mode === "host" && (room.status !== "connected" || room.recovering)} raceKey={raceKey} trackId={raceTrack} localKeyboard={mode === "practice"} autoSteer={steeringAssist}
       onInventoryChange={updateRaceInventory}
-      onFinish={(results) => { selectionArmed.current = false; acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
+      onStart={mode === "host" ? () => analytics.start(raceRoster.map(driver => ({ id: driver.id, connected: room.players.some(p => p.id === driver.id && p.connected) }))) : undefined}
+      onFinish={(results, elapsed) => { selectionArmed.current = false; acceptInventory.current = false; setRaceFinished(true); if (mode === "host") { analytics.finish(elapsed, results); resultsRef.current = results; needsLobbyUnlock.current = true; room.setLocked(false); room.publishState({ phase: "results", results }); scheduleResults(); } }}
       onRematch={mode === "practice" ? practice : undefined} onLobby={mode === "practice" ? exit : lobby}
       lobbyLabel={mode === "practice" ? "Back to menu" : "Rematch lobby"}
       rematchDisabled={mode === "host" && (room.status !== "connected" || room.locked || starting || activePlayers.length === 0)} />

@@ -2,6 +2,7 @@
 // (Upstash REST). Recording never throws: analytics must not break a page.
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
+import type { PublicActivity } from "./activity";
 
 export type EventKind =
   | "view"
@@ -9,7 +10,9 @@ export type EventKind =
   | "resume_wrong"
   | "resume_unlocked"
   | "resume_opened"
-  | "resume_download";
+  | "resume_download"
+  | "resume_pdf_loaded"
+  | PublicActivity["kind"];
 
 export type VisitEvent = {
   t: number;
@@ -26,10 +29,22 @@ export type VisitEvent = {
   browser: string;
   ref?: string;
   owner?: true;
+  sid?: string;
+  eid?: string;
+  label?: string;
+  durationMs?: number;
+  game?: string;
+  matchId?: string;
+  roomId?: string;
+  playerId?: string;
+  estimated?: boolean;
+  outcome?: "completed" | "abandoned" | "unknown";
 };
 
 const LIST = "visits";
 const MAX_EVENTS = 50_000;
+const ACTIVITY_LIST = "visits:activity:v1";
+const MAX_ACTIVITY = 25_000;
 export const VISITOR_COOKIE = "ss_vid";
 export const VISITOR_HEADER = "x-ss-vid";
 export const OWNER_COOKIE = "ss_owner";
@@ -50,6 +65,7 @@ async function pipeline(commands: (string | number)[][]) {
     headers: { Authorization: `Bearer ${db.token}`, "Content-Type": "application/json" },
     body: JSON.stringify(commands),
     cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
   });
   if (!res.ok) throw new Error(`analytics store ${res.status}`);
   return (await res.json()) as { result?: unknown; error?: string }[];
@@ -123,13 +139,16 @@ export function eventFrom(request: NextRequest, kind: EventKind, path = request.
   const lat = Number(h.get("x-vercel-ip-latitude"));
   const lon = Number(h.get("x-vercel-ip-longitude"));
   const params = request.nextUrl.searchParams;
-  const room = params.get("room") ?? params.get("join") ?? params.get("code");
+  const gameLink = path === "/beerio" || path.startsWith("/beerio/") || path.startsWith("/madfun/");
+  const room = gameLink ? params.get("room") ?? params.get("join") ?? params.get("code") : null;
+  // Only a pseudonymous grouping key is needed for the legacy link-open count.
+  const roomTag = room && secret() ? sign(`analytics-room:${room.slice(0, 64)}`).slice(0, 16) : undefined;
   return {
     t: Date.now(),
     vid: visitorId(request),
     kind,
     path,
-    ...(room ? { q: room.slice(0, 12) } : {}),
+    ...(roomTag ? { q: roomTag } : {}),
     city: decode(h.get("x-vercel-ip-city")),
     region: decode(h.get("x-vercel-ip-country-region")),
     country: h.get("x-vercel-ip-country") ?? undefined,
@@ -152,18 +171,68 @@ export async function record(event: VisitEvent) {
   }
 }
 
-export async function recentEvents(sinceMs: number): Promise<VisitEvent[]> {
-  const result = await pipeline([["LRANGE", LIST, 0, MAX_EVENTS - 1]]);
-  const rows = (result?.[0]?.result as string[] | undefined) ?? [];
-  const events: VisitEvent[] = [];
-  for (const row of rows) {
-    try {
-      const event = JSON.parse(row) as VisitEvent;
-      if (event.t < sinceMs) break; // newest first
-      events.push(event);
-    } catch {
-      // skip malformed rows
-    }
+// Atomic per-browser/global rate gates, short-lived event dedupe, and a
+// separate capped list so heartbeat traffic cannot evict historical page views.
+const WRITE_ACTIVITY = `
+if ARGV[3] ~= '' and redis.call('EXISTS', KEYS[4]) == 1 then return 0 end
+local browserCount = redis.call('INCR', KEYS[2])
+if browserCount == 1 then redis.call('EXPIRE', KEYS[2], 90) end
+if browserCount > 360 then return 0 end
+local total = redis.call('INCR', KEYS[3])
+if total == 1 then redis.call('EXPIRE', KEYS[3], 90) end
+if total > 2400 then return 0 end
+if ARGV[3] ~= '' then redis.call('SET', KEYS[4], '1', 'EX', 600) end
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, tonumber(ARGV[2]) - 1)
+return 1`;
+
+export function activityFrom(request: NextRequest, vid: string, activity: PublicActivity): VisitEvent {
+  if ("game" in activity) {
+    // The reporting browser is the host, not the guest being counted.
+    return { ...activity, t: Date.now(), vid: activity.roomId ?? activity.matchId, device: "desktop", browser: "Game host report" };
   }
-  return events;
+  const ua = request.headers.get("user-agent") ?? "";
+  return { ...activity, t: Date.now(), vid, device: device(ua), browser: browser(ua),
+    ...(isOwner(request) ? { owner: true } : {}) };
+}
+
+export async function recordActivity(event: VisitEvent, reporter: string) {
+  const minute = Math.floor(event.t / 60_000);
+  try {
+    const result = await pipeline([["EVAL", WRITE_ACTIVITY, 4, ACTIVITY_LIST,
+      `visits:rate:${minute}:${reporter}`, `visits:rate:${minute}`,
+      `visits:dedupe:${reporter}:${event.eid ?? "none"}`,
+      JSON.stringify(event), MAX_ACTIVITY, event.eid ?? ""]]);
+    if (result?.[0]?.error) throw new Error("analytics activity write rejected");
+  } catch (error) {
+    console.error("[analytics] activity write failed", error);
+  }
+}
+
+export async function recentEvents(sinceMs: number): Promise<VisitEvent[]> {
+  // Split Redis replies to keep response sizes bounded. Enforce the time
+  // cutoff per row: concurrent requests can reach storage out of order.
+  const events: VisitEvent[] = [];
+  const sources = [{ list: LIST, cap: MAX_EVENTS }, { list: ACTIVITY_LIST, cap: MAX_ACTIVITY }];
+  const batch = 2000;
+  await Promise.all(sources.map(async ({ list, cap }) => {
+    for (let start = 0; start < cap; start += batch) {
+      const result = await pipeline([["LRANGE", list, start, Math.min(start + batch, cap) - 1]]);
+      if (result?.[0]?.error) throw new Error("analytics read rejected");
+      const rows = (result?.[0]?.result as string[] | undefined) ?? [];
+      let fresh = false;
+      for (const row of rows) {
+        try {
+          const event = JSON.parse(row) as VisitEvent;
+          if (!Number.isFinite(event.t) || event.t < sinceMs) continue;
+          fresh = true;
+          events.push(event);
+        } catch {
+          // skip malformed rows
+        }
+      }
+      if (rows.length < batch || !fresh) break;
+    }
+  }));
+  return events.sort((a, b) => b.t - a.t);
 }

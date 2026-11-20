@@ -1,5 +1,6 @@
 'use client';
 
+import { useMadfunActivity } from '../shared/useMadfunActivity';
 import Image from 'next/image';
 import Link from 'next/link';
 import QRCode from 'qrcode';
@@ -101,6 +102,7 @@ export default function InsideRanks() {
   const active = session.status !== 'idle';
   const connected = session.status === 'connected';
   const match = state?.match;
+  useMadfunActivity('inside-ranks', host && !watching, roomCode || null, connected, !match ? 'lobby' : match.phase === 'finished' ? 'finished' : 'playing', state?.players.filter(p => p.id !== state.hostId), state?.matchId);
   const darkDeck = state?.deck === 'dark';
   const canChangeDeck = !match || match.phase === 'finished';
   const simultaneous = state?.simultaneous === true;
