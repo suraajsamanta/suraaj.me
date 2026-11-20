@@ -1,4 +1,4 @@
-const linkedin = "https://www.linkedin.com/in/suraaj-samanta-gatech/";
+const linkedin = "https://www.linkedin.com/in/suraajsamanta/";
 const github = "https://github.com/suraajsamanta";
 function GithubIcon() {
   return (
