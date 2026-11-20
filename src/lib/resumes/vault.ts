@@ -1,5 +1,6 @@
 import { createDecipheriv, createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
+import { eventFrom, isBot, record, type EventKind } from "@/lib/analytics/events";
 import { desktopPage, loginPage } from "./retro";
 
 const COOKIE = "resume_access";
@@ -45,6 +46,12 @@ function html(body: string, status = 200) {
   });
 }
 
+function track(request: NextRequest, kind: EventKind) {
+  if (isBot(request)) return;
+  const event = eventFrom(request, kind);
+  after(() => record(event));
+}
+
 const unavailable = () =>
   new NextResponse("Resume unavailable", { status: 503, headers: PRIVATE_HEADERS });
 
@@ -52,10 +59,18 @@ export function resumeRoute(payload: string) {
   async function GET(request: NextRequest) {
     const vault = config();
     if (!vault) return unavailable();
-    if (!hasSession(request, vault.key)) return html(loginPage(false), 401);
+    if (!hasSession(request, vault.key)) {
+      track(request, "resume_locked");
+      return html(loginPage(false), 401);
+    }
     const { pathname, searchParams } = request.nextUrl;
-    if (searchParams.get("view") !== "pdf") return html(desktopPage(pathname));
-    const disposition = searchParams.has("download") ? "attachment" : "inline";
+    if (searchParams.get("view") !== "pdf") {
+      track(request, "resume_opened");
+      return html(desktopPage(pathname));
+    }
+    const download = searchParams.has("download");
+    if (download) track(request, "resume_download");
+    const disposition = download ? "attachment" : "inline";
     return new NextResponse(new Uint8Array(decrypt(payload, vault.key)), {
       headers: {
         ...PRIVATE_HEADERS,
@@ -71,9 +86,11 @@ export function resumeRoute(payload: string) {
     const form = await request.formData().catch(() => null);
     const attempt = form?.get("password");
     if (typeof attempt !== "string" || !safeEqual(attempt, vault.password)) {
+      track(request, "resume_wrong");
       await new Promise((resolve) => setTimeout(resolve, 750));
       return html(loginPage(true), 401);
     }
+    track(request, "resume_unlocked");
     const expires = String(Math.floor(Date.now() / 1000) + SESSION_SECONDS);
     const response = NextResponse.redirect(new URL(request.nextUrl.pathname, request.url), 303);
     response.cookies.set(COOKIE, `${expires}.${sign(expires, vault.key)}`, {
