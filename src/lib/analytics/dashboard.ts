@@ -207,7 +207,7 @@ ${storeReady ? "" : '<div class="notice">Visit storage isn&rsquo;t connected yet
     if (!map) {
       map = L.map("map", { worldCopyJump: true, scrollWheelZoom: false }).setView([25, -30], 2);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 12, attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
+        maxZoom: 12, referrerPolicy: "strict-origin", attribution: "&copy; OpenStreetMap contributors" }).addTo(map);
     }
     if (layer) layer.remove();
     layer = L.layerGroup().addTo(map);
